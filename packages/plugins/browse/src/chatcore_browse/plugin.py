@@ -26,6 +26,7 @@ RENDERED_PAGES_INSTRUCTIONS = (
 
 class BrowsePlugin(BasePlugin):
     name = "browse"
+    explainer_package = "chatcore_browse"
     help_title = "Web pages"
     migrations_package = "chatcore_browse.migrations"
 

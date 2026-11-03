@@ -31,6 +31,7 @@ EXTENSIONS_INSTRUCTIONS = (
 
 class ExtensionsPlugin(BasePlugin):
     name = "extensions"
+    explainer_package = "chatcore_extensions"
     help_title = "Extensions"
 
     def skills(self):

@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `/explain [topic] [section]` and read-only `read_explainer` retrieve maintained, packaged
+  architecture/plugin documentation with fresh scoped tool availability and optional exact
+  source links. Each built-in plugin owns its `EXPLAIN.md`; third-party plugins can opt in
+  through `BasePlugin.explainer_package`. The same sources generate wiki pages, checked for drift.
+  Retrieved documentation is untrusted evidence, so a subsequent write in the same turn can
+  require confirmation. No new dependency, service or migration is required.
+
 ## [0.1.3] - 2026-11-03
 
 ### Fixed

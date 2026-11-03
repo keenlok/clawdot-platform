@@ -1,5 +1,29 @@
 # Publishing the storage architecture wiki page
 
+## Generated plugin explainers
+
+Plugin `EXPLAIN.md` resources and core's framework resource are the canonical explanatory
+text used by `/explain` and `read_explainer`. Generate copy-ready wiki pages with:
+
+```sh
+uv run python .github/scripts/generate_explainers.py --source-ref main
+uv run python .github/scripts/generate_explainers.py --source-ref main --check
+```
+
+CI runs the check. Generated files have a marker, source link and document digest; edit the
+packaged document, then regenerate. The generator never starts plugins or contacts services.
+
+After merging and publishing a reviewed release, clone/pull the separate public wiki,
+then run the generator with `--source-ref v<release>` and `--output-dir <wiki-checkout>`.
+It writes only the managed How-the-bot-works, Explainers and Plugin-* pages and refuses
+to overwrite unmarked pages. Review the exact diff, add a single Home/sidebar link to
+the Explainers page while preserving existing navigation, commit and push. Verify live
+source links and formatting. A platform merge does not itself publish wiki pages.
+Live wiki source links identify the selected published release; a bot may run another
+release, so its bundled documentation and app-supplied source identity remain authoritative.
+
+## Existing storage overview
+
 The repository guide is canonical. [Storage-architecture.md](Storage-architecture.md)
 is a concise, copy-ready wiki entry that shares its image and links to the full guide.
 Its absolute URLs work from a GitHub wiki and target public `main` **after this PR

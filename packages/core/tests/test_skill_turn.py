@@ -167,6 +167,7 @@ async def test_skill_turn_offers_only_gated_skill_tools_and_use_skill_is_state_n
         "feature",
         "other_feature",
         "third_feature",
+        "explanation",
     ]
     turn_state.read_untrusted = True
     turn_state.untrusted_tools = {"fetch_web_page"}

@@ -33,6 +33,7 @@ POLLS_INSTRUCTIONS = (
 
 class PollsPlugin(BasePlugin):
     name = "polls"
+    explainer_package = "chatcore_polls"
     migrations_package = "chatcore_polls.migrations"
 
     help_title = "Polls"

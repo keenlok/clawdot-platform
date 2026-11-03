@@ -74,6 +74,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 
 | Plan | Status | PR | Notes |
 | --- | --- | --- | --- |
+| [Plugin explainers and coordinated delivery](2026-11-04-plugin-explainers.md) | Live | [#11](https://github.com/keenlok/clawdot-platform/pull/11) | Platform implementation and generated wiki source; release tag, private pin/deployment and wiki publication tracked separately |
 | [research-agent.md](research-agent.md) | Live | — | Deploy record: [access-research](https://github.com/keenlok/clawdot-deployments/blob/main/docs/deployments/2026-10-31-access-research.md) |
 | [webfetch-ipv6-maps.md](webfetch-ipv6-maps.md) | Live | [#11](https://github.com/keenlok/clawdot-platform-history/pull/11) | Deploy record: [webfetch-direct-writes](https://github.com/keenlok/clawdot-deployments/blob/main/docs/deployments/2026-11-01-webfetch-direct-writes.md) |
 | [receipt-vision.md](receipt-vision.md) | Live | — | |

@@ -162,6 +162,7 @@ def _group_reply_prompt(ctx: CommandContext) -> CommandReply:
 
 class TutorPlugin(BasePlugin):
     name = "tutor"
+    explainer_package = "chatcore_tutor"
     help_title = "Language tutor"
     migrations_package = "chatcore_tutor.migrations"
 

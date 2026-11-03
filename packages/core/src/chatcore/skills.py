@@ -71,6 +71,7 @@ class Skill:
 
 # Offered on every routed turn unless an app passes its own list (``()`` opts out).
 DEFAULT_GENERAL_TOOLS: tuple[str, ...] = (
+    "read_explainer",
     "get_current_time",
     "read_chat_history",
     "read_attachment",

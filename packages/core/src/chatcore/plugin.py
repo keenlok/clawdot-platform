@@ -92,6 +92,8 @@ class BasePlugin:
     """No-op defaults. Subclasses set ``name`` and override what they need."""
 
     name: str = ""
+    explainer_package: str | None = None
+    """Optional import package containing this plugin's public ``EXPLAIN.md`` resource."""
     help_title: str = ""
     """Heading for this plugin's commands in ``/help``; defaults to a title-cased ``name``."""
     migrations_package: str | None = None

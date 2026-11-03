@@ -326,6 +326,16 @@ system prompt → chat persona → pinned memories → rolling summary → recal
 
 ## 4. Expense splitting (Splitwise-like)
 
+**Plugin explainers (2026-11-04):** Each built-in capability plugin owns a packaged
+`EXPLAIN.md`, separate from its short skill behavior instructions. Core's reserved explain
+plugin provides `/explain [topic] [section]` and the read-only `read_explainer` tool, loading
+only the app-selected plugins' resources plus the framework overview. Documentation and
+fresh per-tool availability are separate evidence; handlers still enforce operational rights.
+Retrieved document bodies are untrusted content and do not authorize example actions.
+Apps may supply a reviewed public source revision; otherwise the document digest identifies
+the bundled evidence. Wiki pages are generated from the same source. See the indexed
+[implementation and delivery plan](docs/plans/2026-11-04-plugin-explainers.md).
+
 **Data model (Postgres, amounts in integer minor units; JPY and KRW have 0 decimal places, SGD has 2):**
 - `members(chat_id, user_id, username, display_name, last_seen)`: filled automatically from messages
 - `expenses(id, chat_id, description, amount, currency, paid_by, created_by, created_at, deleted_at)`

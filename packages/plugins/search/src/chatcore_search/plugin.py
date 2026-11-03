@@ -48,6 +48,7 @@ class _WindowBuffer:
 
 class SearchPlugin(BasePlugin):
     name = "search"
+    explainer_package = "chatcore_search"
     help_title = "Search"
     Settings = SearchSettings
 

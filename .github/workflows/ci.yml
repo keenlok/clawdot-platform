@@ -36,6 +36,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked --all-packages
+      - run: uv run python .github/scripts/generate_explainers.py --check
       - run: uv run ruff check packages services apps tests .github/scripts
       # Release-control tests start their own throwaway Postgres from these binaries.
       - run: echo "PG_BIN=$(pg_config --bindir)" >> "$GITHUB_ENV"

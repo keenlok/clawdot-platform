@@ -114,6 +114,7 @@ def _cache_key(path: str, params: dict[str, Any]) -> str:
 
 class StocksPlugin(BasePlugin):
     name = "stocks"
+    explainer_package = "chatcore_stocks"
 
     def skills(self):
         return [

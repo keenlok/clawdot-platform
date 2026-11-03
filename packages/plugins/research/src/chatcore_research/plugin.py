@@ -44,6 +44,7 @@ RESEARCH_INSTRUCTIONS = (
 
 class ResearchPlugin(BasePlugin):
     name = "research"
+    explainer_package = "chatcore_research"
     help_title = "Research"
     migrations_package = "chatcore_research.migrations"
 

@@ -45,6 +45,7 @@ WATCHES_INSTRUCTIONS = (
 
 class JobsPlugin(BasePlugin):
     name = "jobs"
+    explainer_package = "chatcore_jobs"
     help_title = "Reminders and watches"
     migrations_package = "chatcore_jobs.migrations"
 
