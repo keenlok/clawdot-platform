@@ -122,3 +122,6 @@ Independent Codex review found no actionable findings: 164 public focused checks
 private checks passed (one private embedding-cache skip). Claude authentication remained
 unavailable, so no Claude review is claimed. No live Google writes, runtime configuration
 changes, release tags, merges or deployments were performed as part of this repair.
+
+Delivery: [platform PR #9](https://github.com/keenlok/clawdot-platform/pull/9), with
+[downstream draft PR #9](https://github.com/keenlok/clawdot-deployments/pull/9).
