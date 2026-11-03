@@ -78,7 +78,7 @@ def test_framework_never_imports_apps() -> None:
 
 
 def test_plugins_do_not_import_other_plugins_skills_or_gates() -> None:
-    # Skills that span plugins are app composites (plans/skill-layer.md §3.4).
+    # Skills that span plugins are app composites (docs/plans/skill-layer.md §3.4).
     offenders = []
     for path in _sources(*_PACKAGE_SOURCES):
         owner = _owner(path)

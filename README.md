@@ -34,7 +34,8 @@ reviewed design for releases across repositories.
 | `tests/` | Package boundaries, service image guarantees and plan index checks |
 | `docs/` | Reusable feature and integration guides |
 | `ARCHITECTURE.md` | Architecture specification and decision record |
-| `plans/` | [Indexed plans and historical design records](plans/README.md) |
+| `docs/plans/` | [Indexed plans and historical design records](docs/plans/README.md) |
+| `docs/handovers/` | Framework handover records |
 
 ## Run the example
 

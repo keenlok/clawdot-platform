@@ -1,7 +1,7 @@
 # Self-improvement release-control prototype
 
 Historical record of the first, policy-only increment. Current scope and progress
-are tracked in [the ten-part delivery plan](superpowers/plans/2026-10-31-self-improvement-parts.md).
+are tracked in [the ten-part delivery plan](plans/2026-10-31-self-improvement-parts.md).
 Subsequent parts add executable collectors, verification and persistence; statements
 below describe the earlier snapshot.
 

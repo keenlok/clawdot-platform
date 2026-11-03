@@ -1,4 +1,4 @@
-"""Per-chat temporary model override for ``/model`` (``plans/model-switch.md``).
+"""Per-chat temporary model override for ``/model`` (``docs/plans/model-switch.md``).
 
 Only the ``/model`` command writes an override; the LLM has no tool for it. Overrides live in the
 cache with a TTL, so a restart or a cache flush falls back to the configured default model.
