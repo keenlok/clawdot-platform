@@ -149,7 +149,6 @@ its detail:
 - Bot detection and CAPTCHAs (detect and stop, never bypass)
 - Poll OpenCode for the real remaining balance
 - Release history and "what changed?"
-- Share a contribute or learn link in allowed groups
 - One bot per group: working `apps/_scaffold` shipped; downstream provisioning remains app-owned
 
 ## Google Workspace and itinerary implementation
