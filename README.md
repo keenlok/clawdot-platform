@@ -102,7 +102,7 @@ Historical plans may name the original app and pre-split paths. Production opera
 records are preserved privately; stable architecture sections link to their archive.
 This repository begins with a sanitized framework snapshot and fresh Git history.
 Earlier development and application records are kept in a
-[private history archive](https://github.com/keenlok/clawdot-platform-history).
+private history archive (`clawdot-platform-history`).
 
 ## Platform release tags
 
@@ -121,3 +121,9 @@ Inactive release control uses generic `app-backend`/`app-internal` network alias
 and an `app-models` volume alias.
 Its network allowlist and capability rules are unchanged; activation across repositories
 requires a separately reviewed policy and fresh deployment evidence.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Each package declares
+`license = "Apache-2.0"` in its `pyproject.toml`. Contributions submitted to this repository
+are accepted under the same license (section 5 of the license).

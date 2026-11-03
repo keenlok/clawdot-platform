@@ -2,6 +2,7 @@
 name = "example-bot"
 version = "0.1.0"
 description = "A working minimal app built on the clawdot platform"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["chatcore", "chatcore-console"]
 

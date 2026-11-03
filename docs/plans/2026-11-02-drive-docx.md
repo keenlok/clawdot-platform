@@ -1,6 +1,6 @@
 # Drive-hosted DOCX read support
 
-Status: **Live.** Owner approved implementation, merge of [PR #54](https://github.com/keenlok/clawdot-platform-history/pull/54), automatic deployment and the additional read-only Drive consent on 2026-11-02. Deployed reader verification passed.
+Status: **Live.** Owner approved implementation, merge of history PR #54, automatic deployment and the additional read-only Drive consent on 2026-11-02. Deployed reader verification passed.
 
 **Goal:** Let a person paste a Drive-hosted `.docx` link into an allowed chat and
 have SBot read its text and tables, including as an itinerary-import source.
@@ -262,7 +262,7 @@ expired and could not refresh. No independent/Claude review is claimed.
   untrusted and non-persistent read flags. Original file modification time was unchanged;
   native Doc and Sheet reads passed. The same deployed container remained healthy. No live
   Google write or chat message was sent; temporary credential/setup copies were removed.
-- Final [Linux CI](https://github.com/keenlok/clawdot-platform-history/actions/runs/41462816332) passed
+- Final Linux CI (history CI run 41462816332) passed
   on `f807320d771c2f8b0edb33d40e0362393213b1c9`: 3,572 passed, 6 skipped, 22 deselected.
-  The local environment failures above were absent. [Main CI](https://github.com/keenlok/clawdot-platform-history/actions/runs/41463997167)
+  The local environment failures above were absent. Main CI (history CI run 41463997167)
   also passed before the automatic deployment.

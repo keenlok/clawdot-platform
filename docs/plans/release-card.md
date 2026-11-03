@@ -196,7 +196,7 @@ presentation (it becomes the single "What changes" line, cleaned as untrusted).
 Keep every validation in `_text()`. Replace only the rendering with this order (example):
 ```
 Release request: PR #42 "Add /export to expenses"
-https://github.com/keenlok/clawdot-platform-history/pull/42
+history PR #42
 
 What changes (from the PR description)
 - Adds a CSV export of the active trip's ledger (/export)

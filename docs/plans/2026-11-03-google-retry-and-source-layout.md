@@ -124,7 +124,7 @@ unavailable, so no Claude review is claimed. No live Google writes, runtime conf
 changes, release tags, merges or deployments were performed as part of this repair.
 
 Delivery: [platform PR #9](https://github.com/keenlok/clawdot-platform/pull/9), with
-[downstream draft PR #9](https://github.com/keenlok/clawdot-deployments/pull/9).
+downstream draft deployments PR #9.
 
 ## Release authorization and rollout
 

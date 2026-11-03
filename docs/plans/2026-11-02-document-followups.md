@@ -1,6 +1,6 @@
 # Document follow-up retrieval implementation plan
 
-Status: implemented and verified in [PR #60](https://github.com/keenlok/clawdot-platform-history/pull/60),
+Status: implemented and verified in history PR #60,
 awaiting review/merge.
 
 Date: 2026-11-02. Original base: `0a5cd47`; integrated base: `1e990a5`. The owner requested

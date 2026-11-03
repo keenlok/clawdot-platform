@@ -21,4 +21,4 @@ Deployed source `fad6463e6dfc`. The live itinerary group's computed setting is
 `rendered_enabled=true, revision=0` without a database write; rendered-watch eligibility
 also returns true. Both containers are healthy and the bot reaches the renderer. DMs
 remain false by default. CI passed 3,536 tests (6 skipped), and an independent Codex
-review found no blockers. [Deployment record](https://github.com/keenlok/clawdot-deployments/blob/main/docs/deployments/2026-11-02-browser-default-on.md).
+review found no blockers. Deployment record (`clawdot-deployments/docs/deployments/2026-11-02-browser-default-on.md`).

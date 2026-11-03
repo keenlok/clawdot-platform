@@ -2,6 +2,7 @@
 name = "chatcore-telegram"
 version = "0.1.0"
 description = "Telegram adapter (Track E)"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "chatcore",

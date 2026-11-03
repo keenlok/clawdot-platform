@@ -2,6 +2,7 @@
 name = "chatcore-browse"
 version = "0.1.0"
 description = "Prefilled search links and gated rendered page reading for chatcore"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["chatcore", "chatcore-jobs", "httpx>=0.27", "pydantic-settings>=2.6"]
 

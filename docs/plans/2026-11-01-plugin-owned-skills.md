@@ -1,6 +1,6 @@
 # Plugin-owned skill instructions and core router settings
 
-Date: 2026-11-01. Status: merged and live ([#41](https://github.com/keenlok/clawdot-platform-history/pull/41), merged to `main` with [#38](https://github.com/keenlok/clawdot-platform-history/pull/38)). Follows the nested-packages move
+Date: 2026-11-01. Status: merged and live (history #41, merged to `main` with history #38). Follows the nested-packages move
 (`docs/plans/2026-10-31-repo-layout.md`, PR 5) and the skill layer (`docs/plans/skill-layer.md`).
 
 ## Problem
