@@ -8,12 +8,10 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from chatcore.security.egress_proxy import EgressPolicy, EgressProxy, PolicyOverrides, RenderBudget
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from .blocking import detect_block
-from .budget import RenderBudget
-from .policy import EgressPolicy, PolicyOverrides
-from .proxy import EgressProxy
 from .settings import RendererSettings
 
 CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
