@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-04
+
 ### Added
 
 - `/explain [topic] [section]` and read-only `read_explainer` retrieve maintained, packaged
@@ -66,7 +68,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/keenlok/clawdot-platform/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/keenlok/clawdot-platform/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/keenlok/clawdot-platform/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/keenlok/clawdot-platform/tree/v0.1.1
