@@ -777,10 +777,11 @@ Requests and their detail. The status of every plan, built or not, is tracked in
   limits), store the reading, show it in the admin budget view, and DM the owner when it drops
   below a threshold. Read-only: never top up or change billing. Log no key material.
   Account usage, spend limits and production budgets belong to downstream configuration. Not started.
-- [ ] **Release history and "what changed?"** (requested 2026-11-01). Decided: no hand-kept
-  `CHANGELOG.md`, and nothing (deployer, CI or anyone else) commits or force-pushes changelog
-  updates to `main`. That would need write tokens, start a commit → CI → deploy loop and conflict
-  with parallel PRs. PR titles are the changelog entries.
+- [ ] **Bot release history and "what changed?"** (requested 2026-11-01). Deployment release
+  notes use reviewed PR titles. The deployer and CI never commit or force-push note updates
+  to `main`; that would create a commit → CI → deploy loop and conflict with parallel PRs.
+  The platform separately maintains a curated [changelog](CHANGELOG.md) through reviewed
+  PRs (approved 2026-11-03); contributor and release rules are in `AGENTS.md`.
   - Keep every release note the deploy writes (today only `release-notes/latest.json` survives)
     as a bounded history on the box, e.g. under `deploy-metadata/`, with retention.
   - Let the owner (and maybe allowed groups) ask the bot "what changed recently?" from that

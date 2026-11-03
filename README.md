@@ -10,6 +10,8 @@ and operator scripts belong in the owner-only `clawdot-deployments` repository.
 Downstream applications pin reviewed platform releases and run their own CI/deployment.
 A platform merge validates the framework and scaffold.
 
+See the [changelog](CHANGELOG.md) for release notes and unreleased changes.
+
 ## Capabilities
 
 - Scoped conversations, administration, provider integrations and access controls.

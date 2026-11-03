@@ -57,6 +57,17 @@ is never the only check.
 - Architecture decisions go in `ARCHITECTURE.md`; keep its section numbers stable, because plans
   refer to them ("§3d").
 
+## Changelog
+
+- Add an entry under `Unreleased` in `CHANGELOG.md` for user-visible behavior, public API
+  or configuration changes, migrations, deprecations and security changes. Explain the
+  impact and include upgrade steps and breaking-change notes where relevant.
+- Purely internal refactors and test-only changes need no entry unless they affect users.
+- Keep entries concise and curated under the applicable Keep a Changelog categories.
+- A release version-bump PR dates the entry with the release date (`YYYY-MM-DD`), matches
+  the root `pyproject.toml` version and its `v<version>` tag, starts a new `Unreleased`
+  section and updates the comparison links.
+
 ## Skills (`docs/plans/skill-layer.md`)
 
 - A plugin declares its skills in `plugin.py` (`skills()`: name, summary, examples, tools,
