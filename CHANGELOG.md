@@ -16,9 +16,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Additive Google migration `0003_edit_results.sql` journals destination IDs and partial or
   uncertain outcomes. Unresolved reservations survive normal cleanup for at least
   `GOOGLE_EDIT_UNRESOLVED_RETENTION_DAYS` (default 90); privacy deletion still removes them.
+- Optional Google Docs browser trial broker and dedicated editor-account worker for exact
+  replacement and bold operations on new native copies. The worker is isolated behind the
+  guarded proxy; the broker shares only the confirmed copy and verifies the saved result through
+  the Google API. `GOOGLE_BROWSER_ENABLED=false` and copy qualification remain disabled by
+  default. Implementation is still unmerged, unqualified and undeployed; no live Google edits
+  have been run.
+- Shared egress proxy primitives now have a renderer-independent core location, preserving the
+  public renderer's compatibility surface. The proxy extraction is under [PR #6](https://github.com/keenlok/clawdot-platform/pull/6).
 
 ### Changed
 
+- Google browser trial instructions state that API editing is the default, browser editing
+  requires an explicit request and confirmation, and an API failure never triggers browser fallback.
 - Consolidated plans in `docs/plans/` and handovers in `docs/handovers/`, with updated
   references and repository-wide local link checks.
 

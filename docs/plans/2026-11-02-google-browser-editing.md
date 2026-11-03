@@ -479,3 +479,27 @@ than claiming a clean full run. Live Google qualification is separate from all m
 - [Drive native conversion](https://developers.google.com/workspace/drive/api/guides/manage-uploads)
 - Existing [renderer boundaries](../rendered-fetch.md) and
   [renderer service plan](browse-renderer-service.md).
+
+## Delivery note — 2026-11-03
+
+Implementation follows the reviewed plan without changing its trial scope. Public API editing
+prerequisites are under [PR #5](https://github.com/keenlok/clawdot-platform/pull/5), and the
+behavior-preserving guarded-proxy extraction is under
+[PR #6](https://github.com/keenlok/clawdot-platform/pull/6). The copy-only broker and dedicated
+browser worker have local implementation/test evidence; their browser PR is forthcoming.
+
+Final evidence includes 229 worker/renderer tests and 304 broker/plugin/boundary/index tests.
+The frozen public suite passed 3,566 tests (two Elasticsearch skips, 26 deselections). The final
+installed candidate passed 401 downstream app tests (seven environment skips), including all
+12 real SBot confirmation cases for verified/uncertain outcomes and replay protection. These
+checks use synthetic or mocked data; they do not establish successful Google sign-in, live UI
+stability, autosave behavior or resource-host allowlist sufficiency.
+
+The bold operation requires the exact unique Find result to be announced as selected text and the
+visible document editor to retain focus. If either accessibility signal is unavailable or drifts,
+the worker refuses before typing or reports an uncertain outcome. API verification also requires
+an explicit target bold value and preserves the presence/value of bold and other style fields
+outside that UTF-16 range; inherited target bold values fail closed. The supported live UI has not
+been qualified and may refuse this operation. The browser tool and worker remain disabled by
+default; no dedicated account was provisioned and no live Google write was performed. Owner
+authorization for the 20-trial qualification remains a separate gate.

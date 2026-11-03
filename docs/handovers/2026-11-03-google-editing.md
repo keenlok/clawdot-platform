@@ -56,7 +56,8 @@ and both existing main checkouts are preserved.
 
 The separate `codex/shared-egress-proxy` change moves renderer proxy, policy and byte-budget types into
 `chatcore.security.egress_proxy`, preserving renderer compatibility imports and
-object identity. No logger names existed in these modules to change. Existing
+object identity. This is public [PR #6](https://github.com/keenlok/clawdot-platform/pull/6).
+No logger names existed in these modules to change. Existing
 tests contained no relocated function patch targets; only environment patches.
 No installed policy manifest listed the moved files.
 
@@ -86,7 +87,46 @@ application tests, with seven observed skips (unavailable Elasticsearch, Linux f
 inspection, ShellCheck and embedding cache). The two new native-edit confirmation cases
 were first observed failing against v0.1.1, then passed against the installed candidate.
 The imports resolve to the wheel's site-packages outside the platform checkout; no
-local-path dependency or production pin change was committed.
+local-path dependency or production pin change was committed. The public API implementation is
+under [PR #5](https://github.com/keenlok/clawdot-platform/pull/5).
+
+## Browser broker and worker implementation
+
+The browser branch adds the isolated `services/google-browser-editor` process and a Google
+plugin broker/client. The broker exposes a disabled-by-default, writer-gated tool only in
+configured trial chats. It always creates/imports a new native Doc, shows the exact configured
+writer grantees in the confirmation, shares only that copy, checks permission read-back, and
+verifies the saved selected-tab text/style through the owner's Google API before marking the
+action verified. API editing remains the default; there is no automatic browser fallback.
+Cancellation and privacy cleanup remove worker metadata best-effort, not Drive copies or shares.
+
+The dedicated editor account and session were not provisioned. Synthetic worker/renderer tests and
+mocked broker tests cover the protocol and policy but do not qualify live Google sign-in, Docs UI,
+resource hosts or autosave. The worker's bold operation requires an exact accessibility selection
+and focused editor signal and can refuse if the live UI does not provide them. The broker now
+requires an explicit target bold value and unchanged style-field presence/value outside the target;
+targeted inherited-style regressions pass. The operator guide records the separate 20-trial,
+10-replacement/10-bold qualification; none of those live trials has been run.
+
+Final frozen evidence: **3,566 passed**, 2 Elasticsearch skips and 26 deselections in the
+public non-browser/non-sandbox suite, with 14 PTB deprecation warnings from Telegram fixtures.
+All 229 worker/renderer local tests passed, including synthetic real Chromium; 304 focused
+broker/plugin/boundary/index tests passed. The installed final candidate passed **401 downstream
+application tests**, with seven environment skips, one deselection and six passing subtests.
+All twelve real SBot confirmation cases passed after the inherited-style fix, including verified
+and uncertain browser outcomes and duplicate-confirmation protection. The unchanged v0.1.1 pin
+separately reports five expected new-tool failures; it does not validate this candidate.
+
+A container smoke launched real Chromium with its sandbox enabled as UID 1001, networking
+disabled, read-only root, tmpfs, dropped capabilities, no-new-privileges and the committed
+seccomp profile, against a synthetic blank page. Candidate bot and renderer wheel-overlay
+images built and ran offline packaging checks. Installed core/scaffold smoke passed outside the
+checkout. All 23 existing migration hashes are unchanged; only Google 0003 is new. Both browser
+seccomp files match the downstream existing asset. Full lint and changed-file formatting pass;
+full formatting still reports the same 14 pre-existing Markdown plans. Secret scans are clean.
+
+The browser PR is forthcoming. The code is unmerged; copying and browser editing remain disabled
+by default, live behavior is unqualified, and nothing has been deployed.
 
 ## Release and live-operation boundaries
 
