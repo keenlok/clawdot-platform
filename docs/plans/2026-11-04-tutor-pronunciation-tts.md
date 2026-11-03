@@ -30,7 +30,7 @@ Alternatives considered: a provider-native slow model would avoid the binary but
 
 ### Qualification gate before implementation approval
 
-Use an operator-supplied restricted key and selected voices for a deliberately small paid trial: normal v3 `你好` in Cantonese and Mandarin, plus `こんにちは` in Japanese; then locally slow each returned clip. No application code is required for this one-off qualification. Do not retrieve secrets from unrelated projects or publish raw account/voice identifiers in the qualification record.
+Use an operator-supplied restricted key and selected voices for a deliberately small paid trial: normal v3 `你好` in Cantonese and Mandarin, plus `こんにちは` in Japanese; then locally slow each returned clip. Allow at most six provider requests and 720 input characters in total, including up to three context-sensitive phrases, with no automatic retries. No application code is required for this one-off qualification. Do not retrieve secrets from unrelated projects or publish raw account/voice identifiers in the qualification record.
 
 Record date, model, requested language, HTTP status/content type, detected MP3 signature, normal/slow durations and listening verdict. Confirm `yue` actually sounds Cantonese; distinguish Mandarin; check Japanese reading. Slow output must be approximately 1/0.75 times the normal duration (within 10% allowing MP3 padding), contain the same words, and preserve recognisable tones/pitch and intelligibility. A qualified listener must audition real context-sensitive phrases, not infer quality from duration or HTTP 200 alone. Check selected voice access and model availability for the account.
 
