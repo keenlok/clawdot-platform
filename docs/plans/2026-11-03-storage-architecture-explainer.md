@@ -64,7 +64,7 @@ guarantees.
   unrelated files. Use the existing documentation/link tests; add no implementation-
   mirroring tests for prose or images. Validate the SVG as XML and visually inspect
   its PNG export. Rendering tools may be temporary, outside the repository.
-- [ ] Review the final diff, commit and push the branch, open the public PR, add its
+- [x] Review the final diff, commit and push the branch, open the public PR, add its
   URL to the plan index and report the wiki publication prerequisite.
 
 ## Acceptance and limits
@@ -87,3 +87,6 @@ publication. Publishing the wiki remains a documented post-merge action while di
 - Independent Codex review checked implementation claims and SVG semantics and found
   no actionable issues. Claude review could not run because its OAuth session expired.
 - Wiki remains disabled; source and manual publication instructions are included.
+- Separate integration selection: 98 passed, 55 skipped; `TEST_PG_DSN` was not
+  configured and Elasticsearch was unavailable.
+- Public PR: [#2](https://github.com/keenlok/clawdot-platform/pull/2).
