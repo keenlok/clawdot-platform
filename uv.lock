@@ -892,7 +892,7 @@ dev = [{ name = "respx", specifier = ">=0.22" }]
 
 [[package]]
 name = "clawdot-platform-workspace"
-version = "0.0.0"
+version = "0.1.1"
 source = { virtual = "." }
 
 [package.dev-dependencies]
