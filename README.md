@@ -77,6 +77,7 @@ Git ignore rules do not prevent force-adding secrets; pre-commit includes Gitlea
 Deployments own encrypted backups, restore drills and runtime secret delivery.
 
 - [Administration setup](docs/admin-setup.md)
+- [How Postgres, Valkey and Elasticsearch fit together](docs/storage-architecture.md)
 - [Sandboxed extensions](packages/plugins/extensions/README.md)
 - [Reminders and website watches](docs/reusable-jobs.md)
 - [Rendered browsing](docs/rendered-fetch.md)
