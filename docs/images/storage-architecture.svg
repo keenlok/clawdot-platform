@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1020" viewBox="0 0 1560 1020" role="img" aria-labelledby="title desc">
+  <title id="title">How Clawdot's storage pieces fit together</title>
+  <desc id="desc">A persistent Clawdot application connects to three stores: Postgres for durable records, Valkey for temporary cache, counters and locks, and Elasticsearch for derived text and vector search. The application saves records before indexing and loads referenced messages for search results. Connections are application calls, not database replication. The public scaffold uses in-memory stores.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #172b46; }
+      .title { font-size: 43px; font-weight: 700; }
+      .subtitle { font-size: 23px; fill: #475569; }
+      .heading { font-size: 31px; font-weight: 700; }
+      .role { font-size: 22px; font-weight: 700; }
+      .body { font-size: 22px; }
+      .small { font-size: 19px; fill: #475569; }
+      .label { font-size: 20px; font-weight: 700; }
+      .line { fill: none; stroke: #475569; stroke-width: 3; marker-start: url(#arrow-back); marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1560" height="1020" fill="#f8fafc"/>
+  <text x="60" y="84" class="title">Three stores. One application connecting them.</text>
+  <text x="60" y="127" class="subtitle">Clawdot storage architecture for a persistent downstream application</text>
+
+  <rect x="420" y="190" width="720" height="132" rx="18" fill="#172b46"/>
+  <text x="780" y="236" text-anchor="middle" style="fill:white;font-size:30px;font-weight:700">Clawdot application</text>
+  <text x="780" y="274" text-anchor="middle" style="fill:#dce7f5;font-size:22px">Agent + plugins + repositories + embedder</text>
+  <text x="780" y="303" text-anchor="middle" style="fill:#dce7f5;font-size:18px">Selects stores, checks access and coordinates calls</text>
+
+  <path class="line" d="M 540 328 V 362 H 280 V 447"/>
+  <path class="line" d="M 780 328 V 447"/>
+  <path class="line" d="M 1020 328 V 362 H 1280 V 447"/>
+  <rect x="148" y="388" width="264" height="32" rx="6" fill="#f8fafc"/>
+  <text x="280" y="411" text-anchor="middle" class="label">Read / commit records</text>
+  <rect x="651" y="388" width="258" height="32" rx="6" fill="#f8fafc"/>
+  <text x="780" y="411" text-anchor="middle" class="label">Cache / count / lock</text>
+  <rect x="1149" y="388" width="262" height="32" rx="6" fill="#f8fafc"/>
+  <text x="1280" y="411" text-anchor="middle" class="label">Index / hybrid search</text>
+
+  <rect x="60" y="454" width="440" height="300" rx="18" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <rect x="60" y="454" width="440" height="8" rx="4" fill="#2563eb"/>
+  <text x="88" y="510" class="heading">Postgres</text>
+  <text x="88" y="548" class="role" style="fill:#1d4ed8">DURABLE RECORDS</text>
+  <text x="88" y="596" class="body">Messages and conversations</text>
+  <text x="88" y="632" class="body">Members, settings, confirmations</text>
+  <text x="88" y="668" class="body">Saved facts and plugin tables</text>
+  <text x="88" y="723" class="small">Authoritative relational data: back it up.</text>
+
+  <rect x="560" y="454" width="440" height="300" rx="18" fill="#f0fdfa" stroke="#0f766e" stroke-width="2"/>
+  <rect x="560" y="454" width="440" height="8" rx="4" fill="#0f766e"/>
+  <text x="588" y="510" class="heading">Valkey</text>
+  <text x="588" y="548" class="role" style="fill:#0f766e">TEMPORARY WORKING STATE</text>
+  <text x="588" y="596" class="body">Cached responses and lookups</text>
+  <text x="588" y="632" class="body">Rate and budget counters</text>
+  <text x="588" y="668" class="body">Expiring coordination locks</text>
+  <text x="588" y="723" class="small">TTL keys: loss can reset coordination.</text>
+
+  <rect x="1060" y="454" width="440" height="300" rx="18" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <rect x="1060" y="454" width="440" height="8" rx="4" fill="#c2410c"/>
+  <text x="1088" y="510" class="heading">Elasticsearch</text>
+  <text x="1088" y="548" class="role" style="fill:#c2410c">DERIVED SEARCH INDEX</text>
+  <text x="1088" y="596" class="body">Text + embedding vectors</text>
+  <text x="1088" y="632" class="body">Keyword + semantic search</text>
+  <text x="1088" y="668" class="body">Source message and memory IDs</text>
+  <text x="1088" y="723" class="small">Best-effort indexing: coverage can lag.</text>
+
+  <rect x="60" y="800" width="1440" height="147" rx="18" fill="#e2e8f0"/>
+  <text x="88" y="839" class="label">HOW DATA MOVES</text>
+  <text x="88" y="878" class="body">Save: app writes records, then indexes text and vectors. There is no automatic database replication.</text>
+  <text x="88" y="916" class="body">Find: app searches ES, then loads referenced source records. Valkey supports separate working-state calls.</text>
+  <text x="60" y="988" class="small">The public scaffold uses in-memory stores. Persistent stores and plugins require explicit application wiring.</text>
+</svg>
