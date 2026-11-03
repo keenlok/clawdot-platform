@@ -2,7 +2,7 @@ from chatcore.confirm import ConfirmService
 from chatcore.skills import GateState
 from chatcore.testing import GROUP, press
 from chatcore.tools.registry import ToolRegistry
-from chatcore_google.plugin import GooglePlugin
+from chatcore_google.plugin import GOOGLE_INSTRUCTIONS, GooglePlugin
 from chatcore_google.settings import GoogleSettings
 
 
@@ -11,6 +11,24 @@ async def test_unconfigured_google_is_inert_and_has_no_tools(google_service):
     plugin = GooglePlugin(GoogleSettings(), service.access)
     assert plugin.tools() == []
     await plugin.aclose()
+
+
+async def test_edit_tools_are_gated_writes_in_google_workspace_skill(google_service):
+    service, _, _, _ = google_service
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    tools = {tool.name: tool for tool in plugin.tools()}
+    assert {"google_edit_doc", "google_edit_sheet"} <= tools.keys()
+    assert all(
+        tools[name].writes and not tools[name].direct
+        for name in ("google_edit_doc", "google_edit_sheet")
+    )
+    assert "google_edit_doc" in plugin.skills()[0].tools
+    assert "google_edit_sheet" in plugin.skills()[0].tools
+    assert tools["google_edit_doc"].parameters["additionalProperties"] is False
+    assert tools["google_edit_sheet"].parameters["additionalProperties"] is False
+    assert len(GOOGLE_INSTRUCTIONS) <= 800
+    gates = plugin.tool_gates()
+    assert (await gates["google_edit_doc"].scope(GROUP, False)).state == GateState.AVAILABLE
 
 
 async def test_docx_tool_output_is_untrusted_and_not_persisted(google_service, docx_bytes):

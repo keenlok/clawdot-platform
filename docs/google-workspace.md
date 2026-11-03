@@ -112,13 +112,16 @@ unsupported packages are rejected. The parser uses the explicitly declared `defu
 DOCX output states coverage and truncation. Images/drawings, headers/footers, comments, footnotes,
 directly hidden/deleted text and visual layout are omitted; style inheritance is not interpreted.
 Google tab/heading fragments do not select a DOCX section. The original Word file is unchanged;
-Word writes/conversion, legacy `.doc`, `.docm`, uploaded DOCX and Excel remain unsupported.
-Drive-hosted CSV downloads remain deferred. Upload CSV files in chat instead: UTF-8/BOM, quoted commas/newlines and
-empty cells are supported, with byte/row/column/field limits and explicit truncation/errors.
+Confirmed DOCX edit-copy conversion is described below; Word write-back, legacy `.doc`,
+`.docm`, uploaded DOCX and Excel remain unsupported.
+`google_read_file` also reads bounded Drive-hosted UTF-8 CSV. CSV itinerary imports use
+chat attachments: UTF-8/BOM, quoted commas/newlines and empty cells are supported, with
+byte/row/column/field limits and explicit truncation/errors.
 
 Every Google write shows a preview and waits for the requester's click/reply code. File text,
-cell text and imported/researched material remain untrusted. Written values are literal and
-formula prefixes are neutralized. Commits re-check current chat access, writer permissions,
+cell text and imported/researched material remain untrusted. Creation/appends retain their
+formula-prefix neutralization. Content edits write the exact previewed literal with typed
+`stringValue`, without adding an apostrophe. Commits re-check current chat access, writer permissions,
 opt-out revision, owner identity and target tabs. The plugin has no arbitrary batch-update,
 file search, sharing, deletion or booking tool.
 
@@ -127,6 +130,72 @@ can leave a created file or a completed append with an uncertain result. Inspect
 Drive before submitting another write; the same action is not automatically retried. A file
 creation followed by population can leave an empty or partially populated new file if Google
 fails between those requests. The plugin does not delete it automatically.
+
+## Confirmed content edits
+
+`google_edit_doc` previews one case-sensitive literal replacement in a selected native Doc
+tab. It requires one supported main-body paragraph or table-cell match. Multiple tabs need
+an explicit tab ID. Headers, footers, mixed styles, structural spans and pending suggestions
+that make a match unsafe are refused. The snapshot uses `SUGGESTIONS_INLINE`; the confirmed
+atomic delete/insert uses exact UTF-16 ranges, explicit tab IDs and `requiredRevisionId`.
+A changed revision requires a fresh preview. Replacement styling is restored explicitly,
+and API read-back verifies the bounded result. No tab-wide replacement is issued.
+
+`google_edit_sheet` previews a stable numeric sheet ID, exact tab/range, typed before-values
+and literal after-values. The range must be rectangular, within configured row/column/content
+limits, and at most `GOOGLE_MAX_EDIT_CELLS` (default and maximum 100). Merged, spilled,
+protected and formula cells are refused. `null` explicitly clears a cell. Strings beginning
+with `=`, `+`, `-` or `@` stay exact strings; this tool does not author formulas. A type change
+is visible in the preview. Only `userEnteredValue` is written, preserving unrelated formatting,
+notes and validation.
+
+Sheets has no equivalent to the Docs revision condition. Typed before-values are reread
+before the update, but a collaborator can still write between that read and the mutation.
+Read-back cannot eliminate this race. The preview states this limitation; request a copy
+when isolation from collaborators is needed. There is no automatic overwrite or rollback.
+
+Editable native Docs/Sheets use the original unless the requester explicitly chooses a copy.
+This uses the installed full Docs/Sheets scopes plus current effective file permissions;
+it does not require a per-file Drive grant. A copy selected in a preview remains a copy, and
+lost original access never silently switches the confirmed destination.
+
+Copy fallback and DOCX conversion are disabled by default with `GOOGLE_COPY_QUALIFIED=false`.
+Before an operator enables them, separately authorize owner-grant qualification for app-created,
+externally created editable and viewer-only native sources whose owners permit copying.
+Native Drive `files.copy` uses per-file `drive.file` authorization; metadata visibility and
+account copy capability alone do not establish that grant. Missing per-file authority returns
+`needs_file_authorization`. Do not widen OAuth scope or retry a write to discover permission.
+DOCX download instead uses the existing `drive.readonly` grant, followed by a new app-created
+native upload; source `isAppAuthorized` is not required for that read/import path.
+
+A DOCX edit always downloads and validates the original package, freezes its SHA-256 and
+binary revision, then imports those original bytes into a **new native Google Doc** after
+confirmation. It never reconstructs a document from extracted text or modifies the Word file.
+The imported first-tab mapping is stated in the preview. If conversion changes the supported
+match, the unedited copy is retained and reported as partial. Native copies explicitly target
+the owner's My Drive root and do not reproduce source-folder sharing. Requests use
+`ignoreDefaultVisibility=true`; organization policy can still affect effective visibility.
+API edit copies are not automatically shared with chat members.
+
+The preview freezes the owner, source, destination mode/title, tab/range and exact changes.
+Confirmation rechecks writer/chat/requester/topic binding, opt-out revision and content-specific
+preconditions. Drive `version` is not a blanket conflict condition: harmless metadata changes
+do not substitute for content checks. A created copy does not replace or attach a trip itinerary.
+Action-bound internal reads of the new destination do not grant general link authority;
+later unrelated edits still need a human-posted link.
+
+Google migration `0003_edit_results.sql` adds a result row tied to the durable action reservation.
+Reservation and initial result are transactional; an action cannot execute twice while retained.
+Known destination IDs are stored immediately. Outcomes distinguish verified coverage, conflict
+requiring a fresh preview, partial copies and uncertain application. Uncertain creation can have
+no known ID; inspect Drive before requesting a new action. No uncertain mutation is retried.
+
+Age-based cleanup retains unresolved reservations/results (`reserved`, `destination_created`,
+`shared`, `applying`, `partial`, `uncertain`) for at least
+`GOOGLE_EDIT_UNRESOLVED_RETENTION_DAYS` (default 90), even if the normal action cutoff is earlier.
+The existing normal retention cutoff still governs resolved actions. Scoped privacy deletion
+removes these records immediately, including source/destination metadata; privacy takes priority
+over copy traceability. Neither cleanup deletes remote files or revokes sharing.
 
 ## Save a trip itinerary or supporting files
 
@@ -193,10 +262,12 @@ stay frozen from the preview; rechecking access does not silently regenerate the
 bytes are stored in the pending action. Read-tool content is omitted from persistent tool
 history, but generated chat replies and write previews may retain document-derived text.
 
-Existing itinerary cells are never overwritten. New tabs are initialized atomically with
+Itinerary imports and suggestions never overwrite existing cells. Explicit bounded edits use
+the separate confirmation flow above. New tabs are initialized atomically with
 their header/data; existing tabs use server-side appends. Human edits between a suggestion
-preview and commit force a fresh preview. Change Status, edit rows, drop items and reorganize
-existing rows directly in Sheets. The bot refuses unknown schemas and tab-name collisions.
+preview and commit force a fresh preview. The edit tool can change an explicitly selected
+Status/value range; row deletion and reorganization remain manual. The bot refuses unknown
+tracker schemas and tab-name collisions.
 
 Trip-wide summaries aggregate recognized tabs and report coverage, gaps, missing/unparseable
 values and clashes, including overnight activities. Stay rows can overlap sightseeing but

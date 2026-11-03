@@ -42,6 +42,136 @@ async def test_tokens_are_cached_and_owner_is_verified(tmp_path):
         assert sum(r.url.host == "oauth2.googleapis.com" for r in calls) == 1
 
 
+async def test_edit_reads_and_fixed_write_endpoints_include_revision_and_literal_cell_types(
+    tmp_path,
+):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        if request.method == "GET" and "/files/file" in request.url.path:
+            return httpx.Response(200, json={"id": "file", "version": "3"})
+        return httpx.Response(200, json={"ok": True})
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        await client.metadata("file")
+        await client.document_for_edit("file")
+        await client.grid_for_edit("file", 42, "A1:B1")
+        await client.edit_document(
+            "file", [{"insertText": {"location": {"index": 3}, "text": "=x"}}], "rev-1"
+        )
+        await client.edit_cells(
+            "file",
+            {
+                "requests": [
+                    {
+                        "updateCells": {
+                            "range": {"sheetId": 42},
+                            "rows": [{"values": [{"userEnteredValue": {"stringValue": "-2 pax"}}]}],
+                            "fields": "userEnteredValue",
+                        }
+                    }
+                ]
+            },
+        )
+
+    metadata = next(r for r in calls if r.url.path.endswith("/files/file"))
+    assert "version" in metadata.url.params["fields"] and "trashed" in metadata.url.params["fields"]
+    assert "canEdit" in metadata.url.params["fields"]
+    doc_read = next(r for r in calls if r.url.host == "docs.googleapis.com")
+    assert doc_read.url.params["suggestionsViewMode"] == "SUGGESTIONS_INLINE"
+    doc_write = next(
+        r
+        for r in calls
+        if r.url.path.endswith(":batchUpdate") and r.url.host == "docs.googleapis.com"
+    )
+    assert b'"requiredRevisionId":"rev-1"' in doc_write.content
+    sheet_read = next(
+        r for r in calls if r.url.host == "sheets.googleapis.com" and r.method == "GET"
+    )
+    assert "userEnteredValue" in sheet_read.url.params["fields"]
+    assert "columnMetadata" in sheet_read.url.params["fields"]
+    field_mask = sheet_read.url.params["fields"]
+    depth = 0
+    for char in field_mask:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            assert depth >= 0
+    assert depth == 0 and "rowData(values(" in field_mask
+    sheet_write = next(
+        r for r in calls if r.url.host == "sheets.googleapis.com" and r.method == "POST"
+    )
+    assert b'"stringValue":"-2 pax"' in sheet_write.content
+
+
+async def test_copy_and_docx_import_are_fixed_native_creation_requests(tmp_path):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        return httpx.Response(
+            200, json={"id": "new-id", "mimeType": "application/vnd.google-apps.document"}
+        )
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        copied = await client.copy_file("source", "Edited copy")
+        imported = await client.import_docx("source", "Native Doc", b"PK bytes")
+    assert copied["id"] == imported["id"] == "new-id"
+    copy = next(r for r in calls if r.url.path.endswith("/files/source/copy"))
+    assert copy.method == "POST" and b'"name":"Edited copy"' in copy.content
+    assert b'"parents":["root"]' in copy.content
+    assert copy.url.params["ignoreDefaultVisibility"] == "true"
+    upload = next(r for r in calls if r.url.path == "/upload/drive/v3/files")
+    assert upload.url.params["uploadType"] == "multipart"
+    assert upload.url.params["ignoreDefaultVisibility"] == "true"
+    assert upload.headers["content-type"].startswith("multipart/related; boundary=")
+    assert b"application/json; charset=UTF-8" in upload.content
+    assert b"application/vnd.google-apps.document" in upload.content
+    assert b"PK bytes" in upload.content
+
+
+async def test_browser_trial_permissions_are_fixed_to_individual_writer_grants(tmp_path):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        if request.method == "GET":
+            return httpx.Response(200, json={"permissions": []})
+        return httpx.Response(200, json={"id": "perm", "type": "user", "role": "writer"})
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        await client.grant_writer("new-copy", "editor@example.com")
+        await client.list_permissions("new-copy")
+        with pytest.raises(GoogleError, match="individual email"):
+            await client.grant_writer("new-copy", "anyone")
+
+    grant = next(
+        request
+        for request in calls
+        if request.method == "POST" and request.url.host == "www.googleapis.com"
+    )
+    assert grant.url.path.endswith("/files/new-copy/permissions")
+    assert grant.url.params["sendNotificationEmail"] == "false"
+    assert json.loads(grant.content) == {
+        "type": "user",
+        "role": "writer",
+        "emailAddress": "editor@example.com",
+    }
+    read = next(request for request in calls if request.method == "GET")
+    assert "nextPageToken,permissions(id,type,role,emailAddress)" == read.url.params["fields"]
+
+
 async def test_account_change_and_revoked_credentials_fail_closed(tmp_path):
     def transport(request):
         if request.url.host == "oauth2.googleapis.com":

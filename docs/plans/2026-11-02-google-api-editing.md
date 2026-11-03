@@ -4,7 +4,10 @@
 > after owner approval. Use an isolated `codex/` branch/worktree at execution time.
 > Checkboxes describe future implementation; this document does not authorize execution.
 
-**Status:** Planned; draft for owner review. No runtime changes or live writes made.
+**Status:** Planned delivery; implementation proposed on `codex/google-api-editing` under
+the owner's 2026-11-03 authorization. Local implementation/testing is recorded in the
+[execution handover](../handovers/2026-11-03-google-editing.md); no live qualification,
+feature activation or deployment is implied.
 **Baseline:** `main` at `0a5cd47` on 2026-11-02.
 **PR integration base:** `1e990a5`, including trip Drive associations, their activation and PDF/CSV readers.
 The existing `0002_trip_files.sql` migration is preserved; this plan uses `0003_edit_results.sql`.
@@ -19,6 +22,15 @@ existing Postgres repositories, pytest and `httpx.MockTransport`. No new depende
 with the installed CLI, which failed: "OAuth session expired and could not be refreshed."
 No Claude review is claimed; this uses AGENTS.md's unavailable-model fallback. A separate
 Codex review during PR preparation identified the replacement-scope correction recorded below.
+
+**Repository split reconciliation (2026-11-03):** The baseline and integration hashes above
+belong to `clawdot-platform-history`. The implementation starts from fresh public platform
+`f918fa9`, not those historical commits or PR 59. Platform owns the Google plugin, migration,
+generic tests and reusable services. References below to `apps/sb_bot` translate to
+`clawdot-deployments/bots/sb_bot`; bot tests run there against installed candidate wheels.
+Commands spanning both old roots must be run separately in the two active checkouts.
+The downstream production pin remains v0.1.1 until a reviewed release contains this work.
+Current records stay in `docs/plans` and `docs/handovers`; immutable archives are unchanged.
 
 ## 1. Decisions and delivery boundaries
 
@@ -192,10 +204,14 @@ Document both bounds in the operator guide and test the age purge with each phas
 
 Add a transactional `reserve_edit` repository operation: perform the current settings/replay
 checks, insert the existing Google action reservation and its initial result row together.
-Phases are `reserved`, `destination_created`, `applying`, `verified`, `conflict`, `partial`,
+Phases are `reserved`, `destination_created`, `shared`, `applying`, `verified`, `conflict`, `partial`,
 and `uncertain`. A reservation permanently prevents re-executing that action while retained;
 phase updates never authorize replay. Persist destination IDs immediately after creation.
 Privacy purge/retention must cascade result rows and their source/destination metadata.
+`shared` is the browser broker's completed permission-read-back boundary. Retain it and
+`reserved` crash windows with other unresolved results. A durable one-time destination
+creation claim prevents concurrent helper callers or a restart from creating another copy;
+it is committed before the remote request and is never reset by a phase change.
 
 ## 5. Execution and conflict handling
 
