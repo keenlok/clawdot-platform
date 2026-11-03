@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-03
+
 ### Added
 
 - Confirmed bounded text edits in native Google Docs and literal range edits in Sheets,
@@ -31,6 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   requires an explicit request and confirmation, and an API failure never triggers browser fallback.
 - Consolidated plans in `docs/plans/` and handovers in `docs/handovers/`, with updated
   references and repository-wide local link checks.
+- Downstream applications adopting 0.1.2 must update their exact platform source pin, lock,
+  configuration and migration manifest together; the normal migration path applies Google
+  migration `0003`. Keep `GOOGLE_COPY_QUALIFIED=false` and `GOOGLE_BROWSER_ENABLED=false` until
+  the separate owner-grant and browser qualification checks pass. This release does not enable
+  either feature.
 
 ## [0.1.1] - 2026-11-03
 
@@ -41,5 +48,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/keenlok/clawdot-platform/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/keenlok/clawdot-platform/tree/v0.1.1
