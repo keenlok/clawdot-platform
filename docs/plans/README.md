@@ -10,7 +10,7 @@ Last checked: 2026-11-03. All plans share this folder; handovers live in
 
 | Repair plan | Status | Notes |
 | --- | --- | --- |
-| [Google retry and source-layout repair](2026-11-03-google-retry-and-source-layout.md) | Planned | [PR #9](https://github.com/keenlok/clawdot-platform/pull/9): reviewed candidate; native stop calls and bounded truncation recovery; source edits use original-package conversion/copy; 3,579 tests passed; release/downstream pin required |
+| [Google retry and source-layout repair](2026-11-03-google-retry-and-source-layout.md) | Live | [PR #9](https://github.com/keenlok/clawdot-platform/pull/9): merged repair; native stop calls and bounded truncation recovery; source edits use original-package conversion/copy; 3,579 tests passed; v0.1.3 release and coordinated downstream delivery |
 
 ## Status key
 

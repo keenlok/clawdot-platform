@@ -1,7 +1,7 @@
 # Google retry and source-layout repair
 
-Status: Planned delivery; implementation and independent review complete, with a new platform
-release/downstream pin still required. Authorized by the owner's request to fix the repeated-retry bug and the
+Status: Live platform repair, merged through PR #9; v0.1.3 is the coordinated release.
+The downstream exact pin and healthy rollout will be recorded in its linked PR. Authorized by the owner's request to fix the repeated-retry bug and the
 existing approved API editing requirement to import the original DOCX package instead of
 reconstructing a document from extracted text. This is a repair to that scope, not a new
 browser capability. No live Google mutation is part of implementation or validation.
@@ -125,3 +125,17 @@ changes, release tags, merges or deployments were performed as part of this repa
 
 Delivery: [platform PR #9](https://github.com/keenlok/clawdot-platform/pull/9), with
 [downstream draft PR #9](https://github.com/keenlok/clawdot-deployments/pull/9).
+
+## Release authorization and rollout
+
+The owner subsequently requested publishing the release, updating the exact downstream pin
+and deploying the reviewed repair. Platform PR #9 merged as
+`306745089eb3cd2947f8622ddc5508490d6cd739`. The v0.1.3 release changes only root release
+metadata, this status record and its index; the implementation remains the reviewed repair.
+The CI release job publishes an immutable tag only after required jobs pass. Downstream
+sources and the expected platform/migration manifests must all select that same published
+tag/commit, with anonymous-source builds and fresh app CI before merging. The installed
+CI-gated auto-deploy service remains authoritative; verify runtime provenance, both service
+health checks, copy enabled/browser disabled, current/previous tags and rollback images.
+Existing Google output files and sources are outside this rollout; no new Google mutation
+or browser activation is authorized by the software release.
