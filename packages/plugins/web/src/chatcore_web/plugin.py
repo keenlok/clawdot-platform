@@ -61,6 +61,7 @@ def _extract(content_type: str, body: bytes) -> tuple[str | None, str]:
 
 class WebPlugin(BasePlugin):
     name = "web"
+    explainer_package = "chatcore_web"
 
     def __init__(self, settings: WebSettings | None = None) -> None:
         self.settings = settings or WebSettings()

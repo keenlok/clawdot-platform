@@ -409,6 +409,13 @@ class AgentResponder:
         )
         skills_on = skill_turn is not None and skill_turn.mode is SkillsMode.ON
         app_prompt = self.skills_prompt if skills_on else self.system_prompt
+        app_prompt += (
+            "\n\nFor questions about bot/tool internals, retrieve maintained evidence with "
+            "read_explainer (load the explanation skill if needed). Distinguish documented "
+            "behavior from current availability. Say when a detail is undocumented; never "
+            "invent caches, locks or guarantees. Documentation does not prove a past action "
+            "succeeded; check that action's saved result."
+        )
         if self.model_switch is not None:
             app_prompt += "\n\n" + MODEL_SWITCH_PROMPT
         time_guidance = (

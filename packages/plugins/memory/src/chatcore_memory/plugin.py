@@ -144,6 +144,7 @@ class MemorySettings(BaseSettings):
 
 class MemoryPlugin(BasePlugin):
     name = "memory"
+    explainer_package = "chatcore_memory"
     help_title = "Memory"
 
     def skills(self):

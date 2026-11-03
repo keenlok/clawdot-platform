@@ -57,6 +57,20 @@ container commands and the checklist for copying it into a downstream deployment
 
 ## Development checks
 
+Ask `/explain` for the architecture, or `/explain expenses storage` for a documented
+plugin section. Mention-only group apps require the usual `/explain@bot` spelling.
+These commands use bundled documentation without an LLM call. Natural-language questions
+can retrieve the same evidence through `read_explainer`. Availability is checked separately
+for the current caller/chat; an explanation does not perform an example action.
+
+Plugins opt in with `explainer_package = "their_import_package"` on their plugin class
+and a packaged `EXPLAIN.md` following the built-in six-section/TOML-front-matter format.
+Existing short skill instructions remain separate. Apps can pass
+`BotApp(explanation_source=ExplanationSource("owner/project", "<full-public-commit-sha>"))`
+using `chatcore.explainers.ExplanationSource`. Without a reviewed source identity, replies
+show a bundled-document digest instead of guessing the deployed platform version.
+See [wiki generation and publication](docs/wiki/README.md) for reuse of the same sources.
+
 ```sh
 uv run pre-commit install
 uv run ruff check packages services apps tests .github/scripts

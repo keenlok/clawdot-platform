@@ -35,6 +35,8 @@ from chatcore.events import (
     User,
     UserRef,
 )
+from chatcore.explain_plugin import ExplainPlugin
+from chatcore.explainers import ExplainerCatalog, ExplanationSource
 from chatcore.pending import PendingActionHandler
 from chatcore.platform import ChatPlatform
 from chatcore.plugin import Command, CommandContext, Plugin
@@ -120,11 +122,23 @@ class BotApp:
         agent_tool_steps: int = 8,
         skill_instructions: Mapping[str, str] | None = None,
         skill_instruction_additions: Mapping[str, str] | None = None,
+        explanation_source: ExplanationSource | None = None,
     ) -> None:
         self.platform = platform
         self.stores = stores
         self.access = access
         self.plugins = list(plugins)
+        if any(plugin.name == "explain" for plugin in self.plugins):
+            raise ValueError("The explain plugin is reserved and installed by BotApp")
+        catalog = ExplainerCatalog.from_plugins(self.plugins, source=explanation_source)
+        self.plugins.append(
+            ExplainPlugin(
+                catalog,
+                evaluate_tool=lambda name, ctx: self.skills.evaluate_tool(name, ctx),
+                lookup_tool=lambda name: self.tools.get(name),
+                lookup_gate=lambda name: self.skills.gate(name),
+            )
+        )
         self.responder: Responder = responder or EchoResponder()
         self.bot_name = bot_name
         self.group_mentions_only = group_mentions_only

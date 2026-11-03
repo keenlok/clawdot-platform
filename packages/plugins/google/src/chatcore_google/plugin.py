@@ -33,6 +33,7 @@ SOURCE_MESSAGE = text("Original human message ID in this chat/topic containing t
 
 class GooglePlugin(BasePlugin):
     name = "google"
+    explainer_package = "chatcore_google"
     help_title = "Google Workspace"
     migrations_package = "chatcore_google.migrations"
 

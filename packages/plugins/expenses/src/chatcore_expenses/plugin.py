@@ -145,6 +145,7 @@ async def _current_trip(ledger: LedgerRepo, chat: ChatRef) -> dict | None:
 
 class ExpensesPlugin(BasePlugin):
     name = "expenses"
+    explainer_package = "chatcore_expenses"
     help_title = "Expenses and trips"
     migrations_package = "chatcore_expenses.migrations"
 

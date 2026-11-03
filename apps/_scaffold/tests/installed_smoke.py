@@ -11,6 +11,7 @@ from pathlib import Path
 import chatcore
 import chatcore_console
 import example_bot
+from chatcore.explainers import ExplainerCatalog
 from chatcore.llm.types import Completion, Message
 from chatcore.testing import FakePlatform, ScriptedProvider, message
 from example_bot.app import build_app
@@ -35,9 +36,10 @@ def main() -> None:
     for module in (chatcore, chatcore_console, example_bot):
         assert Path(module.__file__).resolve().is_relative_to(prefix), module.__name__
     asyncio.run(_agent_smoke())
+    assert "Postgres" in ExplainerCatalog.from_plugins([]).section("framework", "storage")
     result = subprocess.run(
         [str(Path(sys.executable).with_name("example-bot"))],
-        input="@examplebot packaged hello\n/help@examplebot\n::quit\n",
+        input="@examplebot packaged hello\n/help@examplebot\n/explain@examplebot\n::quit\n",
         env={"BOT_NAME": "examplebot", "ALLOWED_CHATS": "console:group"},
         capture_output=True,
         text=True,
@@ -45,6 +47,8 @@ def main() -> None:
     )
     assert "echo: packaged hello" in result.stdout
     assert "/time@examplebot" in result.stdout
+    assert "How the bot works" in result.stdout
+    assert "sha256:" in result.stdout
     print(
         "Installed scaffold: wheel imports, persona, agent wiring and console entry point passed."
     )

@@ -66,7 +66,9 @@ async def test_prompt_context_tracks_chat_kind_and_authorized_tools(dm, admin, t
         "bot_account": "routing_account",
         "conversation_type": "private" if dm else "group",
         "reply_scope": "current topic" if topic else "current chat",
-        "available_tools": ["admin_data", "read_data"] if admin else ["read_data"],
+        "available_tools": ["admin_data", "read_data", "read_explainer"]
+        if admin
+        else ["read_data", "read_explainer"],
     }
     assert {key: context[key] for key in expected} == expected
     assert context["display_time_source"] == "fallback"

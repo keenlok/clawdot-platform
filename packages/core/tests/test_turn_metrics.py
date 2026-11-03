@@ -618,7 +618,8 @@ async def test_provider_requests_are_identical_with_metrics_stub(monkeypatch):
     monkeypatch.setattr(agent_module.secrets, "token_hex", lambda _count: "stable-test-tag")
     for steps, expected_choices in ((8, ["auto", "auto"]), (1, ["auto", "none"])):
         normal_calls, normal = await run_scenario(steps=steps)
-        assert normal_calls[0]["tools"] == [expected_spec]
+        assert [spec.name for spec in normal_calls[0]["tools"]] == ["work", "read_explainer"]
+        assert normal_calls[0]["tools"][0] == expected_spec
         assert normal_calls[0]["tool_choice"] == "auto"
         with monkeypatch.context() as metrics_patch:
             metrics_patch.setattr(agent_module, "TurnMetrics", StubMetrics)
