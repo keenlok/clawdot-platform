@@ -173,9 +173,16 @@ class OpenAICompatProvider:
             except (ValueError, TypeError):
                 arguments = {"__invalid_json__": True}
             calls.append(ToolCall(call.id, call.function.name, arguments))
+        provider_reason = choice.finish_reason
         reason = {"stop": "end_turn", "length": "max_tokens", "tool_calls": "tool_use"}.get(
-            choice.finish_reason, "error"
+            provider_reason, "error"
         )
+        if provider_reason == "stop" and calls:
+            reason = "tool_use"
+            log.info(
+                "normalized native tool completion finish_reason=stop call_count=%d",
+                len(calls),
+            )
         usage = (
             Usage(response.usage.prompt_tokens, response.usage.completion_tokens)
             if response.usage

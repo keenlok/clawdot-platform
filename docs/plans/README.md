@@ -10,7 +10,7 @@ Last checked: 2026-11-03. All plans share this folder; handovers live in
 
 | Repair plan | Status | Notes |
 | --- | --- | --- |
-| [Google retry and source-layout repair](2026-11-03-google-retry-and-source-layout.md) | Planned | Normalize native stop calls; route source edits through original-package conversion/copy rather than plain-text creation; downstream release required |
+| [Google retry and source-layout repair](2026-11-03-google-retry-and-source-layout.md) | Planned | Reviewed candidate: native stop calls and bounded truncation recovery; source edits use original-package conversion/copy; 3,579 tests passed; release/downstream pin required |
 
 ## Status key
 
