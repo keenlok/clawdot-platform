@@ -1,0 +1,10 @@
+[Unit]
+Description=Start the protected Chatcore release-control watchdog at boot
+
+[Timer]
+OnBootSec=60s
+Unit=chatcore-release-watchdog.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

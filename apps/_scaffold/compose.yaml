@@ -1,0 +1,33 @@
+name: example-bot
+services:
+  example-bot:
+    build:
+      context: ../..
+      dockerfile: apps/_scaffold/Dockerfile
+    image: example-bot:${IMAGE_TAG:-local}
+    stdin_open: true
+    tty: true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
+    environment:
+      BOT_NAME: ${BOT_NAME:-examplebot}
+      ALLOWED_CHATS: ${ALLOWED_CHATS:-console:group}
+      ADMIN_USERS: ${ADMIN_USERS:-console:me}
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "generation": 0,
+  "files": {
+    "/etc/chatcore-release-control/app-runtime.env": "REPLACE_WITH_FILE_SHA256",
+    "/etc/chatcore-release-control/p08-runtime-compose.yml": "REPLACE_WITH_FILE_SHA256",
+    "/etc/chatcore-release-control/runtime-limits.env": "REPLACE_WITH_FILE_SHA256"
+  },
+  "digest": "REPLACE_WITH_CANONICAL_RUNTIME_CONFIG_SHA256"
+}

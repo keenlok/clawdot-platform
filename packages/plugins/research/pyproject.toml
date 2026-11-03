@@ -1,0 +1,13 @@
+[project]
+name = "chatcore-research"
+version = "0.1.0"
+description = "Bounded inline and durable deep web research for chatcore"
+requires-python = ">=3.12"
+dependencies = ["chatcore", "chatcore-web", "pydantic-settings>=2.6"]
+
+[dependency-groups]
+dev = ["respx>=0.22"]
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.13"]
+build-backend = "uv_build"

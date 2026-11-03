@@ -1,0 +1,13 @@
+# INACTIVE EXAMPLE. Provision this policy only through the protected host service.
+# Placeholders intentionally fail closed and are not suitable for production.
+schema_version = 1
+relay_origin = "https://REPLACE_WITH_INSTALLED_BROKER_ORIGIN"
+relay_path = "/v1/runner/receipt"
+egress_network = "REPLACE_WITH_ROOT_PROVISIONED_EGRESS_PROFILE"
+egress_destinations = ["github.com:443", "REPLACE_WITH_BROKER_HOST:443"]
+runtime_name = "runsc"
+runtime_manifest_sha256 = "REPLACE_WITH_64_HEX_PACKAGE_DIGEST"
+runner_image = "REPLACE_WITH_IMAGE@sha256:64_HEX_IMAGE_DIGEST"
+runner_execution_closure_sha256 = "REPLACE_WITH_64_HEX_CLOSURE_DIGEST"
+single_job = true
+registration_material = "ephemeral-only"

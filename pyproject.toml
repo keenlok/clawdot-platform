@@ -1,0 +1,70 @@
+[project]
+name = "clawdot-platform-workspace"
+version = "0.0.0"
+description = "Workspace root for the chatcore framework and the apps built on it"
+requires-python = ">=3.12"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/core", "packages/adapters/*", "packages/plugins/*", "services/*", "apps/*"]
+
+[tool.uv.sources]
+chatcore = { workspace = true }
+chatcore-console = { workspace = true }
+chatcore-telegram = { workspace = true }
+chatcore-web = { workspace = true }
+chatcore-search = { workspace = true }
+chatcore-memory = { workspace = true }
+chatcore-expenses = { workspace = true }
+chatcore-stocks = { workspace = true }
+chatcore-jobs = { workspace = true }
+chatcore-polls = { workspace = true }
+chatcore-google = { workspace = true }
+chatcore-extensions = { workspace = true }
+chatcore-browse = { workspace = true }
+chatcore-browser-renderer = { workspace = true }
+chatcore-research = { workspace = true }
+chatcore-release-control = { workspace = true }
+example-bot = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.14",
+    "pre-commit>=4.0",
+    "PyYAML>=6.0.3",
+    "trustme>=1.2",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["packages", "services", "apps", "tests"]
+addopts = "--import-mode=importlib"
+markers = [
+    "integration: needs the compose.dev.yaml services (Postgres, ES, Valkey)",
+    "browser: needs a local Playwright Chromium installation",
+    "sandbox_integration: opt-in tests that exercise the real local Docker sandbox",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "TID", "ASYNC", "S"]
+ignore = ["S101"]  # assert is fine in tests and for invariants
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# §7a: nothing outside the Telegram adapter may import Telegram code.
+"telegram".msg = "Only packages/adapters/telegram may import python-telegram-bot; use chatcore.platform instead."
+# §3d: framework packages must stay extractable, so they never import an app.
+"sb_bot".msg = "Framework packages must not import apps."
+
+[tool.ruff.lint.per-file-ignores]
+"packages/adapters/telegram/**" = ["TID251"]
+"apps/**" = ["TID251"]
+"**/tests/**" = ["S"]

@@ -1,0 +1,100 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+        env:
+          POSTGRES_USER: chatcore
+          POSTGRES_PASSWORD: chatcore
+          POSTGRES_DB: chatcore_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chatcore -d chatcore_test"
+          --health-interval 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --all-packages
+      - run: uv run ruff check packages services apps tests .github/scripts
+      # Release-control tests start their own throwaway Postgres from these binaries.
+      - run: echo "PG_BIN=$(pg_config --bindir)" >> "$GITHUB_ENV"
+      - run: uv run pytest -q -m "not browser and not sandbox_integration"
+        env:
+          TEST_PG_DSN: postgresql://chatcore:chatcore@127.0.0.1:5432/chatcore_test
+
+  scaffold:
+    name: scaffold
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --package example-bot --group dev
+      - run: uv run --locked --package example-bot --group dev pytest -q apps/_scaffold/tests/test_app.py
+      - name: Build and run installed scaffold outside the checkout
+        shell: bash
+        run: |
+          wheelhouse="$RUNNER_TEMP/scaffold-wheels"
+          for package in chatcore chatcore-console example-bot; do
+            uv build --wheel --package "$package" --out-dir "$wheelhouse"
+          done
+          uv export --locked --package example-bot --no-dev --no-emit-workspace --output-file "$RUNNER_TEMP/scaffold-requirements.txt"
+          uv venv "$RUNNER_TEMP/scaffold-venv"
+          uv pip sync --python "$RUNNER_TEMP/scaffold-venv/bin/python" "$RUNNER_TEMP/scaffold-requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/scaffold-venv/bin/python" --no-deps "$wheelhouse"/*.whl
+          cd "$RUNNER_TEMP"
+          env -u PYTHONPATH "$RUNNER_TEMP/scaffold-venv/bin/python" "$GITHUB_WORKSPACE/apps/_scaffold/tests/installed_smoke.py"
+      - name: Build and exercise scaffold container
+        run: |
+          docker build --file apps/_scaffold/Dockerfile --tag clawdot-scaffold:ci .
+          printf '%s\n' '@examplebot container hello' '::quit' | docker run --rm --interactive --network none --read-only --tmpfs /tmp clawdot-scaffold:ci | tee "$RUNNER_TEMP/scaffold-container.txt"
+          grep -Fx '[group] examplebot: echo: container hello' "$RUNNER_TEMP/scaffold-container.txt"
+
+  release:
+    name: release
+    needs: [ci, scaffold]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      github.repository == 'keenlok/clawdot-platform'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Publish changed platform version only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          python3 .github/scripts/platform_release.py --commit "$GITHUB_SHA" --publish

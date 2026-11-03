@@ -1,0 +1,47 @@
+{
+  "name": "sb-bot",
+  "services": {
+    "sb-bot": {
+      "image": "${SB_BOT_IMAGE:?host service must select a verified local image}",
+      "container_name": "sb-bot",
+      "restart": "unless-stopped",
+      "env_file": ["/etc/chatcore-release-control/app-runtime.env"],
+      "environment": {
+        "HF_HUB_OFFLINE": "1",
+        "EMBED_CACHE_DIR": "/models/embeddinggemma-300m",
+        "SB_BOT_RELEASE_IDENTITY": "${SB_BOT_RELEASE_IDENTITY:?host service must provide identity}",
+        "TELEGRAM_TRANSPORT": "bridge",
+        "TELEGRAM_BRIDGE_CREDENTIAL_FILE": "/tmp/telegram-bridge-credential"
+      },
+      "labels": {
+        "org.chatcore.release.identity": "${SB_BOT_RELEASE_IDENTITY:?host service must provide identity}"
+      },
+      "user": "10001:10001",
+      "read_only": true,
+      "tmpfs": ["/tmp:size=64m"],
+      "cap_drop": ["ALL"],
+      "security_opt": ["no-new-privileges:true"],
+      "mem_limit": "${SB_BOT_MEMORY_LIMIT:?operator measured runtime limit required}",
+      "cpus": "${SB_BOT_CPU_LIMIT:?operator measured runtime limit required}",
+      "pids_limit": "${SB_BOT_PIDS_LIMIT:?operator measured runtime limit required}",
+      "networks": ["app-backend", "app-internal"],
+      "volumes": ["app-models:/models:ro"],
+      "healthcheck": {
+        "test": ["CMD", "python", "-I", "/usr/local/bin/chatcore-smoke"],
+        "interval": "30s",
+        "timeout": "3s",
+        "start_period": "60s",
+        "retries": 3
+      },
+      "logging": {
+        "driver": "json-file",
+        "options": {"max-size": "10m", "max-file": "3"}
+      }
+    }
+  },
+  "networks": {
+    "app-backend": {"external": true},
+    "app-internal": {"external": true}
+  },
+  "volumes": {"app-models": {"external": true}}
+}

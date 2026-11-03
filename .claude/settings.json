@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(codex exec *)",
+      "Bash(codex --version)"
+    ],
+    "deny": [
+      "Bash(codex *--dangerously-bypass-approvals-and-sandbox*)",
+      "Bash(codex *--dangerously-bypass-hook-trust*)",
+      "Bash(codex *danger-full-access*)",
+      "Bash(codex *--yolo*)"
+    ]
+  }
+}

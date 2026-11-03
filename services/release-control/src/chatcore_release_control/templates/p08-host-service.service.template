@@ -1,0 +1,33 @@
+[Unit]
+Description=Protected Chatcore host release service
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/
+Environment=PYTHONPATH=/opt/chatcore-release-control/lib
+ExecStart=/usr/bin/python3 -m chatcore_release_control.host_service_http --config /etc/chatcore-release-control/host-service.json
+Restart=on-failure
+RestartSec=3
+UMask=0077
+RuntimeDirectory=chatcore-release-control
+RuntimeDirectoryMode=0700
+StateDirectory=chatcore-release-control
+StateDirectoryMode=0700
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/chatcore-release-control /run/chatcore-release-control
+MemoryMax=REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT
+CPUQuota=REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT
+TasksMax=REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "builder": "chatcore-release-build",
+  "network": "none",
+  "pull": false,
+  "recipe": "/etc/chatcore-release-control/p08-app.Dockerfile",
+  "dependency_cache": "/var/lib/chatcore-release-control/dependency-cache.tar",
+  "dependency_cache_sha256": "REPLACE_WITH_OPERATOR_REVIEWED_SHA256",
+  "image_repository": "local/sb-bot",
+  "reviewed_source_exceptions": ["apps/sb_bot/deploy/backup.sh"],
+  "buildx_builder": "chatcore-release-build",
+  "builder_container": "buildx_buildkit_chatcore-release-build0",
+  "driver": "docker-container",
+  "docker_context": "default",
+  "buildkit_image_ref": "REPLACE_WITH_PINNED_BUILDKIT_IMAGE_REF_AND_SHA256",
+  "buildkit_image_id": "sha256:REPLACE_WITH_PINNED_BUILDKIT_IMAGE_ID",
+  "cgroup_parent": "/system.slice/chatcore-release-build.slice",
+  "resource_manifest": "/etc/chatcore-release-control/build-capabilities.json",
+  "resource_limits": {
+    "cpu_quota_micros": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+    "memory_bytes": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+    "memory_swap_bytes": "REPEAT_MEMORY_BYTES_EXACTLY",
+    "pids_max": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+    "scratch_bytes": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+    "scratch_mount": "/var/lib/buildkit",
+    "timeout_seconds": 600,
+    "max_output_bytes": 65536
+  },
+  "buildkit_capabilities": "/etc/chatcore-release-control/build-capabilities.json",
+  "fixed_builder": {
+    "name": "chatcore-release-build",
+    "container": "buildx_buildkit_chatcore-release-build0",
+    "driver": "docker-container",
+    "docker_context": "default",
+    "docker_endpoint": "unix:///var/run/docker.sock",
+    "image_ref": "REPLACE_WITH_PINNED_BUILDKIT_IMAGE_REF_AND_SHA256",
+    "image_id": "REPLACE_WITH_INSPECTED_IMAGE_ID_SHA256",
+    "network": "none",
+    "scratch_mount": "/var/lib/buildkit"
+  },
+  "source": {
+    "repository": "https://github.com/OWNER/REPOSITORY.git",
+    "credential_file": "/etc/chatcore-release-control/source-read.token",
+    "allowed_paths_file": "/etc/chatcore-release-control/p08-allowed-paths.json"
+  }
+}

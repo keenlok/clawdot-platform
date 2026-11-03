@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+# The ordinary application may receive bridge credentials, never release authority.
+if python -I -c 'import os, sys; sys.exit(0 if any(
+    key.startswith(("TELEGRAM_BOT_", "BOT_API_", "GITHUB_", "GH_", "ACTIONS_",
+                    "RUNNER_", "BROKER_", "RELEASE_CONTROL_", "LEDGER_", "HOST_"))
+    for key in os.environ
+) else 1)'; then
+  echo "runtime authority configuration denied" >&2
+  exit 78
+fi
+
+if [ "${TELEGRAM_TRANSPORT:-}" != "bridge" ]; then
+  echo "runtime transport configuration denied" >&2
+  exit 78
+fi
+credential=${TELEGRAM_BRIDGE_CREDENTIAL:-}
+case "$credential" in
+  ''|*[!A-Za-z0-9_.-]*)
+    echo "runtime credential unavailable" >&2
+    exit 78
+    ;;
+esac
+if [ "${#credential}" -lt 32 ] || [ "${#credential}" -gt 4096 ]; then
+  echo "runtime credential unavailable" >&2
+  exit 78
+fi
+
+umask 077
+credential_file=/tmp/telegram-bridge-credential
+set -C
+if ! printf '%s' "$credential" > "$credential_file"; then
+  echo "runtime credential unavailable" >&2
+  exit 78
+fi
+set +C
+unset credential TELEGRAM_BRIDGE_CREDENTIAL
+chmod 600 "$credential_file"
+export TELEGRAM_BRIDGE_CREDENTIAL_FILE="$credential_file"
+exec "$@"

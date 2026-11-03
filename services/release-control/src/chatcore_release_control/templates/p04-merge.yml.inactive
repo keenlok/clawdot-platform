@@ -1,0 +1,108 @@
+# INACTIVE REFERENCE ONLY. Install as release.yml only after disposable proofs
+# and owner review of the exact workflow/helper closure, Apps and resource policy.
+name: Approved release (inactive reference)
+run-name: release:${{ inputs.dispatch_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval_id:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      dispatch_id:
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: chatcore-production
+  cancel-in-progress: false
+
+jobs:
+  trusted-merge-controller:
+    name: trusted-merge-controller
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      checks: read
+      contents: write
+      id-token: write
+      pull-requests: write
+    env:
+      APPROVAL_ID: ${{ inputs.approval_id }}
+      RELEASE_CONTROL_PR_NUMBER: ${{ inputs.pr_number }}
+      RELEASE_CONTROL_HEAD_SHA: ${{ inputs.head_sha }}
+      RELEASE_CONTROL_DISPATCH_ID: ${{ inputs.dispatch_id }}
+      RELEASE_CONTROL_GITHUB_API_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+      GITHUB_OWNER_ID: ${{ vars.RELEASE_CONTROL_OWNER_ID }}
+      GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      RUNNER_ENVIRONMENT: ${{ runner.environment }}
+      RELEASE_CONTROL_BROKER_ORIGIN: ${{ vars.RELEASE_CONTROL_BROKER_ORIGIN }}
+      RELEASE_CONTROL_OIDC_AUDIENCE: ${{ vars.RELEASE_CONTROL_OIDC_AUDIENCE }}
+      RELEASE_CONTROL_OIDC_SUBJECT_FORMAT: ${{ vars.RELEASE_CONTROL_OIDC_SUBJECT_FORMAT }}
+      RELEASE_CONTROL_WORKFLOW_PATH: .github/workflows/release.yml
+      RELEASE_CONTROL_OBJECT_REPOSITORY: /opt/release-control/source.git
+      RELEASE_CONTROL_WORKFLOW_BLOBS_JSON: ${{ vars.RELEASE_CONTROL_WORKFLOW_BLOBS_JSON }}
+      RELEASE_CONTROL_BOOTSTRAP_ORIGIN: ${{ vars.RELEASE_CONTROL_BOOTSTRAP_ORIGIN }}
+      RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256: ${{ vars.RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256 }}
+      RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256: ${{ vars.RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256 }}
+      RELEASE_CONTROL_BOOTSTRAP_TOKEN: ${{ secrets.RELEASE_CONTROL_CI_GATEWAY_TOKEN }}
+    steps:
+      - name: Bootstrap pinned trusted runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RELEASE_CONTROL_BOOTSTRAP_ORIGIN:?protected bootstrap origin required}"
+          : "${RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256:?protected manifest digest required}"
+          : "${RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256:?protected bootstrap source digest required}"
+          : "${RELEASE_CONTROL_BOOTSTRAP_TOKEN:?protected bootstrap credential required}"
+          if [[ ! "$RELEASE_CONTROL_BOOTSTRAP_ORIGIN" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+            exit 1
+          fi
+          if [[ ! "$RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ || ! "$RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            exit 1
+          fi
+          if [[ ! "$RELEASE_CONTROL_BOOTSTRAP_TOKEN" =~ ^[A-Za-z0-9_./+=:-]{16,4096}$ ]]; then
+            exit 1
+          fi
+          bootstrap="$RUNNER_TEMP/release-control-hosted-bootstrap.py"
+          printf 'header = "Authorization: Bearer %s"\n' "$RELEASE_CONTROL_BOOTSTRAP_TOKEN" |
+          curl --config - --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+              "$RELEASE_CONTROL_BOOTSTRAP_ORIGIN/v1/ci/bootstrap/hosted-bootstrap.py" |
+            head -c 1048577 > "$bootstrap"
+          test "$(wc -c < "$bootstrap")" -le 1048576
+          printf '%s  %s\n' "$RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256" "$bootstrap" |
+            sha256sum --check --status
+          python3 "$bootstrap" bootstrap
+      - name: Verify immutable binding and merge recorded H
+        run: /opt/release-control/venv/bin/python -m chatcore_release_control.release_coordinator merge-approved-release --approval-id "$APPROVAL_ID"
+
+  isolated-host-relay:
+    name: isolated-host-relay
+    needs: trusted-merge-controller
+    if: github.ref == 'refs/heads/main' && needs.trusted-merge-controller.result == 'success'
+    runs-on: chatcore-p09-ephemeral
+    timeout-minutes: 20
+    permissions:
+      id-token: write
+    env:
+      APPROVAL_ID: ${{ inputs.approval_id }}
+      OPERATION_ID: ${{ inputs.approval_id }}
+      RELEASE_CONTROL_BROKER_ORIGIN: ${{ vars.RELEASE_CONTROL_BROKER_ORIGIN }}
+      RELEASE_CONTROL_OIDC_AUDIENCE: ${{ vars.RELEASE_CONTROL_OIDC_AUDIENCE }}
+    steps:
+      # The fixed relay and its pinned dependencies are part of the audited image.
+      # No checkout, candidate command, host mount/socket, Git write or host secret.
+      - name: Relay the recorded release operation
+        run: python3 -I /opt/p09/runner_relay.py deploy --approval-id "$APPROVAL_ID" --operation-id "$OPERATION_ID"

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "docker_binary": "/usr/bin/docker",
+  "runtime_path": "/opt/gvisor/REPLACE_WITH_VERIFIED_RELEASE/runsc",
+  "runtime_manifest_path": "/opt/gvisor/REPLACE_WITH_VERIFIED_RELEASE/runtime-manifest.json",
+  "runtime_manifest_sha256": "REPLACE_WITH_INSTALLED_MANIFEST_SHA256",
+  "image": "REPLACE_WITH_REPOSITORY_IMAGE@sha256:REPLACE_WITH_64_HEX_DIGEST",
+  "runner_manifest_path": "/opt/chatcore-release-control/runner-image-manifest.json",
+  "runner_closure_sha256": "REPLACE_WITH_64_HEX_RUNNER_CLOSURE_DIGEST",
+  "runner_python_binary": "/usr/bin/python3",
+  "runner_user": "10001:10001",
+  "cpu_limit": 2.0,
+  "memory_limit_bytes": 1073741824,
+  "pid_limit": 128,
+  "lifetime_seconds": 900,
+  "scratch_limit_bytes": 536870912,
+  "output_limit_bytes": 65536,
+  "egress_network": "p09-egress-v1",
+  "egress_destinations": [
+    "github.com:443",
+    "pipelines.actions.githubusercontent.com:443",
+    "REPLACE_WITH_BROKER_HOST:443"
+  ],
+  "egress_manifest_path": "/etc/chatcore-release-control/p09-egress.json",
+  "egress_manifest_sha256": "REPLACE_WITH_64_HEX_EGRESS_DIGEST",
+  "relay_origin": "https://REPLACE_WITH_INSTALLED_BROKER_ORIGIN",
+  "oidc_audience": "REPLACE_WITH_INSTALLED_OIDC_AUDIENCE",
+  "repository_owner": "REPLACE_WITH_OWNER",
+  "repository_name": "REPLACE_WITH_REPOSITORY",
+  "repository_id": 0,
+  "github_app_roles": {
+    "publication": 0,
+    "broker": 0,
+    "runner_registration": 0
+  },
+  "github_installation_id": 0,
+  "github_app_private_key_path": "/etc/chatcore-release-control/runner-app.pem",
+  "ownership_database": "/var/lib/chatcore-release-control/p09/owners.sqlite3"
+}

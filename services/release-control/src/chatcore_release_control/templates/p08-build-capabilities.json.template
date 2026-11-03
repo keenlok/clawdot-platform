@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "builder": "chatcore-release-build",
+  "builder_container": "buildx_buildkit_chatcore-release-build0",
+  "driver": "docker-container",
+  "docker_context": "default",
+  "docker_endpoint": "unix:///var/run/docker.sock",
+  "buildkit_image_ref": "REPLACE_WITH_PINNED_BUILDKIT_IMAGE_REF_AND_SHA256",
+  "buildkit_image_id": "REPLACE_WITH_INSPECTED_IMAGE_ID_SHA256",
+  "builder_cgroup": "/system.slice/chatcore-release-build.slice",
+  "cpu_quota_micros": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+  "memory_max_bytes": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+  "memory_swap_bytes": "REPEAT_MEMORY_MAX_BYTES_EXACTLY",
+  "tasks_max": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+  "scratch_max_bytes": "REPLACE_AFTER_HOST_CAPACITY_MEASUREMENT",
+  "scratch_mount": "/var/lib/buildkit",
+  "network": "none",
+  "reviewed_source_exceptions": ["apps/sb_bot/deploy/backup.sh"]
+}

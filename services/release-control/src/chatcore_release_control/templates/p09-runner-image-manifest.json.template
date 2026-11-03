@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "base_image": "REPLACE_WITH_VERIFIED_BASE@sha256:REPLACE_WITH_64_HEX_DIGEST",
+  "runner_archive_sha256": "REPLACE_WITH_64_HEX_RUNNER_ARCHIVE_DIGEST",
+  "bootstrap_sha256": "REPLACE_WITH_64_HEX_BOOTSTRAP_DIGEST",
+  "relay_helper_sha256": "REPLACE_WITH_64_HEX_RELAY_HELPER_DIGEST",
+  "runner_closure_sha256": "REPLACE_WITH_64_HEX_CLOSURE_DIGEST",
+  "runner_root": "/opt/p09/runner-files",
+  "runner_binary": "config.sh",
+  "runner_run_script": "run.sh",
+  "runner_version": "REPLACE_WITH_PINNED_RUNNER_VERSION",
+  "runner_files": {
+    "config.sh": "REPLACE_WITH_64_HEX_CONFIG_DIGEST",
+    "run.sh": "REPLACE_WITH_64_HEX_RUN_SCRIPT_DIGEST",
+    "bin/Runner.Listener": "REPLACE_WITH_64_HEX_LISTENER_DIGEST"
+  },
+  "registration_protocol": "actions-runner-config-prompt-v1"
+}

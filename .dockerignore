@@ -1,0 +1,15 @@
+.git
+.env*
+*.[iI][nN][iI]
+**/*.[iI][nN][iI]
+*.key
+*.pem
+secrets/
+.venv
+.uv-cache
+models/
+reports/
+logs/
+**/__pycache__
+**/tests
+.claude

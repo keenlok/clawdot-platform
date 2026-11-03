@@ -1,0 +1,19 @@
+title = "Clawdot platform secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "sentry-access-token"
+description = "Found a Sentry.io Access Token (old format), risking unauthorized access to error tracking services and sensitive application data."
+regex = '''(?i)[\w.-]{0,50}?(?:sentry)(?:[ \t\w.-]{0,20})[\s'"]{0,3}(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)[\x60'"\s=]{0,5}([a-f0-9]{64})(?:[\x60'"\s;]|\\[nr]|$)'''
+entropy = 3
+keywords = ["sentry"]
+
+[[rules.allowlists]]
+description = "Exact public gVisor digests in the historical runtime manifest (retained for history scans)."
+condition = "AND"
+paths = ['''^apps/sb_bot/deploy/extensions/runtime-manifest\.json$''']
+regexes = [
+  '''^(46d5c028723ac5fbe40b863f95100f15a00d2aa0cd39c69d892500a988c930bd|e7aba569a4b46b5382c5f0722e8555005f1f3aa1390c54403483d42379fae09b)$''',
+]

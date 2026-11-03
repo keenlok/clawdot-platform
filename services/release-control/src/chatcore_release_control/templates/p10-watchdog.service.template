@@ -1,0 +1,32 @@
+[Unit]
+Description=Protected Chatcore release-control watchdog
+After=chatcore-release-bridge.service chatcore-release-broker.service chatcore-release-host.service chatcore-release-worker.service
+Wants=chatcore-release-bridge.service chatcore-release-broker.service chatcore-release-host.service chatcore-release-worker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/
+Environment=PYTHONPATH=/opt/chatcore-release-control/lib
+ExecStart=/usr/bin/python3 -m chatcore_release_control.watchdog --config /etc/chatcore-release-control/watchdog.json --serve
+Restart=on-failure
+RestartSec=10
+UMask=0077
+RuntimeDirectory=chatcore-release-control
+RuntimeDirectoryMode=0700
+StateDirectory=chatcore-release-control
+StateDirectoryMode=0700
+PrivateTmp=true
+PrivateNetwork=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/var/lib/chatcore-release-control /run/chatcore-release-control
+
+[Install]
+WantedBy=multi-user.target

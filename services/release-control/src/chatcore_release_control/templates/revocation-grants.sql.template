@@ -1,0 +1,18 @@
+-- Inactive maintenance source: install only after review as schema owner.
+-- The revocation table is created by broker_schema.sql; startup never migrates it.
+REVOKE ALL ON release_control.broker_release_revocation FROM PUBLIC;
+GRANT USAGE ON SCHEMA release_control TO release_control_bridge,release_control_broker;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON release_control.broker_release_revocation
+    FROM release_control_broker;
+REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON release_control.broker_release_revocation
+    FROM release_control_bridge;
+GRANT SELECT, INSERT ON release_control.broker_release_revocation
+    TO release_control_bridge;
+GRANT SELECT ON release_control.broker_release_revocation TO release_control_broker;
+REVOKE ALL ON FUNCTION release_control.guard_broker_release_revocation_append_only()
+    FROM PUBLIC;
+REVOKE ALL ON FUNCTION release_control.lock_release_revocation_context(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION release_control.lock_release_revocation_context(uuid)
+    TO release_control_bridge;

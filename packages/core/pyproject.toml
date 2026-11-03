@@ -1,0 +1,22 @@
+[project]
+name = "chatcore"
+version = "0.1.0"
+description = "Platform-independent chat-bot framework core"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.75",
+    "asyncpg>=0.30",
+    "httpx>=0.27",
+    "openai>=2.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "valkey>=6.1",
+]
+
+[project.optional-dependencies]
+es = ["elasticsearch[async]>=9.0"]
+embed = ["fastembed>=0.7"]
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.13"]
+build-backend = "uv_build"

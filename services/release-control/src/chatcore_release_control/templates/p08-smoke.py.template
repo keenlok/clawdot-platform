@@ -1,0 +1,12 @@
+"""Fixed read-only process liveness probe for the installed bot image."""
+
+import os
+import sys
+import time
+
+path = "/tmp/sb-bot.heartbeat"
+try:
+    age = time.time() - os.stat(path).st_mtime
+except OSError:
+    sys.exit(1)
+sys.exit(0 if 0 <= age < 120 else 1)

@@ -1,0 +1,13 @@
+[project]
+name = "example-bot"
+version = "0.1.0"
+description = "A working minimal app built on the clawdot platform"
+requires-python = ">=3.12"
+dependencies = ["chatcore", "chatcore-console"]
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.13"]
+build-backend = "uv_build"
+
+[project.scripts]
+example-bot = "example_bot.main:main"

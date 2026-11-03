@@ -1,0 +1,70 @@
+# INACTIVE REFERENCE ONLY. Keep this outside .github/workflows and do not rename
+# until the P02 gVisor image, owner-provisioned bootstrap bundle, fixed
+# coordinator installation, and repository permissions have passed review.
+# This job never checks out the candidate branch or installs candidate files.
+# The trusted source-object fetch operates without writing Git credentials.
+name: Release candidate CI (inactive reference)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  actions: read
+
+jobs:
+  trusted-ci-coordinator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      RELEASE_CONTROL_GITHUB_API_TOKEN: ${{ github.token }}
+      RELEASE_CONTROL_CI_GATEWAY_TOKEN: ${{ secrets.RELEASE_CONTROL_CI_GATEWAY_TOKEN }}
+      RELEASE_CONTROL_BOOTSTRAP_ORIGIN: ${{ vars.RELEASE_CONTROL_BOOTSTRAP_ORIGIN }}
+      RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256: ${{ vars.RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256 }}
+      RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256: ${{ vars.RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256 }}
+      RELEASE_CONTROL_BOOTSTRAP_TOKEN: ${{ secrets.RELEASE_CONTROL_CI_GATEWAY_TOKEN }}
+      GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+      PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Bootstrap pinned trusted runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${RELEASE_CONTROL_BOOTSTRAP_ORIGIN:?protected bootstrap origin required}"
+          : "${RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256:?protected manifest digest required}"
+          : "${RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256:?protected bootstrap source digest required}"
+          : "${RELEASE_CONTROL_BOOTSTRAP_TOKEN:?protected bootstrap credential required}"
+          if [[ ! "$RELEASE_CONTROL_BOOTSTRAP_ORIGIN" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+            exit 1
+          fi
+          if [[ ! "$RELEASE_CONTROL_BOOTSTRAP_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ || ! "$RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            exit 1
+          fi
+          if [[ ! "$RELEASE_CONTROL_BOOTSTRAP_TOKEN" =~ ^[A-Za-z0-9_./+=:-]{16,4096}$ ]]; then
+            exit 1
+          fi
+          bootstrap="$RUNNER_TEMP/release-control-hosted-bootstrap.py"
+          printf 'header = "Authorization: Bearer %s"\n' "$RELEASE_CONTROL_BOOTSTRAP_TOKEN" |
+          curl --config - --fail --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+              "$RELEASE_CONTROL_BOOTSTRAP_ORIGIN/v1/ci/bootstrap/hosted-bootstrap.py" |
+            head -c 1048577 > "$bootstrap"
+          test "$(wc -c < "$bootstrap")" -le 1048576
+          printf '%s  %s\n' "$RELEASE_CONTROL_BOOTSTRAP_SOURCE_SHA256" "$bootstrap" |
+            sha256sum --check --status
+          python3 "$bootstrap" bootstrap
+      # The bootstrap source verifies its own digest against the pinned manifest,
+      # validates the entire archive, installs runsc and the local immutable
+      # worker image, then installs the coordinator from offline pinned wheels.
+      # Only trusted host steps receive credentials; the sandbox receives none.
+      - name: Validate pull request with the installed coordinator
+        run: /opt/release-control/venv/bin/python -m chatcore_release_control.release_coordinator inspect-pull-request --pull-request-id "$PULL_REQUEST_NUMBER"
+      - name: Run the isolated candidate harness
+        run: /opt/release-control/venv/bin/python -m chatcore_release_control.release_coordinator run-isolated-candidate --pull-request-id "$PULL_REQUEST_NUMBER"
+      - name: Scan and publish the bounded report
+        run: /opt/release-control/venv/bin/python -m chatcore_release_control.release_coordinator scan-and-publish-report --pull-request-id "$PULL_REQUEST_NUMBER"

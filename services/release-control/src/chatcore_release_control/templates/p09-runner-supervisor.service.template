@@ -1,0 +1,37 @@
+# INACTIVE EXAMPLE. Do not install or enable before disposable Linux isolation proof.
+# The CLI and standard config.sh PTY wrapper exist, but the pinned image,
+# role-separated runner App, host policy, and Linux isolation proof still need
+# operator review before installation.
+[Unit]
+Description=Disposable whole-runner supervisor (P09 example only)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+StateDirectory=chatcore-release-control/p09
+StateDirectoryMode=0700
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LANG=C.UTF-8
+WorkingDirectory=/opt/chatcore-release-control/current
+ExecStart=/opt/chatcore-release-control/current/.venv/bin/python -m chatcore_release_control.runner_supervisor run-once --policy /etc/chatcore-release-control/p09-policy.json
+Restart=no
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/chatcore-release-control/p09
+ReadOnlyPaths=/etc/chatcore-release-control
+TimeoutStopSec=30
+KillMode=control-group
+
+# No [Install] section: this template is intentionally not enabled by systemd.

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "target": "production",
+  "state_path": "/var/lib/chatcore-release-control/watchdog-state.json",
+  "journal_path": "/var/lib/chatcore-release-control/host-journal.json",
+  "host_socket": "/run/chatcore-release-control/host.sock",
+  "host_credential_file": "/etc/chatcore-release-control/host-client.token",
+  "bridge_socket": "/run/chatcore-release-control/bridge.sock",
+  "bridge_credential_file": "/etc/chatcore-release-control/bridge-broker.token",
+  "units": {
+    "bridge": "chatcore-release-bridge.service",
+    "broker": "chatcore-release-broker.service",
+    "host": "chatcore-release-host.service",
+    "worker": "chatcore-release-worker.service"
+  },
+  "max_cpu_busy_percent": "REPLACE_WITH_MEASURED_INTEGER_THRESHOLD",
+  "max_load_per_cpu_milli": "REPLACE_WITH_MEASURED_INTEGER_THRESHOLD",
+  "min_available_memory_bytes": "REPLACE_WITH_MEASURED_INTEGER_RESERVATION",
+  "disk_free_bytes": {
+    "/": "REPLACE_WITH_MEASURED_INTEGER_RESERVATION",
+    "/var/lib/chatcore-release-control": "REPLACE_WITH_MEASURED_INTEGER_RESERVATION",
+    "/var/lib/docker": "REPLACE_WITH_MEASURED_INTEGER_RESERVATION"
+  },
+  "sample_interval_seconds": "REPLACE_WITH_REVIEWED_INTEGER_INTERVAL",
+  "poll_interval_seconds": "REPLACE_WITH_REVIEWED_INTEGER_INTERVAL"
+}

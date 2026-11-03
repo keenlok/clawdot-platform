@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "github_app_roles": {
+    "publication": "REPLACE_WITH_NUMERIC_PUBLICATION_APP_ID",
+    "broker": "REPLACE_WITH_NUMERIC_BROKER_APP_ID",
+    "runner_registration": "REPLACE_WITH_NUMERIC_REGISTRATION_APP_ID"
+  },
+  "installation_id": "REPLACE_WITH_NUMERIC_BROKER_INSTALLATION_ID",
+  "private_key_file": "/etc/chatcore-release-control/keys/broker-app.pem"
+}

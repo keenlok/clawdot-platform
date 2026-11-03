@@ -1,0 +1,67 @@
+-- Inactive maintenance source: review role membership and run as schema installer.
+-- Dedicated LOGIN credentials are provisioned separately; no passwords in this file.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='release_control_bridge') THEN
+        CREATE ROLE release_control_bridge NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='release_control_broker') THEN
+        CREATE ROLE release_control_broker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='release_control_maintenance') THEN
+        CREATE ROLE release_control_maintenance NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+    END IF;
+END $$;
+
+REVOKE ALL ON SCHEMA release_control FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA release_control FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA release_control FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA release_control FROM PUBLIC;
+GRANT USAGE ON SCHEMA release_control TO release_control_bridge,release_control_broker,
+    release_control_maintenance;
+
+GRANT SELECT,INSERT ON release_control.target_queue TO release_control_bridge;
+GRANT UPDATE (next_sequence) ON release_control.target_queue TO release_control_bridge;
+GRANT SELECT,INSERT ON release_control.release_card TO release_control_bridge;
+GRANT UPDATE (status,decision,decision_at,nonce_consumed_at)
+    ON release_control.release_card TO release_control_bridge;
+GRANT SELECT,INSERT ON release_control.telegram_update,release_control.decision_outbox
+    TO release_control_bridge;
+GRANT SELECT,INSERT,UPDATE ON release_control.bridge_broker_send TO release_control_bridge;
+GRANT SELECT,INSERT ON release_control.release_card_view TO release_control_bridge;
+GRANT SELECT,INSERT,UPDATE,DELETE ON release_control.telegram_relay_event TO release_control_bridge;
+GRANT SELECT ON release_control.broker_dispatch_intent,release_control.broker_run_observation
+    TO release_control_bridge;
+
+GRANT SELECT ON release_control.release_card,release_control.target_queue,
+    release_control.decision_outbox,release_control.release_run_history TO release_control_broker;
+GRANT UPDATE (next_fence,active_approval_id,active_fence,active_until)
+    ON release_control.target_queue TO release_control_broker;
+GRANT UPDATE (state,lease_owner,lease_until,attempts,dispatched_at)
+    ON release_control.decision_outbox TO release_control_broker;
+GRANT UPDATE (status,fence,run_repository_id,run_id,run_attempt,workflow_ref,workflow_sha,
+    check_run_id,run_bound_at,expected_merge_tree,merge_commit,merge_tree,merge_parent_base,
+    merge_parent_head,merge_recorded_at,merge_anomaly,host_operation_id,host_baseline_identity,
+    host_payload_identity,host_payload_sha256,host_receipt_id,host_receipt_sha256,
+    host_receipt,host_recorded_at) ON release_control.release_card TO release_control_broker;
+GRANT INSERT ON release_control.release_run_history TO release_control_broker;
+GRANT SELECT ON release_control.broker_schema_version,release_control.broker_policy_snapshot,
+    release_control.broker_target_state TO release_control_broker;
+GRANT UPDATE (deployed_identity,generation,reconciliation_required,pending_operation_id,updated_at)
+    ON release_control.broker_target_state TO release_control_broker;
+GRANT SELECT,INSERT,UPDATE ON release_control.broker_merge_lease,
+    release_control.broker_merge_admission,release_control.broker_switch_operation,
+    release_control.broker_dispatch_intent,release_control.broker_report_delivery
+    TO release_control_broker;
+GRANT SELECT,INSERT ON release_control.broker_merge_observation,
+    release_control.broker_run_observation TO release_control_broker;
+
+GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA release_control
+    TO release_control_bridge,release_control_broker;
+GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA release_control
+    TO release_control_maintenance;
+GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA release_control TO release_control_maintenance;
+
+-- These runtime roles must not own any schema/table/function, inherit one another,
+-- receive installer membership, or be granted to the ordinary application's login.
+-- Existing role attributes/memberships are audited separately; this source does not
+-- silently revoke or change roles belonging to a previously installed system.

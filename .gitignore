@@ -1,0 +1,35 @@
+# Secrets: never commit. .env.example (names only) is the one exception.
+.env
+.env.*
+!.env.example
+*.[iI][nN][iI]
+*.key
+*.pem
+secrets/
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Codex track runs (§7b)
+reports/
+logs/
+
+# Claude Code personal settings
+.claude/settings.local.json
+
+# Local model cache
+models/
+
+.DS_Store
+
+# uv cache inside worktrees (Codex sandbox)
+.uv-cache/
+.pw-browsers/

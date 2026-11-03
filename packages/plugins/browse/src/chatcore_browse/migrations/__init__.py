@@ -1,0 +1,1 @@
+"""Browse plugin migrations."""

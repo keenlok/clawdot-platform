@@ -1,0 +1,13 @@
+[project]
+name = "chatcore-search"
+version = "0.1.0"
+description = "Attachments, chat-history and hybrid search (Track C)"
+requires-python = ">=3.12"
+dependencies = ["chatcore[es,embed]", "pypdf>=5.0", "huggingface-hub>=0.30"]
+
+[build-system]
+requires = ["uv_build>=0.9.0,<0.13"]
+build-backend = "uv_build"
+
+[project.scripts]
+chatcore-download-model = "chatcore_search.download_model:main"

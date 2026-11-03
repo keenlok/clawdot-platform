@@ -1,0 +1,19 @@
+# INACTIVE JOB SNIPPET. Root workflow assembly owns workflow_dispatch inputs,
+# workflow-wide concurrency, hosted merge ordering, and the trusted OIDC policy.
+host-deploy:
+  runs-on: chatcore-p09-ephemeral
+  timeout-minutes: 15
+  permissions:
+    id-token: write
+  env:
+    RELEASE_CONTROL_BROKER_ORIGIN: ${{ vars.RELEASE_CONTROL_BROKER_ORIGIN }}
+    RELEASE_CONTROL_OIDC_AUDIENCE: ${{ vars.RELEASE_CONTROL_OIDC_AUDIENCE }}
+  steps:
+    - name: Relay approved host operation
+      env:
+        APPROVAL_ID: ${{ inputs.approval_id }}
+        OPERATION_ID: ${{ inputs.operation_id }}
+      run: >-
+        python3 -I /opt/p09/runner_relay.py deploy
+        --approval-id "$APPROVAL_ID"
+        --operation-id "$OPERATION_ID"

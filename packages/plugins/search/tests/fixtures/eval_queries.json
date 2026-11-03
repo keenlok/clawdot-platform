@@ -1,0 +1,17 @@
+[
+  {
+    "chat_key": "tg:synthetic-eval",
+    "query": "hotel reservation",
+    "expected_message_ids": ["synthetic-hotel-1"]
+  },
+  {
+    "chat_key": "tg:synthetic-eval",
+    "query": "late checkout",
+    "expected_message_ids": ["synthetic-checkout-2"]
+  },
+  {
+    "chat_key": "tg:synthetic-eval",
+    "query": "airport pickup time",
+    "expected_message_ids": ["synthetic-airport-3"]
+  }
+]

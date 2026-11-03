@@ -1,0 +1,35 @@
+# Throwaway local services for development and integration tests. Not for production:
+# security is off and ports are bound to 127.0.0.1 only.
+#   docker compose -f compose.dev.yaml up -d
+#   TEST_PG_DSN=postgresql://chatcore:chatcore@127.0.0.1:55432/chatcore_test uv run pytest -m integration
+name: chatcore-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: chatcore
+      POSTGRES_PASSWORD: chatcore
+      POSTGRES_DB: chatcore_test
+    ports: ["127.0.0.1:55432:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatcore -d chatcore_test"]
+      interval: 2s
+      retries: 30
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.1
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.ml.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports: ["127.0.0.1:59200:9200"]
+    profiles: [search]  # only tracks that need ES start it: --profile search
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb",
+              "--maxmemory-policy", "volatile-lru"]
+    ports: ["127.0.0.1:56379:6379"]

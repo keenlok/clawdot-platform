@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "network": "p09-egress-v1",
+  "destinations": [
+    "github.com:443",
+    "pipelines.actions.githubusercontent.com:443",
+    "REPLACE_WITH_BROKER_HOST:443"
+  ],
+  "egress_enforced": false,
+  "no_host_mounts": false,
+  "no_host_socket": false,
+  "no_host_namespaces": false,
+  "isolated_user_namespace": false,
+  "no_privilege": false,
+  "resource_limits": false,
+  "read_only_root": false,
+  "disposable_scratch": false
+}
