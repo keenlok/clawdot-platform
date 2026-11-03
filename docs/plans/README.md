@@ -8,6 +8,10 @@ updates its row here in the same PR.**
 Last checked: 2026-11-03. All plans share this folder; handovers live in
 [`docs/handovers/`](../handovers/), and design specs remain in `docs/superpowers/specs/`.
 
+| Repair plan | Status | Notes |
+| --- | --- | --- |
+| [Google retry and source-layout repair](2026-11-03-google-retry-and-source-layout.md) | Planned | Normalize native stop calls; route source edits through original-package conversion/copy rather than plain-text creation; downstream release required |
+
 ## Status key
 
 | Status | Meaning |
