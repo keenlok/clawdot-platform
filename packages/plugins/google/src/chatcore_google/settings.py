@@ -17,6 +17,9 @@ class GoogleSettings(BaseSettings):
     max_tabs: int = Field(default=32, ge=1, le=100)
     suggestion_rows_per_call: int = Field(default=20, ge=1, le=100)
     suggestion_rows_per_day: int = Field(default=100, ge=1, le=1000)
+    max_edit_cells: int = Field(default=100, ge=1, le=100)
+    edit_unresolved_retention_days: int = Field(default=90, ge=90, le=3650)
+    copy_qualified: bool = False
     timeout_s: float = Field(default=15, ge=1, le=45)
 
     @property

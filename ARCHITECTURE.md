@@ -47,6 +47,7 @@ The split is complete; this repository starts from a sanitized framework snapsho
 | `start_trip`, `update_trip`, `end_trip`, `activate_trip`, `reopen_trip`, `set_default_trip`, `list_trips`, `get_trip` | Plans, opens, edits, closes or reopens trips with their countries, currencies, settle mode and members (§4) | Writes need a confirmation button pressed by the requesting user |
 | `trip_attach_file`, `trip_list_files`, `trip_read_file`, `trip_remove_file` | A primary itinerary and supporting Drive files on an existing trip (§4) | Attach/remove require confirmation; exact saved-file reads recheck group/owner/access |
 | `google_read_file` | Bounded native Docs/Sheets, DOCX, text PDF and UTF-8 CSV reads | Human-posted file link; unsupported formats return metadata only |
+| `google_edit_doc`, `google_edit_sheet` | Preview bounded native Doc text or typed Sheet range edits | Requester confirmation, current writer authority, frozen destination and content checks; qualified copies only; DOCX always imports into a new native Doc |
 | `update_trip_members` | Adds or removes trip members, the default split (§4) | Applies directly with an echo, like expense writes |
 | `export_expenses` (and `/export`) | Sends one trip's ledger, or the general ledger, as a CSV file for checking by hand (§4) | Read-only; group members only, DMs use the usual group resolution |
 | `stock_analysis(ticker)`, `stock_digest()`, `stock_prices(ticker, days)`, `stock_list(sector?, recommendation?)` | Read-only calls to the stock-investor public API (§5) | No credentials needed |
@@ -391,6 +392,20 @@ Docs, Sheets, DOCX, selectable-text PDF and UTF-8 CSV have bounded readers; othe
 references only. Existing Sheet links are backfilled as references and retain per-currency
 planned-versus-actual comparisons. Old trip IDs, members and ledger data remain unchanged.
 Design and execution: [trip Drive files](docs/plans/2026-11-02-trip-drive-files.md).
+
+**Confirmed Google edits:** the Google plugin owns native content edits and action-scoped
+destination/result primitives. Native Docs/Sheets use effective original write access under
+the full API grants; Drive native copies require per-file authorization. Qualified DOCX edits
+import the original package into a new native Doc. All copy/conversion/content writes require
+the exact requester preview, and never change a trip association implicitly. Docs use explicit
+tab-aware UTF-16 body ranges, suggestions-inline snapshots and revision conditions. Sheets
+use typed bounded target preconditions and literal value writes; a collaborator can race
+between the final read and write. Result IDs and uncertain/partial outcomes are durable and
+cannot authorize replay; unresolved retention includes the browser's `shared` phase, while
+privacy purge cascades immediately. Copy qualification remains disabled by default.
+See [API editing](docs/plans/2026-11-02-google-api-editing.md) and the
+[operator guide](docs/google-workspace.md#confirmed-content-edits). Public framework delivery
+does not update the separately pinned downstream application or authorize live Google writes.
 
 **Schema additions:**
 - `trips(id, chat_id, name, countries, currencies, settle_mode, settle_currency, status, start_date, end_date, started_at, ended_at)`, `trip_defaults(chat_key, trip_id)`, `trip_members(trip_id, user_key, added_by, added_at)`

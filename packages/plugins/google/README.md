@@ -1,6 +1,7 @@
 # chatcore-google
 
-Optional owner-account Google Docs/Sheets and read-only Drive DOCX reads, confirmed native-file creation/appends, and deterministic
+Optional owner-account Google Docs/Sheets and Drive DOCX reads, confirmed native-file creation,
+appends, bounded content edits and deterministic
 itinerary handlers. Export providers and CSV attachment readers are app-injected; this package
 does not import another plugin. App composites combine its tools with search/research/expenses.
 
@@ -9,8 +10,12 @@ Public API: `GooglePlugin`, `GoogleSettings`. Configure `GOOGLE_OWNER_EMAIL` and
 no tools. Configured allowed chats default on, with confirmed per-chat opt-out.
 
 See [operator guide](../../../docs/google-workspace.md) for OAuth setup, scopes, schema,
-confirmation, quota, privacy and uncertainty behavior. Service-account impersonation, sharing
-changes, arbitrary updates, existing-row edits, Word writes, uploaded DOCX and Excel extraction
-are not implemented. Drive DOCX needs an explicitly renewed `drive.readonly` grant; existing
+confirmation, quota, privacy and uncertainty behavior. Native edits use the original when
+effective access permits. Qualified copy fallback and DOCX-to-new-native-Doc edits preserve
+the source and require preview/confirmation before creation. `GOOGLE_COPY_QUALIFIED` defaults
+false pending live owner-grant checks. Every DOCX edit imports the original package bytes;
+there is no Word write-back. Service-account impersonation, arbitrary updates, row deletion,
+uploaded DOCX and Excel extraction are not implemented. API editing does not share files.
+Drive DOCX needs an explicitly renewed `drive.readonly` grant; existing
 native Docs/Sheets profiles remain compatible. Main-body text/tables are extracted with bounded
 ZIP handling and `defusedxml`; images and exact visual layout are not read.

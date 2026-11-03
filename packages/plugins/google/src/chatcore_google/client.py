@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
+import secrets
 import time
 from pathlib import Path
 
@@ -219,7 +221,9 @@ class GoogleClient:
             "www.googleapis.com",
             f"/drive/v3/files/{file_id}",
             params={
-                "fields": "id,name,mimeType,size,modifiedTime,trashed,capabilities(canDownload)",
+                "fields": "id,name,mimeType,size,modifiedTime,trashed,version,headRevisionId,"
+                "isAppAuthorized,copyRequiresWriterPermission,contentRestrictions,"
+                "capabilities(canEdit,canModifyContent,canCopy,canDownload)",
                 "supportsAllDrives": "true",
             },
         )
@@ -241,6 +245,28 @@ class GoogleClient:
             params={"includeTabsContent": "true"},
         )
 
+    async def document_for_edit(self, file_id):
+        """Read exact Docs indices with suggestions inline, as required by batchUpdate."""
+        return await self.request(
+            "GET",
+            "docs.googleapis.com",
+            f"/v1/documents/{file_id}",
+            params={"includeTabsContent": "true", "suggestionsViewMode": "SUGGESTIONS_INLINE"},
+        )
+
+    async def edit_document(self, file_id, requests, required_revision_id):
+        if not isinstance(required_revision_id, str) or not required_revision_id:
+            raise GoogleError("A Docs revision precondition is required for edits.")
+        return await self.request(
+            "POST",
+            "docs.googleapis.com",
+            f"/v1/documents/{file_id}:batchUpdate",
+            json={
+                "writeControl": {"requiredRevisionId": required_revision_id},
+                "requests": requests,
+            },
+        )
+
     async def sheet(self, file_id):
         return await self.request(
             "GET",
@@ -248,6 +274,137 @@ class GoogleClient:
             f"/v4/spreadsheets/{file_id}",
             params={"fields": "spreadsheetId,properties(title),sheets(properties)"},
         )
+
+    async def grid_for_edit(self, file_id, sheet_id, cell_range):
+        if not isinstance(sheet_id, int) or isinstance(sheet_id, bool):
+            raise GoogleError("A stable numeric sheet ID is required for edits.")
+        return await self.request(
+            "GET",
+            "sheets.googleapis.com",
+            f"/v4/spreadsheets/{file_id}",
+            params={
+                "includeGridData": "true",
+                "ranges": cell_range,
+                "fields": "spreadsheetId,properties(title),namedRanges(namedRangeId,range),"
+                "sheets(properties(sheetId,title,gridProperties),merges,protectedRanges,"
+                "conditionalFormats,"
+                "data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue,"
+                "userEnteredFormat,effectiveFormat,dataValidation,note)),rowMetadata,columnMetadata))",
+            },
+        )
+
+    async def edit_cells(self, file_id, body):
+        if not isinstance(body, dict) or not isinstance(body.get("requests"), list):
+            raise GoogleError("A bounded Sheets update request is required.")
+        return await self.request(
+            "POST", "sheets.googleapis.com", f"/v4/spreadsheets/{file_id}:batchUpdate", json=body
+        )
+
+    async def copy_file(self, file_id, title):
+        """Fixed Drive copy call; callers must first pass confirmed destination policy."""
+        from urllib.parse import quote
+
+        return await self.request(
+            "POST",
+            "www.googleapis.com",
+            f"/drive/v3/files/{quote(file_id, safe='')}/copy",
+            params={
+                "supportsAllDrives": "true",
+                "ignoreDefaultVisibility": "true",
+                "fields": "id,name,mimeType,webViewLink",
+            },
+            json={"name": title, "parents": ["root"]},
+        )
+
+    async def grant_writer(self, file_id, email):
+        """Fixed per-user writer grant for a confirmed new browser-trial copy."""
+        from urllib.parse import quote
+
+        if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+            raise GoogleError("A valid Google destination ID is required for sharing.")
+        if not isinstance(email, str) or not re.fullmatch(
+            r"[^\s@]{1,64}@[^\s@.]+(?:\.[^\s@.]+)+", email
+        ):
+            raise GoogleError("A valid individual email address is required for sharing.")
+        return await self.request(
+            "POST",
+            "www.googleapis.com",
+            f"/drive/v3/files/{quote(file_id, safe='')}/permissions",
+            params={
+                "supportsAllDrives": "true",
+                "sendNotificationEmail": "false",
+                "fields": "id,type,role,emailAddress",
+            },
+            json={"type": "user", "role": "writer", "emailAddress": email},
+        )
+
+    async def list_permissions(self, file_id):
+        """Read per-user role state for an action-created destination."""
+        from urllib.parse import quote
+
+        if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+            raise GoogleError("A valid Google destination ID is required to read sharing.")
+        return await self.request(
+            "GET",
+            "www.googleapis.com",
+            f"/drive/v3/files/{quote(file_id, safe='')}/permissions",
+            params={
+                "supportsAllDrives": "true",
+                "pageSize": "100",
+                "fields": "nextPageToken,permissions(id,type,role,emailAddress)",
+            },
+        )
+
+    async def import_docx(self, file_id, title, source_bytes):
+        """Upload DOCX bytes as a new native Google Doc; never updates the DOCX source."""
+        if not isinstance(source_bytes, bytes) or not source_bytes:
+            raise GoogleError("DOCX content is required for native Doc conversion.")
+        boundary = "clawdot-google-docx-" + secrets.token_hex(16)
+        metadata = json.dumps(
+            {"name": title, "mimeType": "application/vnd.google-apps.document"},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        while boundary.encode() in source_bytes or boundary.encode() in metadata:
+            boundary = "clawdot-google-docx-" + secrets.token_hex(16)
+        body = (
+            b"--" + boundary.encode() + b"\r\n"
+            b"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+            + metadata
+            + b"\r\n--"
+            + boundary.encode()
+            + b"\r\n"
+            b"Content-Type: application/"
+            b"vnd.openxmlformats-officedocument.wordprocessingml.document\r\n"
+            b"Content-Transfer-Encoding: binary\r\n\r\n"
+            + source_bytes
+            + b"\r\n--"
+            + boundary.encode()
+            + b"--\r\n"
+        )
+        raw = await self.http.request_bytes(
+            "POST",
+            "https://www.googleapis.com/upload/drive/v3/files",
+            params={
+                "uploadType": "multipart",
+                "supportsAllDrives": "true",
+                "ignoreDefaultVisibility": "true",
+                "fields": "id,name,mimeType,webViewLink",
+            },
+            headers={
+                "Authorization": "Bearer " + await self.token(),
+                "Content-Type": f"multipart/related; boundary={boundary}",
+            },
+            content=body,
+        )
+        try:
+            value = json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise GoogleError(
+                "Google returned an invalid native Doc conversion response."
+            ) from None
+        if not isinstance(value, dict):
+            raise GoogleError("Google returned an invalid native Doc conversion response.")
+        return value
 
     async def values(self, file_id, cell_range):
         from urllib.parse import quote

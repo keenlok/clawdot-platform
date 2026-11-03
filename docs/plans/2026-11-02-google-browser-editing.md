@@ -4,7 +4,10 @@
 > `codex/` branch/worktree. Implement the qualification trial first; production promotion is
 > a separate decision. Do not implement this plan simply because its document exists.
 
-**Status:** Planned; draft for owner review. Browser editing is not implemented or qualified.
+**Status:** Planned delivery; owner authorized implementation on 2026-11-03. The isolated
+worker/broker delivery depends on the API shared primitives and separate egress extraction.
+Browser editing remains disabled and unqualified; local evidence and release dependencies
+are recorded in the [execution handover](../handovers/2026-11-03-google-editing.md).
 **Baseline:** `main` at `0a5cd47` on 2026-11-02.
 **PR integration base:** `1e990a5`, including trip Drive associations, their activation and PDF/CSV readers.
 **Goal:** Determine whether authenticated Playwright/headless Chrome can reliably edit a
@@ -22,6 +25,14 @@ Playwright/aiohttp become dependencies of the new service; SQLite is standard li
 but its expired OAuth session could not refresh. No Claude review is claimed. A separate
 Codex reviewer also examined this draft during PR preparation; its API-plan finding was
 corrected in the shared dependency before publication.
+
+**Repository split reconciliation (2026-11-03):** Historical hashes and PR 59 above refer to
+`clawdot-platform-history`. Implementation uses fresh public platform history. The worker,
+broker and generic tests remain in platform; `apps/sb_bot` paths below translate to
+`clawdot-deployments/bots/sb_bot`, and private operator files move to
+`clawdot-deployments/shared/google-browser`. Bot tests run against installed candidate
+wheels in deployments. Deployment pins, manifests, secrets and images remain private.
+Do not run old combined-root commands as though both applications lived in platform.
 
 ## 1. Scope, alternatives and dependency
 
