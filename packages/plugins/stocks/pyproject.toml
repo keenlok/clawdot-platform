@@ -2,6 +2,7 @@
 name = "chatcore-stocks"
 version = "0.1.0"
 description = "stock-investor public API tools (Track B)"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["chatcore", "httpx>=0.27", "pydantic-settings>=2.6"]
 

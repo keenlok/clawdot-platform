@@ -1,7 +1,7 @@
 # Complete the remaining skill instructions
 
 Date: 2026-11-02. Status: implemented and verified in
-[PR #43](https://github.com/keenlok/clawdot-platform-history/pull/43); merge authorized in chat.
+history PR #43; merge authorized in chat.
 
 ## Goal and design
 

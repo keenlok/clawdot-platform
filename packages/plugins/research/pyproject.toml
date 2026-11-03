@@ -2,6 +2,7 @@
 name = "chatcore-research"
 version = "0.1.0"
 description = "Bounded inline and durable deep web research for chatcore"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["chatcore", "chatcore-web", "pydantic-settings>=2.6"]
 

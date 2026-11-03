@@ -1,6 +1,6 @@
 # Repository layout cleanup: services, plugin boundaries, docs
 
-Revision 2 (2026-11-01). Status: PR 1 merged ([#25](https://github.com/keenlok/clawdot-platform-history/pull/25)); PR 2 merged ([#26](https://github.com/keenlok/clawdot-platform-history/pull/26)); PR 3 merged ([#31](https://github.com/keenlok/clawdot-platform-history/pull/31)) with `AGENTS.md`. Follow-up (2026-11-01, approved in chat): `PLAN.md` renamed to `ARCHITECTURE.md` (section numbers unchanged) and `docs/plans/README.md` added as the status index, enforced by `tests/test_plans_index.py`. PR 5 (nested `packages/`) merged ([#38](https://github.com/keenlok/clawdot-platform-history/pull/38)). PR 4 (docs consolidation) deferred; D7 (protecting gates) is still an owner decision. Revised after the skill layer (stages 0–3, PRs #17–#22), CI and
+Revision 2 (2026-11-01). Status: PR 1 merged (history #25); PR 2 merged (history #26); PR 3 merged (history #31) with `AGENTS.md`. Follow-up (2026-11-01, approved in chat): `PLAN.md` renamed to `ARCHITECTURE.md` (section numbers unchanged) and `docs/plans/README.md` added as the status index, enforced by `tests/test_plans_index.py`. PR 5 (nested `packages/`) merged (history #38). PR 4 (docs consolidation) deferred; D7 (protecting gates) is still an owner decision. Revised after the skill layer (stages 0–3, PRs #17–#22), CI and
 pull-based auto-deploy (#24) and the human-PR-intake plan (#23) merged. See "What changed since
 revision 1" for the deltas.
 

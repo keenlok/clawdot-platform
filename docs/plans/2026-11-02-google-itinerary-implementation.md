@@ -121,7 +121,7 @@ Packaging verification: wheel and source archive build successfully, including t
 migration and `chatcore-google-auth` entry point. No additional third-party dependency was
 introduced. Pre-commit secret scanning, lint and formatting pass.
 
-Handoff: [implementation PR #47](https://github.com/keenlok/clawdot-platform-history/pull/47), branch
+Handoff: implementation PR #47 (history PR #47), branch
 `codex/google-itinerary` against `main`. Implementation commit: `4967e9e`. GitHub confirms the
 PR is open and mergeable against `5bb7c41`; remote CI is inspected at handoff (its current result
 is shown in the PR). The plan index links the implementation and both design PRs. No merge,

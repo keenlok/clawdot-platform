@@ -2,6 +2,7 @@
 name = "chatcore-tutor"
 version = "0.1.0"
 description = "Private language tutor profiles and skill for chatcore"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["chatcore"]
 

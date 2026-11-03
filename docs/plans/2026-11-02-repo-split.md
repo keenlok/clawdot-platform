@@ -32,7 +32,7 @@ in private records.
 ## History decision
 
 The owner selected a fresh public history from the audited framework tree. The
-[earlier repository](https://github.com/keenlok/clawdot-platform-history) remains private;
+earlier repository (`clawdot-platform-history`) remains private;
 historical PR links target that archive. No old Git objects or parent commits are imported.
 Infrastructure identifiers, real Telegram identities, travel records and application
 persona remain private. Generic synthetic examples and the scaffold persona are retained.

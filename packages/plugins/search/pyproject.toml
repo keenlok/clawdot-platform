@@ -2,6 +2,7 @@
 name = "chatcore-search"
 version = "0.1.0"
 description = "Attachments, chat-history and hybrid search (Track C)"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["chatcore[es,embed]", "pypdf>=5.0", "huggingface-hub>=0.30"]
 

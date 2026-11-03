@@ -88,7 +88,7 @@ confirmation; saved opt-outs persist, and DMs require explicit configuration.
 
 Build/start, recovery, firewall persistence and cross-release rollback belong in the
 application's deployment runbook. The original implementation instructions are retained
-in the [private pre-split guide](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/docs/rendered-fetch.md).
+in the private pre-split guide (`clawdot-deployments/docs/archives/platform-ac5a4b0/docs/rendered-fetch.md`).
 
 Check `/healthz` through the internal network. Logs contain hostnames only, never URL
 paths, query strings, page text or exception messages.

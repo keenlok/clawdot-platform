@@ -47,7 +47,7 @@ current-tree and two-commit history scans, and object/author ancestry checks. Th
 publication audit records exact source provenance, exceptions, changed-file hashes and results.
 
 Original operator records and earlier development history remain in the
-[private history archive](https://github.com/keenlok/clawdot-platform-history) and private
+private history archive (`clawdot-platform-history`) and private
 deployment records. Generic feature plans and stable architecture section references remain
 available here. Recurring off-box delivery and offline-key handling are private operational
 follow-ups and do not change the framework boundary.

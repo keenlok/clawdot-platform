@@ -14,7 +14,7 @@ private configuration, secrets and operator infrastructure belong in the owner-o
 Historical feature records describe the original application before the split. They do
 not imply that a platform merge deploys a bot or enables a feature in a downstream app.
 The split is complete; this repository starts from a sanitized framework snapshot, and
-[earlier history](https://github.com/keenlok/clawdot-platform-history) remains private.
+earlier history (`clawdot-platform-history`) remains private.
 
 ## 1. Decisions so far
 
@@ -220,7 +220,7 @@ configuration remains private and inactive pending a separately reviewed redesig
 Core defines relational, search and cache interfaces. Persistent apps choose Postgres,
 Elasticsearch and Valkey with scoped credentials; the scaffold uses in-memory stores.
 Host names, service topology, role provisioning and recovery inputs are private operator
-records in the [pre-split architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md).
+records in the pre-split architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`).
 Do not derive production configuration from this framework specification.
 
 ## 3b. Vector search in Elasticsearch
@@ -458,7 +458,7 @@ scripts, backups and rollback in the private deployment repository. A platform m
 validates framework compatibility; a downstream pin update selects what is deployed.
 
 Production instructions and the original topology are preserved in the
-[private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md). The owner selected a clean public history; earlier application and operator history remains private.
+private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`). The owner selected a clean public history; earlier application and operator history remains private.
 
 ## 6a. Security
 
@@ -584,7 +584,7 @@ The bot records **every message** in allowlisted groups (privacy mode is off), a
 ### Host exposure findings
 
 Host-specific findings and remediation records are retained in the
-[private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md). Downstream operators must
+private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`). Downstream operators must
 review firewall policy, published ports, SSH access and sibling-service isolation for
 their own hosts. Framework SSRF checks do not replace host firewall policy.
 
@@ -728,13 +728,13 @@ Tool tests use recorded HTTP fixtures. An end-to-end check runs against a privat
 ### 7c. Phase 0 result (2026-10-30)
 
 The original build/provisioning record is preserved in the
-[private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md). Framework contracts are
+private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`). Framework contracts are
 specified in §3 and §3d; current package tests and scaffold CI validate those contracts.
 
 ### 7d. Phase 2 result (2026-10-31)
 
 The original application integration and production verification record is preserved in
-the [private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md). Reusable feature
+the private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`). Reusable feature
 plans remain indexed in `docs/plans/README.md`; app tests run with the downstream deployment.
 
 ## 8. Deployment inputs and future group setup
@@ -742,7 +742,7 @@ plans remain indexed in `docs/plans/README.md`; app tests run with the downstrea
 Bot tokens, account identities, owner/group IDs, service credentials and production paths
 belong in downstream encrypted secrets/configuration. Generic configuration names are in
 the scaffold `.env.example`. Production provisioning inputs and group setup records are
-preserved in the [private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md).
+preserved in the private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`).
 
 ## 9. Open questions
 
@@ -758,12 +758,12 @@ cannot override an application's routing restrictions. See [the setup guide](doc
 for bootstrap, commands, confirmation behavior and invite order.
 
 Original production rollout/verification details are preserved in the
-[private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md).
+private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`).
 
 ## 11. Telegram account replacement
 
 Telegram account provisioning and replacement are downstream operator actions. The original
-production account record is preserved in the [private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md).
+production account record is preserved in the private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`).
 The Telegram adapter remains generic and receives its token and bot identity from app settings.
 
 ## 12. Backlog
@@ -889,7 +889,7 @@ Requests and their detail. The status of every plan, built or not, is tracked in
 
 Web tools are provided by the web plugin and registered by an application's plugin selection.
 API credentials and feature activation belong to downstream configuration. The original
-production activation record is preserved in the [private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md).
+production activation record is preserved in the private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`).
 
 ## 14. Final answers at the tool budget boundary
 
@@ -907,7 +907,7 @@ Verification: 654 unit tests passed (one ShellCheck skip), 49 integration tests 
 unavailable local ES checks skipped), Ruff and commit checks passed, and independent review
 found no blockers. The regression reproduced the exact old error before the fix. The regression covers replay of collected read results into the final completion without
 sending a chat message or writing production data. Original live rollout and provider
-configuration evidence belongs in the [private deployment record](https://github.com/keenlok/clawdot-deployments/blob/main/docs/deployments/2026-10-31-tool-budget-answer.md).
+configuration evidence belongs in the private deployment record (`clawdot-deployments/docs/deployments/2026-10-31-tool-budget-answer.md`).
 
 ## 15. Research agent (built, not deployed)
 

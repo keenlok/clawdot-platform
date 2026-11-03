@@ -306,9 +306,9 @@ will use the existing automatic pipeline. No additional merge approval is needed
 
 ## Verified automatic rollout
 
-- [PR #56](https://github.com/keenlok/clawdot-platform-history/pull/56) merged as
-  `bbaeef77afe17ec063f250bc7f7bd51e789b079d` after [PR CI](https://github.com/keenlok/clawdot-platform-history/actions/runs/41471949246)
-  passed with **3,657 passed, 6 skipped, 22 deselected**. The [merged-main CI](https://github.com/keenlok/clawdot-platform-history/actions/runs/41472623431)
+- history PR #56 merged as
+  `bbaeef77afe17ec063f250bc7f7bd51e789b079d` after PR CI (history CI run 41471949246)
+  passed with **3,657 passed, 6 skipped, 22 deselected**. The merged-main CI (history CI run 41472623431)
   also passed.
 - The existing host timer automatically deployed release `bbaeef77afe1`. Bot and
   browser containers were healthy; the auto-deploy service completed successfully.

@@ -2,6 +2,7 @@
 name = "chatcore-browser-renderer"
 version = "0.1.0"
 description = "Sandboxed JavaScript page renderer with guarded egress"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.11",

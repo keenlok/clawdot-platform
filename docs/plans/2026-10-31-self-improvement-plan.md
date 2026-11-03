@@ -33,9 +33,9 @@ The uv workspace has apps/sb_bot, packages/core and adapter/plugin packages, wit
 one lockfile and Git release revision. The current extension worker runs reviewed
 JSON transformations; it does not produce PRs or deploy framework changes.
 
-[deploy.sh](https://github.com/keenlok/clawdot-deployments/blob/main/shared/deploy.sh) archives committed HEAD from a clean
-checkout and invokes [remote-deploy.sh](https://github.com/keenlok/clawdot-deployments/blob/main/shared/remote-deploy.sh)
-over SSH. The [runbook](https://github.com/keenlok/clawdot-deployments/blob/main/shared/README.md) describes private host
+deploy.sh (`clawdot-deployments/shared/deploy.sh`) archives committed HEAD from a clean
+checkout and invokes remote-deploy.sh (`clawdot-deployments/shared/remote-deploy.sh`)
+over SSH. The runbook (`clawdot-deployments/shared/README.md`) describes private host
 configuration, backups, extension preflight, health checks and rollback.
 
 These operator-driven foundations need changes before automated releases:

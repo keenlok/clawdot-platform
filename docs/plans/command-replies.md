@@ -1,6 +1,6 @@
 # Replies as command input
 
-Status: **built** in [#44](https://github.com/keenlok/clawdot-platform-history/pull/44), Phases 1–3 (Phase 4 not started). Approved 2026-11-01 with these changes from the draft: anyone in the chat can answer
+Status: **built** in history #44, Phases 1–3 (Phase 4 not started). Approved 2026-11-01 with these changes from the draft: anyone in the chat can answer
 a prompt, and there is no `ask` mode (commands whose input is natural language, like `/remind`
 and `/watch`, already work by asking the bot in plain words; this feature is an add-on for the
 rest). Follows `docs/plans/model-switch.md` (PR #28).
