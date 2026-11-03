@@ -56,6 +56,59 @@ async def test_openai_compat_translation_and_opencode_session_header():
     assert result.stop_reason == "tool_use"
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "expected"),
+    [("length", "max_tokens"), ("content_filter", "error"), ("future", "error")],
+)
+async def test_openai_native_calls_do_not_override_non_stop_finish_reasons(finish_reason, expected):
+    provider = build_provider(
+        LLMSettings(LLM_BASE_URL="https://api.example.test/v1", LLM_MODEL="model", LLM_API_KEY="x")
+    )
+    call = SimpleNamespace(
+        id="call-1", function=SimpleNamespace(name="lookup", arguments='{"x":1}')
+    )
+    provider._client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=None, tool_calls=[call]),
+                    finish_reason=finish_reason,
+                )
+            ],
+            usage=None,
+        )
+    )
+
+    result = await provider.complete([Message.user("go")], system="rules")
+
+    assert result.stop_reason == expected
+    assert result.message.tool_calls == (ToolCall("call-1", "lookup", {"x": 1}),)
+
+
+async def test_openai_native_calls_with_stop_reason_are_tool_use():
+    provider = build_provider(
+        LLMSettings(LLM_BASE_URL="https://api.example.test/v1", LLM_MODEL="model", LLM_API_KEY="x")
+    )
+    call = SimpleNamespace(
+        id="call-stop", function=SimpleNamespace(name="lookup", arguments='{"x":1}')
+    )
+    provider._client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=None, tool_calls=[call]), finish_reason="stop"
+                )
+            ],
+            usage=None,
+        )
+    )
+
+    result = await provider.complete([Message.user("go")], system="rules")
+
+    assert result.stop_reason == "tool_use"
+    assert result.message.tool_calls == (ToolCall("call-stop", "lookup", {"x": 1}),)
+
+
 async def test_opencode_headers_are_not_sent_to_other_hosts():
     provider = build_provider(
         LLMSettings(

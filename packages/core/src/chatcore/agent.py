@@ -99,6 +99,18 @@ _EMPTY_CONTINUATION_INSTRUCTION = (
     "evidence and currently offered tools. Do not repeat completed tool calls or claim "
     "unconfirmed writes succeeded. If you cannot continue, explain what remains for the user."
 )
+_TRUNCATED_TOOL_CALL_INSTRUCTION = (
+    "The previous native tool-call response was truncated. Ignore its incomplete call and "
+    "reconstruct one complete call from this unchanged transcript and the currently offered "
+    "tools, preserving the requested content and scope. Do not omit requested content to fit. "
+    "Use a bounded operation only if it fulfills the request; otherwise explain the supported "
+    "limit. Write tools still require confirmation. Do not repeat completed calls or claim a "
+    "write succeeded."
+)
+_TRUNCATED_TOOL_CALL_FALLBACK = (
+    "The provider cut off its tool-call response, so that call was not run. I couldn't complete "
+    "this step; please narrow the request and try again."
+)
 _NO_TOOLS_FINAL_INSTRUCTION = (
     "No tools exist in this request. Answer the user now in plain text using the tool results "
     "already in this conversation, and list the source URLs used."
@@ -1126,6 +1138,59 @@ class AgentResponder:
                     completion_count += 1
                     await record_completion(completion.usage)
                     assistant = completion.message
+                    if completion.stop_reason == "max_tokens" and assistant.tool_calls:
+                        log.info(
+                            "truncated native tool response reason=max_tokens call_count=%d",
+                            len(assistant.tool_calls),
+                        )
+                        can_recover = (
+                            not final_answer
+                            and not direct_writes
+                            and not empty_continuation_used
+                            and deadline - loop.time() >= 5
+                            and _remaining_before_final(
+                                loop, deadline, self.settings.final_answer_reserve_s
+                            )
+                            > 0
+                            and not await self.limits.budget_exhausted()
+                        )
+                        if can_recover:
+                            empty_continuation_used = True
+                            metrics.note_retry()
+                            try:
+                                async with asyncio.timeout(
+                                    _remaining_before_final(
+                                        loop, deadline, self.settings.final_answer_reserve_s
+                                    )
+                                ):
+                                    completion = await provider.complete(
+                                        messages,
+                                        system=system + "\n\n" + _TRUNCATED_TOOL_CALL_INSTRUCTION,
+                                        tools=request_tools,
+                                        tool_choice="auto",
+                                        max_tokens=self.settings.max_tokens,
+                                        session_key=message.chat.key
+                                        + (":" + message.thread_id if message.thread_id else ""),
+                                    )
+                            except TimeoutError:
+                                force_final_by_deadline()
+                                assistant = Message.assistant(_TRUNCATED_TOOL_CALL_FALLBACK)
+                            else:
+                                usage = Usage(
+                                    usage.input_tokens + completion.usage.input_tokens,
+                                    usage.output_tokens + completion.usage.output_tokens,
+                                )
+                                completion_count += 1
+                                await record_completion(completion.usage)
+                                assistant = completion.message
+                        if (
+                            completion.stop_reason == "max_tokens"
+                            or assistant.tool_calls
+                            and completion.stop_reason != "tool_use"
+                            or not assistant.tool_calls
+                            and not assistant.text.strip()
+                        ):
+                            assistant = Message.assistant(_TRUNCATED_TOOL_CALL_FALLBACK)
                     if (
                         not assistant.text.strip()
                         and not assistant.tool_calls
@@ -1181,6 +1246,13 @@ class AgentResponder:
                                     message.chat.key,
                                     completion.stop_reason,
                                 )
+                            if completion.stop_reason == "max_tokens" and assistant.tool_calls:
+                                log.info(
+                                    "truncated native tool response "
+                                    "reason=max_tokens call_count=%d",
+                                    len(assistant.tool_calls),
+                                )
+                                assistant = Message.assistant(_TRUNCATED_TOOL_CALL_FALLBACK)
                     if completion.stop_reason == "refusal":
                         end = "refusal"
                         assistant = Message.assistant(_REFUSAL_TEXT)

@@ -31,6 +31,26 @@ async def test_edit_tools_are_gated_writes_in_google_workspace_skill(google_serv
     assert (await gates["google_edit_doc"].scope(GROUP, False)).state == GateState.AVAILABLE
 
 
+async def test_source_derived_doc_guidance_preserves_original_package_and_uses_copy(google_service):
+    service, _, _, _ = google_service
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    tools = {tool.name: tool for tool in plugin.tools()}
+    create = tools["google_create_doc"]
+    edit = tools["google_edit_doc"]
+    descriptions = " ".join(
+        [GOOGLE_INSTRUCTIONS, create.description, edit.description]
+        + [p["description"] for p in edit.parameters["properties"].values() if "description" in p]
+    ).casefold()
+
+    assert "source-derived" in descriptions
+    assert "google_edit_doc" in descriptions
+    assert "destination=copy" in descriptions
+    assert "original package" in descriptions
+    assert "bounded" in descriptions
+    assert "from scratch" in create.description.casefold()
+    assert "confirm writes" in GOOGLE_INSTRUCTIONS.casefold()
+
+
 async def test_docx_tool_output_is_untrusted_and_not_persisted(google_service, docx_bytes):
     service, client, ctx, _ = google_service
     client.metadata.return_value = {

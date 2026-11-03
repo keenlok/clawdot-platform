@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI-compatible native tool calls with `finish_reason=stop` now reach the normal tool flow.
+  A bounded regeneration can recover a truncated native call without executing its incomplete
+  payload. Source-derived Google Doc revisions use original-package import instead of rebuilding
+  from plain text; broader rewrites must be explained.
+
 ## [0.1.2] - 2026-11-03
 
 ### Added

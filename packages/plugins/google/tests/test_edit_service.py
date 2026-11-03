@@ -1,3 +1,6 @@
+import io
+import zipfile
+
 import pytest
 from chatcore_google.client import GoogleError
 from chatcore_google.edit_service import GoogleEditService
@@ -60,6 +63,30 @@ def metadata(file_id="file", mime=DOC, *, editable=True):
 
 def url(file_id="file"):
     return f"https://docs.google.com/document/d/{file_id}/edit"
+
+
+def styled_table_docx(original):
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(output, "w") as target:
+        for name in source.namelist():
+            if name == "word/document.xml":
+                data = (
+                    b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    b"<w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Tokyo itinerary</w:t></w:r></w:p>"
+                    b"<w:tbl><w:tblPr/><w:tblGrid/><w:tr><w:tc><w:tcPr/><w:p><w:r>"
+                    b"<w:t>Planning notes</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body>"
+                    b"</w:document>"
+                )
+            else:
+                data = source.read(name)
+            target.writestr(name, data)
+        target.writestr(
+            "word/styles.xml",
+            b'<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            b'<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/>'
+            b"</w:style></w:styles>",
+        )
+    return output.getvalue()
 
 
 async def test_doc_proposal_is_frozen_and_performs_no_remote_write(google_service):
@@ -325,7 +352,8 @@ async def test_docx_converts_to_native_copy_without_source_app_file_grant(
     )
     source_meta["isAppAuthorized"] = False
     client.metadata.side_effect = [source_meta, source_meta, metadata("native-id")]
-    client.media.return_value = docx_bytes
+    source_package = styled_table_docx(docx_bytes)
+    client.media.return_value = source_package
     client.import_docx.return_value = {"id": "native-id", "mimeType": DOC}
     client.document_for_edit.side_effect = [
         doc("Tokyo itinerary", tab_title="Imported first tab"),
@@ -342,7 +370,16 @@ async def test_docx_converts_to_native_copy_without_source_app_file_grant(
     result = await edits.commit(action, ctx)
     assert "verified" in result.lower()
     assert client.import_docx.await_args.args[0] == "file"
-    assert client.import_docx.await_args.args[2] == docx_bytes
+    assert client.import_docx.await_args.args[2] == source_package
+    requests = client.edit_document.await_args.args[1]
+    assert len(requests) == 3
+    assert requests[0]["deleteContentRange"]["range"] == {
+        "startIndex": 1,
+        "endIndex": 16,
+        "tabId": "tab-1",
+    }
+    assert requests[1]["insertText"]["location"] == {"index": 1, "tabId": "tab-1"}
+    assert requests[1]["insertText"]["text"] == "Tokyo plans"
 
 
 async def test_reserved_destination_claim_prevents_concurrent_duplicate_copies(google_service):
