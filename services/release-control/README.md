@@ -1,7 +1,7 @@
 # Release control implementation
 
 Implementation is split into ten parts in
-[`2026-10-31-self-improvement-parts.md`](../../docs/superpowers/plans/2026-10-31-self-improvement-parts.md).
+[`2026-10-31-self-improvement-parts.md`](../../docs/plans/2026-10-31-self-improvement-parts.md).
 That plan records dependencies and the distinction between executable local source,
 verified local behavior, and pending disposable/live proof. This package is not wired
 into production. Its service entrypoints and inactive workflow/host templates require

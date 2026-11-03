@@ -14,8 +14,9 @@ by `tests/test_package_boundaries.py` or `tests/test_plans_index.py` and fail CI
 | `services/` | Standalone framework-side processes that run outside the bot (`browser-renderer`, `release-control`). They aren't plugins. |
 | `apps/_scaffold/` | Working generic example app, persona, compose/deploy skeleton and CI tests. |
 | `ARCHITECTURE.md` | The architecture spec and decision record (formerly `PLAN.md`; section numbers unchanged). |
-| `plans/` | Plans, designs and review records, indexed with their status in `plans/README.md`. |
-| `docs/` | Operator guides, deployment records and older design records (`docs/superpowers/`). |
+| `docs/plans/` | Plans, designs and review records, indexed with their status in `docs/plans/README.md`. |
+| `docs/handovers/` | Framework handover records, linked from the plans index. |
+| `docs/` | Feature guides and design specs (`docs/superpowers/specs/`). |
 
 - A new long-running process with its own entry point or container goes in `services/`, not `packages/plugins/`.
 - Framework code (`packages/`, `services/`) never imports application modules (including downstream `sb_bot`) **(test)**.
@@ -45,17 +46,29 @@ is never the only check.
 
 ## Plans and status
 
-- `plans/README.md` is the index of every plan, design and review record, with its status
+- `docs/plans/` is the only plan folder; `docs/handovers/` holds handovers **(test)**.
+- `docs/plans/README.md` is the index of every plan, design and review record, with its status
   (Live, Live limited, Shipped inactive, Planned, Record) and PR.
 - A PR that adds a plan adds its row; a PR that changes what a plan has delivered (built,
   merged, enabled, switched off) updates the row in the same PR. Every plan file must be linked
-  from the index, and every link in it must resolve **(test)**.
+  from the index, and every local Markdown link in the repository must resolve **(test)**.
 - Requests that have no plan yet stay in `ARCHITECTURE.md` §12 and are listed at the end of the
   index.
 - Architecture decisions go in `ARCHITECTURE.md`; keep its section numbers stable, because plans
   refer to them ("§3d").
 
-## Skills (`plans/skill-layer.md`)
+## Changelog
+
+- Add an entry under `Unreleased` in `CHANGELOG.md` for user-visible behavior, public API
+  or configuration changes, migrations, deprecations and security changes. Explain the
+  impact and include upgrade steps and breaking-change notes where relevant.
+- Purely internal refactors and test-only changes need no entry unless they affect users.
+- Keep entries concise and curated under the applicable Keep a Changelog categories.
+- A release version-bump PR dates the entry with the release date (`YYYY-MM-DD`), matches
+  the root `pyproject.toml` version and its `v<version>` tag, starts a new `Unreleased`
+  section and updates the comparison links.
+
+## Skills (`docs/plans/skill-layer.md`)
 
 - A plugin declares its skills in `plugin.py` (`skills()`: name, summary, examples, tools,
   keywords) and its gates in `gates.py`. Core skills (`time_zone`, `conversation`) are declared
@@ -107,8 +120,8 @@ When you move code between modules (for example splitting an `__init__.py`):
 ## Release-control and protected files
 
 Bot-generated and human PRs released through release control may only change enumerated
-ordinary plugin files and their tests (`plans/2026-10-31-self-improvement-plan.md`,
-`plans/2026-11-01-human-pr-intake.md`). Expect maintenance review for:
+ordinary plugin files and their tests (`docs/plans/2026-10-31-self-improvement-plan.md`,
+`docs/plans/2026-11-01-human-pr-intake.md`). Expect maintenance review for:
 `.github/`, scaffold deploy files, Dockerfiles, Compose files, `.dockerignore`,
 `pyproject.toml`, `uv.lock`, every `migrations/`, package `__init__.py` files, core, `services/`,
 and, if D7 is accepted, `gates.py` and `permissions.py`. `ARCHITECTURE.md` §3d has the per-file inventory.
@@ -146,7 +159,7 @@ before starting (for example `command -v codex`) instead of assuming.
 | Cloud or remote session without Codex | The session's model | The session's model | The session's own review pass on the diff; the owner may add a Codex review from their computer |
 | Any session where the model the plan names isn't available | Use what is available and say so in the PR | | |
 
-- The plan is written to `plans/` and approved before code is written, whoever executes it.
+- The plan is written to `docs/plans/` and approved before code is written, whoever executes it.
 - The PR description says who executed and who reviewed, by role (for example "Codex executed,
   Claude reviewed" or "implemented in a cloud Claude session, self-reviewed").
 - A missing tool is not a reason to skip a step: run the checks above in every environment, and

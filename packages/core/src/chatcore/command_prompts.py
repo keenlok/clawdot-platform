@@ -1,4 +1,4 @@
-"""Replies as command input (``plans/command-replies.md``).
+"""Replies as command input (``docs/plans/command-replies.md``).
 
 A command that needs more input returns ``CommandReply(text, awaits_reply=True)``. The bot sends
 the text and remembers the sent message for ``PROMPT_TTL_S``; the next reply to it from anyone in

@@ -1,4 +1,4 @@
-"""``/model``: switch this chat's model for a while (``plans/model-switch.md``).
+"""``/model``: switch this chat's model for a while (``docs/plans/model-switch.md``).
 
 Only the command switches. The read-only ``get_model_info`` tool lets the bot answer "which model
 are you?" and point people to ``/model``; no tool can write the override.

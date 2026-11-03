@@ -12,7 +12,7 @@ not only receipts.
 - OpenCode Go's public model metadata (`GET https://opencode.ai/inference/go/v1/models`, read
   2026-10-31) lists `deepseek-v4.1-flash` with
   `modalities.input = [text, image/jpeg, image/png, image/gif, image/webp]`. The receipt-vision
-  plan (`plans/receipt-vision.md`) called the main model text-only; that was an assumption, and the
+  plan (`docs/plans/receipt-vision.md`) called the main model text-only; that was an assumption, and the
   metadata contradicts it.
 - `openai_compat._content` sends an `ImagePart` as an OpenAI `image_url` part with a base64
   `data:` URL. `anthropic_provider` sends a base64 `image` block. Both are correct.

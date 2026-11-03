@@ -1,7 +1,7 @@
 """Skill-layer gates for expense and trip tools.
 
 Kept apart from ordinary tool code so release policy can review gate changes
-separately (plans/2026-10-31-repo-layout.md, D6/D7).
+separately (docs/plans/2026-10-31-repo-layout.md, D6/D7).
 """
 
 from __future__ import annotations

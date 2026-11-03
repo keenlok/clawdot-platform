@@ -2,7 +2,7 @@
 
 The architecture spec and decision record for the reusable Clawdot platform. It was
 `PLAN.md` until 2026-11-01; section numbers remain stable for references such as §3d.
-Every plan and its status is indexed in [plans/README.md](plans/README.md). Repository
+Every plan and its status is indexed in [docs/plans/README.md](docs/plans/README.md). Repository
 rules are in [AGENTS.md](AGENTS.md).
 
 The platform contains a platform-independent core, chat adapters, capability plugins,
@@ -390,7 +390,7 @@ never authorize more files. Removal revokes this authority without deleting the 
 Docs, Sheets, DOCX, selectable-text PDF and UTF-8 CSV have bounded readers; other files are
 references only. Existing Sheet links are backfilled as references and retain per-currency
 planned-versus-actual comparisons. Old trip IDs, members and ledger data remain unchanged.
-Design and execution: [trip Drive files](plans/2026-11-02-trip-drive-files.md).
+Design and execution: [trip Drive files](docs/plans/2026-11-02-trip-drive-files.md).
 
 **Schema additions:**
 - `trips(id, chat_id, name, countries, currencies, settle_mode, settle_currency, status, start_date, end_date, started_at, ended_at)`, `trip_defaults(chat_key, trip_id)`, `trip_members(trip_id, user_key, added_by, added_at)`
@@ -630,7 +630,7 @@ Tracks are executed by **Codex CLI** (`codex-cli` 0.166.0). Models: execute with
 
 You watch and steer each track session from the Claude sidebar. No terminal tabs are needed.
 
-**Per-track execution plans:** `plans/track-{a,b,c,d,e}.md`, written by Claude after Phase 0 lands. Each plan is self-contained, since Codex doesn't see this conversation. It covers:
+**Per-track execution plans:** `docs/plans/track-{a,b,c,d,e}.md`, written by Claude after Phase 0 lands. Each plan is self-contained, since Codex doesn't see this conversation. It covers:
 - the goal, and the files the track owns (and may not leave);
 - the exact Phase 0 interfaces to use: `Tool`, `ToolContext`, `PendingAction`, `register()`, the settings class, and its migration range;
 - the module-by-module implementation steps;
@@ -648,14 +648,14 @@ You watch and steer each track session from the Claude sidebar. No terminal tabs
 **Launch:** the coordinator starts the five track sessions in parallel. Each track session runs Codex headless, as a background command, in its own worktree:
 
 ```bash
-mkdir -p reports logs && cat plans/COMMON.md plans/track-a.md > reports/track-a.prompt.md
+mkdir -p reports logs && cat docs/plans/COMMON.md docs/plans/track-a.md > reports/track-a.prompt.md
 codex exec -m gpt-6-luna -C . \
   -s workspace-write -c sandbox_workspace_write.network_access=true \
   --json -o reports/track-a.md < reports/track-a.prompt.md > logs/track-a.jsonl
 ```
 
 - **Codex never commits.** Its sandbox can't write the worktree's `.git`, which lives in the main repo. The track session reviews and commits.
-- Codex sets `UV_CACHE_DIR=$PWD/.uv-cache` itself (`plans/COMMON.md`), because the sandbox can't write `~/.cache`.
+- Codex sets `UV_CACHE_DIR=$PWD/.uv-cache` itself (`docs/plans/COMMON.md`), because the sandbox can't write `~/.cache`.
 
 **Permissions:** `.claude/settings.json` is committed, so every worktree inherits its rules.
 - Allow `codex exec *`, so starting and resuming Codex needs no approval.
@@ -698,7 +698,7 @@ specified in §3 and §3d; current package tests and scaffold CI validate those 
 
 The original application integration and production verification record is preserved in
 the [private architecture archive](https://github.com/keenlok/clawdot-deployments/blob/main/docs/archives/platform-ac5a4b0/ARCHITECTURE.md). Reusable feature
-plans remain indexed in `plans/README.md`; app tests run with the downstream deployment.
+plans remain indexed in `docs/plans/README.md`; app tests run with the downstream deployment.
 
 ## 8. Deployment inputs and future group setup
 
@@ -732,7 +732,7 @@ The Telegram adapter remains generic and receives its token and bot identity fro
 ## 12. Backlog
 
 Requests and their detail. The status of every plan, built or not, is tracked in
-[`plans/README.md`](plans/README.md); keep both in step.
+[`docs/plans/README.md`](docs/plans/README.md); keep both in step.
 
 - [x] **Per-user bot access restrictions and rate limits** (requested 2026-10-31): built on
   branch `claude/access-restrictions-reset-89e6cb` (commit `0a9ea85`); see §16. Not yet deployed.
@@ -742,14 +742,14 @@ Requests and their detail. The status of every plan, built or not, is tracked in
   currencies (e.g. Hong Kong/HKD on a Example trip), rename, change the settle mode or currency
   only before any expense is recorded. The bot also stops claiming that FX rates must be set
   by hand. Design `docs/superpowers/specs/2026-10-31-update-trip-design.md`, plan
-  `docs/superpowers/plans/2026-10-31-update-trip.md`. Built and merged 2026-10-31; see §4
+  `docs/plans/2026-10-31-update-trip.md`. Built and merged 2026-10-31; see §4
   "Editing a trip". Pending `add_expense`, `settle_up` and `set_fx_rate` confirmations now
   refuse to commit if the trip's settle settings changed after they were proposed.
 - [x] **CSV export of the expense ledger** (requested 2026-10-31): `export_expenses` and
   `/export` send one trip's ledger (or the general ledger) as a CSV, so a person can check the
   balances by hand and confirm no expense crossed between trips. Design
   `docs/superpowers/specs/2026-10-31-expense-export-design.md`, plan
-  `docs/superpowers/plans/2026-10-31-expense-export.md`. Built and merged
+  `docs/plans/2026-10-31-expense-export.md`. Built and merged
   2026-10-31; see §4 "Exporting". Not yet deployed.
 - [ ] **Interactive browsing: filling forms, clicking through searches, booking** (requested
   2026-10-31): let the bot operate JavaScript search and booking forms, for example rental-car
@@ -777,10 +777,11 @@ Requests and their detail. The status of every plan, built or not, is tracked in
   limits), store the reading, show it in the admin budget view, and DM the owner when it drops
   below a threshold. Read-only: never top up or change billing. Log no key material.
   Account usage, spend limits and production budgets belong to downstream configuration. Not started.
-- [ ] **Release history and "what changed?"** (requested 2026-11-01). Decided: no hand-kept
-  `CHANGELOG.md`, and nothing (deployer, CI or anyone else) commits or force-pushes changelog
-  updates to `main`. That would need write tokens, start a commit → CI → deploy loop and conflict
-  with parallel PRs. PR titles are the changelog entries.
+- [ ] **Bot release history and "what changed?"** (requested 2026-11-01). Deployment release
+  notes use reviewed PR titles. The deployer and CI never commit or force-push note updates
+  to `main`; that would create a commit → CI → deploy loop and conflict with parallel PRs.
+  The platform separately maintains a curated [changelog](CHANGELOG.md) through reviewed
+  PRs (approved 2026-11-03); contributor and release rules are in `AGENTS.md`.
   - Keep every release note the deploy writes (today only `release-notes/latest.json` survives)
     as a bounded history on the box, e.g. under `deploy-metadata/`, with retention.
   - Let the owner (and maybe allowed groups) ask the bot "what changed recently?" from that
@@ -809,7 +810,7 @@ Requests and their detail. The status of every plan, built or not, is tracked in
   general tools or a small "about the bot" skill). It doesn't conflict with the skill layer.
   Not started.
 - [x] **Temporary per-chat model switch via `/model`** (requested 2026-11-01; shape agreed
-  2026-11-01; plan `plans/model-switch.md`): anyone in an allowlisted chat can switch that
+  2026-11-01; plan `docs/plans/model-switch.md`): anyone in an allowlisted chat can switch that
   chat's model for 30 minutes, then it reverts automatically. Built 2026-11-01 on branch
   `claude/models-opencode-backlog-8fs7p8` in a cloud Claude session (no Codex there; see
   `AGENTS.md` "Execution and review"). **Off until deployed with choices:** run the plan's
@@ -875,7 +876,7 @@ configuration evidence belongs in the [private deployment record](https://github
 ## 15. Research agent (built, not deployed)
 
 Built on `claude/research-agent-8eeb2a` (2026-10-31) to address §14's root cause: large
-questions exhausting the main agent's eight-call budget. Plan: `plans/research-agent.md`;
+questions exhausting the main agent's eight-call budget. Plan: `docs/plans/research-agent.md`;
 user/operator doc: [docs/research.md](docs/research.md). Codex `gpt-6-luna` implemented it,
 `gpt-6.1-sol` reviewed three times, and Claude completed the final fixes after two fix rounds.
 
@@ -930,7 +931,7 @@ and a queued job is refused when it is re-checked at start.
 ## 16. Access restrictions, context reset and /compact
 
 Built 2026-10-31 on branch `claude/access-restrictions-reset-89e6cb` by a track session: Claude
-planned (`plans/access-restrictions.md`, `plans/context-reset.md`), Codex `gpt-6-luna` executed,
+planned (`docs/plans/access-restrictions.md`, `docs/plans/context-reset.md`), Codex `gpt-6-luna` executed,
 Codex `gpt-6.1-sol` reviewed (two rounds per feature, all confirmed findings fixed), and Claude
 did the final review, console end-to-end runs and commits. Not deployed.
 
@@ -995,7 +996,7 @@ backup); no new environment variables; the Telegram menu registers on startup.
 ## 17. Smoother group conversations (phases 1–2)
 
 Built 2026-10-31 on branch `claude/group-convo-flow-0ec35b`: Claude planned
-(`plans/group-conversation-flow.md`), Codex `gpt-6-luna` executed, Codex `gpt-6.1-sol` reviewed
+(`docs/plans/group-conversation-flow.md`), Codex `gpt-6-luna` executed, Codex `gpt-6.1-sol` reviewed
 (three review rounds, all findings confirmed and fixed), and Claude did the final
 review and the console end-to-end run. Not deployed. Driven by production logs from a forum topic:
 an ignored reply to the bot, a bare `@bot` answered with "Sorry, I couldn't produce a response.",
@@ -1003,7 +1004,7 @@ and silence on `@bot /models`.
 
 **Routing (phase 1):**
 - In mention-only groups a Telegram reply to any bot message now routes to the responder. This
-  reverses that part of `plans/group-mention-only.md` at the user's request. Untagged chatter,
+  reverses that part of `docs/plans/group-mention-only.md` at the user's request. Untagged chatter,
   untagged replies to humans and bare `/cmd` (also as a reply to the bot) stay ignored, at zero
   LLM cost.
 - A bare `@bot` sent as a reply answers the replied-to message: a person's message is carried in
@@ -1041,7 +1042,7 @@ and its cooldown, and ignored chatter and bare commands.
 
 Built 2026-10-31 on branch `claude/image-vision-ec7639`: Claude planned
 (`docs/superpowers/specs/2026-10-31-image-vision-design.md`,
-`docs/superpowers/plans/2026-10-31-image-vision.md`), Codex `gpt-6-luna` executed, Codex
+`docs/plans/2026-10-31-image-vision.md`), Codex `gpt-6-luna` executed, Codex
 `gpt-6.1-sol` reviewed (one P2 fixed in one round, then clean), and Claude did the final review.
 Not deployed.
 
@@ -1078,7 +1079,7 @@ chat. Rollback: `LLM_VISION=false`.
 
 Built 2026-10-31 on branch `claude/group-convo-flow-0ec35b`, after phases 1–2 were merged
 (`1c20145`) and deployed. Claude planned it (the final design is in
-`plans/group-conversation-flow.md` Phase 3), Codex `gpt-6-luna` executed it, and Codex
+`docs/plans/group-conversation-flow.md` Phase 3), Codex `gpt-6-luna` executed it, and Codex
 `gpt-6.1-sol` reviewed it over three rounds; every finding was confirmed and fixed. Claude did the
 final review and a console end-to-end run on dev Postgres. Not deployed. There is no untagged
 classifier: attachment is deterministic and untagged chatter still costs zero LLM calls.

@@ -24,7 +24,7 @@ class LLMSettings(BaseSettings):
     LLM_VISION: bool = False
     LLM_EFFORT: Literal["low", "medium", "high"] = "low"
     LLM_ANTHROPIC_FALLBACKS: bool = True
-    # Per-chat /model override (plans/model-switch.md). Empty choices turn it off.
+    # Per-chat /model override (docs/plans/model-switch.md). Empty choices turn it off.
     LLM_MODEL_CHOICES: str = ""
     LLM_MODEL_OVERRIDE_MINUTES: int = Field(default=30, ge=1, le=240)
     LLM_MODEL_OVERRIDE_MAX_MINUTES: int = Field(default=60, ge=1, le=180)

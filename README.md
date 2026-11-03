@@ -10,6 +10,8 @@ and operator scripts belong in the owner-only `clawdot-deployments` repository.
 Downstream applications pin reviewed platform releases and run their own CI/deployment.
 A platform merge validates the framework and scaffold.
 
+See the [changelog](CHANGELOG.md) for release notes and unreleased changes.
+
 ## Capabilities
 
 - Scoped conversations, administration, provider integrations and access controls.
@@ -34,7 +36,8 @@ reviewed design for releases across repositories.
 | `tests/` | Package boundaries, service image guarantees and plan index checks |
 | `docs/` | Reusable feature and integration guides |
 | `ARCHITECTURE.md` | Architecture specification and decision record |
-| `plans/` | [Indexed plans and historical design records](plans/README.md) |
+| `docs/plans/` | [Indexed plans and historical design records](docs/plans/README.md) |
+| `docs/handovers/` | Framework handover records |
 
 ## Run the example
 
