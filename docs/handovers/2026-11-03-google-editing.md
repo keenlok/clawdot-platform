@@ -125,8 +125,11 @@ checkout. All 23 existing migration hashes are unchanged; only Google 0003 is ne
 seccomp files match the downstream existing asset. Full lint and changed-file formatting pass;
 full formatting still reports the same 14 pre-existing Markdown plans. Secret scans are clean.
 
-Final independent review found no remaining findings: 40 broker/client/wiring tests passed after the inherited-style correction. The browser implementation is in [PR #7](https://github.com/keenlok/clawdot-platform/pull/7). The code is unmerged; copying and browser editing remain disabled
-by default, live behavior is unqualified, and nothing has been deployed.
+Final independent review found no remaining findings: 40 broker/client/wiring tests passed
+after the inherited-style correction. The browser implementation is in
+[PR #7](https://github.com/keenlok/clawdot-platform/pull/7). The platform implementation is
+integrated by the owner-authorized PR stack; copying and browser editing remain disabled by
+default, live behavior is unqualified, and nothing has been deployed.
 
 ## Release and live-operation boundaries
 
@@ -136,8 +139,21 @@ passing against v0.1.1 does not validate the candidate. The downstream draft mus
 update all sources, exact lockfile commit, platform configuration, migration
 manifest and relevant browser security assets together once the release exists.
 
-No merge, release tag, credential rotation, deployment or live Google write is
-authorized by this delivery. Native-copy grant cases and DOCX conversion require
+The owner separately authorized merging the public platform stack on 2026-11-03.
+That approval does not authorize a release tag, credential rotation, deployment or live Google
+write. Native-copy grant cases and DOCX conversion require
 owner-grant qualification. The browser trial remains disabled until separately
 authorized live qualification with a fresh dedicated editor account succeeds.
 That account/session setup blocks live qualification only, not local tests.
+
+## Owner-authorized platform integration
+
+The owner subsequently requested merging platform PRs #5, #6 and #7 in dependency order.
+This PR completes that integration and updates the plans to Shipped inactive. Retargeted PRs
+are synchronized with current main and pass CI before merging. The downstream draft stays open
+until a reviewed platform release exists and all pins/manifests are updated together.
+
+Root version remains 0.1.1, so the platform release job does not publish a new version tag.
+The private application's auto-deploy mechanism is unchanged: it watches private main and
+requires a successful push CI run for that exact commit. Public framework merges do not update
+its release pin or deploy SBot. Browser editing and copy qualification remain disabled.

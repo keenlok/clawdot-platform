@@ -414,7 +414,8 @@ broker shares only that copy and requires API read-back before reporting a verif
 dedicated editor-account session stays outside the owner OAuth profile. The worker is a separate
 service behind the shared guarded proxy, with a fixed private protocol and no API credentials.
 `GOOGLE_BROWSER_ENABLED=false` by default, and copy qualification is a separate prerequisite.
-The browser delivery remains unmerged, unqualified and undeployed; synthetic tests do not establish
+The browser implementation is shipped inactive; release-pin integration, live qualification and
+deployment remain pending. Synthetic tests do not establish
 live Google UI or session reliability. See the [browser trial plan](docs/plans/2026-11-02-google-browser-editing.md)
 and [operator guide](docs/google-browser-editing.md).
 

@@ -4,10 +4,12 @@
 > `codex/` branch/worktree. Implement the qualification trial first; production promotion is
 > a separate decision. Do not implement this plan simply because its document exists.
 
-**Status:** Planned delivery; owner authorized implementation on 2026-11-03. The isolated
-worker/broker delivery depends on the API shared primitives and separate egress extraction.
-Browser editing remains disabled and unqualified; local evidence and release dependencies
-are recorded in the [execution handover](../handovers/2026-11-03-google-editing.md).
+**Status:** Shipped inactive by platform [PR #7](https://github.com/keenlok/clawdot-platform/pull/7),
+following API [PR #5](https://github.com/keenlok/clawdot-platform/pull/5) and proxy
+[PR #6](https://github.com/keenlok/clawdot-platform/pull/6), under the owner's 2026-11-03
+implementation and merge authorization. Browser editing remains disabled, unqualified and
+undeployed; local evidence and release dependencies are recorded in the
+[execution handover](../handovers/2026-11-03-google-editing.md).
 **Baseline:** `main` at `0a5cd47` on 2026-11-02.
 **PR integration base:** `1e990a5`, including trip Drive associations, their activation and PDF/CSV readers.
 **Goal:** Determine whether authenticated Playwright/headless Chrome can reliably edit a

@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   replacement and bold operations on new native copies. The worker is isolated behind the
   guarded proxy; the broker shares only the confirmed copy and verifies the saved result through
   the Google API. `GOOGLE_BROWSER_ENABLED=false` and copy qualification remain disabled by
-  default. Implementation is still unmerged, unqualified and undeployed; no live Google edits
+  default. The trial remains unqualified and undeployed; no live Google edits
   have been run.
 - Shared egress proxy primitives now have a renderer-independent core location, preserving the
   public renderer's compatibility surface. The proxy extraction is under [PR #6](https://github.com/keenlok/clawdot-platform/pull/6).

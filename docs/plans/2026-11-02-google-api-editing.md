@@ -4,10 +4,10 @@
 > after owner approval. Use an isolated `codex/` branch/worktree at execution time.
 > Checkboxes describe future implementation; this document does not authorize execution.
 
-**Status:** Planned delivery; implementation proposed on `codex/google-api-editing` under
-the owner's 2026-11-03 authorization. Local implementation/testing is recorded in the
-[execution handover](../handovers/2026-11-03-google-editing.md); no live qualification,
-feature activation or deployment is implied.
+**Status:** Shipped inactive in platform [PR #5](https://github.com/keenlok/clawdot-platform/pull/5)
+under the owner's 2026-11-03 implementation and merge authorization. Local implementation,
+review and testing are recorded in the [execution handover](../handovers/2026-11-03-google-editing.md).
+Downstream release-pin integration, copy qualification and deployment remain separate.
 **Baseline:** `main` at `0a5cd47` on 2026-11-02.
 **PR integration base:** `1e990a5`, including trip Drive associations, their activation and PDF/CSV readers.
 The existing `0002_trip_files.sql` migration is preserved; this plan uses `0003_edit_results.sql`.
