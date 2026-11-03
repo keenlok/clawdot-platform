@@ -19,6 +19,16 @@ finish reason is stop. Keep length, refusal/filter and unknown reasons unchanged
 remote writes, execute textual tool syntax, or bypass gates, limits or confirmation. Log only
 the reason category and call count, never content, arguments or URLs.
 
+Further runtime inspection found a 2,048-token output limit and no tool-step/deadline stop in
+the affected turns. Their aggregate output counts also permit a truncated native tool call as
+the cause; production stop-vs-length remains unobserved. The repair must cover this path too:
+never execute a max_tokens call, but allow the existing single tool-capable continuation to
+regenerate a complete, smaller call against the unchanged transcript when time/budget permits.
+Share the same one-continuation budget with empty responses; never replay an executed write.
+Filter/refusal/unknown reasons do not gain tool execution. If recovery still cannot complete,
+report the provider-response limitation truthfully instead of claiming the tool budget was
+exhausted or asking for repeated prose approval. Global/skill/time/output limits stay unchanged.
+
 The formatting loss came from choosing google_create_doc, which creates a blank native Doc
 and inserts generated plain text. Source-derived revisions must instead use google_edit_doc:
 destination=copy when a separate output is requested; DOCX imports the original package before
@@ -42,6 +52,10 @@ packages/core/tests/test_a_providers.py; packages/core/tests/test_agent_empty_re
 - [ ] Add an agent-level regression using the real adapter with a mocked transport: a valid
   native call marked stop reaches one pending preview without another user turn and performs
   no committed write. Test that a final/limited turn cannot execute it.
+- [ ] Add failing agent regressions for max_tokens with a native call: the incomplete payload
+  never executes, one complete regenerated call may reach a preview, repeated truncation stays
+  bounded, and exhausted time/budget/final turns cannot regain tool execution. Do not confuse
+  truncation with a permission failure or force the user through repeated go prompts.
 - [ ] Run the new regressions and record their intended failures before implementation.
 - [ ] Normalize only native stop calls and add safe count/category diagnostics. Run provider,
   empty-response, budget, deadline, step-cap and confirmation tests.
