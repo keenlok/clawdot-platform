@@ -5,9 +5,9 @@ is a concise, copy-ready wiki entry that shares its image and links to the full 
 Its absolute URLs work from a GitHub wiki and target public `main` **after this PR
 merges**. Until then, review the guide and image on the PR branch.
 
-The public repository's wiki was disabled when checked on 2026-11-03. Adding files
-here does not enable or publish it. GitHub stores wiki pages separately from the main
-repository, so merging this PR alone does not create a wiki page.
+The owner enabled the public repository's wiki on 2026-11-03. GitHub stores wiki
+pages separately from the main repository, so merging this PR alone does not create
+a wiki page.
 
 After the PR merges, an owner or maintainer can publish it:
 

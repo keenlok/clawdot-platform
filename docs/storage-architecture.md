@@ -66,6 +66,8 @@ This is best-effort background indexing. There is no durable indexing outbox or
 automatic replay of every failed write. A process exit can lose pending windows,
 and an indexing failure is logged while the message remains in Postgres. Search can
 therefore lag or miss records already saved in the source database.
+The pending-buffer map also defaults to 1,000 chat/thread keys; adding a new key at
+that limit evicts the oldest buffer without first flushing it to the index.
 
 Valkey is used by separate application operations, rather than being a mandatory
 intermediate step in message storage. For example, `Limits` uses expiring cache keys
@@ -142,8 +144,11 @@ selection and lifecycle. Settings such as `PG_DSN`, `VALKEY_URL`, `CACHE_PREFIX`
 they are not a persistent-mode switch for the public scaffold.
 
 Use separate database credentials, cache prefixes and ES index prefixes for separate
-applications. `EsSearchIndex` defaults to the historical `sb-bot-` prefix; choose an
-explicit application prefix instead of assuming isolation. Its templates define
+applications. `CACHE_PREFIX` in `CoreSettings` defaults to the historical `sbbot:` value,
+and `ValkeyCache` also defaults to `sbbot:` when no prefix is supplied. Set an explicit
+application cache prefix when wiring the cache. `EsSearchIndex` defaults to the
+historical `sb-bot-` prefix; choose an explicit application index prefix instead of
+assuming isolation. Its templates define
 versioned `chunks-v1`/`memories-v1` indices with `chunks`/`memories` aliases, and
 currently use 768-dimensional vectors. A replacement embedder must match the index
 mapping; changing the embedding space requires a deliberate index migration.

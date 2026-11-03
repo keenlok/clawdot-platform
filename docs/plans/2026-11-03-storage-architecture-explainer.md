@@ -72,7 +72,7 @@ guarantees.
 The PR contains a guide, readable image, accurate flow diagrams, source references,
 README navigation and reviewable wiki source. It makes no claim of a running deployment,
 automatic ES backfill, cache continuity, scaffold service auto-configuration or wiki
-publication. Publishing the wiki remains a documented post-merge action while disabled.
+publication. Publishing the wiki is a separate action from merging the repository PR.
 
 ## Verification record
 
@@ -86,7 +86,16 @@ publication. Publishing the wiki remains a documented post-merge action while di
 - Staged diff passed whitespace and Gitleaks checks.
 - Independent Codex review checked implementation claims and SVG semantics and found
   no actionable issues. Claude review could not run because its OAuth session expired.
-- Wiki remains disabled; source and manual publication instructions are included.
+- Wiki was disabled during initial preparation; the owner enabled it on 2026-11-03
+  and authorized publication after review fixes and merge.
 - Separate integration selection: 98 passed, 55 skipped; `TEST_PG_DSN` was not
   configured and Elasticsearch was unavailable.
 - Public PR: [#2](https://github.com/keenlok/clawdot-platform/pull/2).
+
+## PR review follow-up
+
+The owner supplied a Claude Code review on PR #2 and requested fixes, merge and wiki
+publication. Codex verified both findings against the source and documented the
+historical cache prefix defaults and pending-buffer eviction at the 1,000-key limit.
+This supplied review supplements the independent Codex review; the original CLI
+authentication limitation remains part of the execution record.

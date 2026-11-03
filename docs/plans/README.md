@@ -28,7 +28,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 
 | Plan | Status | PR | Notes |
 | --- | --- | --- | --- |
-| [Storage architecture explainer](2026-11-03-storage-architecture-explainer.md) | Record | [#2](https://github.com/keenlok/clawdot-platform/pull/2) | Documentation, visual overview and wiki publishing source; wiki publication pending |
+| [Storage architecture explainer](2026-11-03-storage-architecture-explainer.md) | Record | [#2](https://github.com/keenlok/clawdot-platform/pull/2) | Documentation, visual overview, wiki source and publishing instructions |
 | [COMMON.md](COMMON.md) | Record | — | Rules every Phase 1 track followed |
 | [track-a.md](track-a.md) Core runtime | Live | — | Phase 1 |
 | [track-b.md](track-b.md) Web, stocks, SSRF guard | Live | — | Phase 1 |
