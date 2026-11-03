@@ -486,7 +486,7 @@ Implementation follows the reviewed plan without changing its trial scope. Publi
 prerequisites are under [PR #5](https://github.com/keenlok/clawdot-platform/pull/5), and the
 behavior-preserving guarded-proxy extraction is under
 [PR #6](https://github.com/keenlok/clawdot-platform/pull/6). The copy-only broker and dedicated
-browser worker have local implementation/test evidence; their browser PR is forthcoming.
+browser worker have local implementation/test evidence; their implementation is in [PR #7](https://github.com/keenlok/clawdot-platform/pull/7).
 
 Final evidence includes 229 worker/renderer tests and 304 broker/plugin/boundary/index tests.
 The frozen public suite passed 3,566 tests (two Elasticsearch skips, 26 deselections). The final

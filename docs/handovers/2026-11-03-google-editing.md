@@ -125,7 +125,7 @@ checkout. All 23 existing migration hashes are unchanged; only Google 0003 is ne
 seccomp files match the downstream existing asset. Full lint and changed-file formatting pass;
 full formatting still reports the same 14 pre-existing Markdown plans. Secret scans are clean.
 
-The browser PR is forthcoming. The code is unmerged; copying and browser editing remain disabled
+Final independent review found no remaining findings: 40 broker/client/wiring tests passed after the inherited-style correction. The browser implementation is in [PR #7](https://github.com/keenlok/clawdot-platform/pull/7). The code is unmerged; copying and browser editing remain disabled
 by default, live behavior is unqualified, and nothing has been deployed.
 
 ## Release and live-operation boundaries
