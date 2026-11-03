@@ -794,21 +794,20 @@ Requests and their detail. The status of every plan, built or not, is tracked in
     plan before adding it. Never touch `main`.
 
   Not started.
-- [ ] **Share a contribute or learn link in allowed groups** (requested 2026-11-01; the user is
-  still deciding the shape). When someone in an allowed group asks whether they can contribute
-  or how the bot works, the bot shares a link. Note: the repo is the private GitHub
-  `keenlok/clawdot-platform`, not GitLab, and GitHub has no shareable invite links for private
-  repos (invites are per username). Options:
-  - (a) A configured fixed URL (`CONTRIBUTE_URL`) plus "ask the owner for access". This is the
-    leading option.
-  - (b) An owner-only command that invites a GitHub username. It needs a write-scoped GitHub
-    token on the box, so avoid it.
-  - (c) A public read-only docs page or mirror, for "how it works". Check it for infra details
-    and secrets first.
+- [x] **Share public source and learn links in allowed chats** (requested 2026-11-01;
+  delivered downstream on 2026-11-03). SBot supplies the same owner-maintained public
+  project information to its legacy and skills-on system contexts. Source/contribution
+  questions point to the [public framework repository](https://github.com/keenlok/clawdot-platform);
+  architecture and storage questions point to the
+  [wiki visual explainer](https://github.com/keenlok/clawdot-platform/wiki/Storage-architecture)
+  and [detailed storage guide](docs/storage-architecture.md).
+  Reading or cloning the public framework needs no invitation; contributors can use
+  normal GitHub issues and pull requests. Private bot configuration/deployment is
+  separate and is not a contribution target. No GitHub write token, invitation tool
+  or extra general tool is needed for these fixed facts. Existing group allowlists
+  and DM membership policy still govern access. App implementation and rollout
+  evidence are maintained in the owner's deployment records.
 
-  Shape: one read-only tool, gated to allowed groups and declared in the skill layer (the
-  general tools or a small "about the bot" skill). It doesn't conflict with the skill layer.
-  Not started.
 - [x] **Temporary per-chat model switch via `/model`** (requested 2026-11-01; shape agreed
   2026-11-01; plan `docs/plans/model-switch.md`): anyone in an allowlisted chat can switch that
   chat's model for 30 minutes, then it reverts automatically. Built 2026-11-01 on branch
