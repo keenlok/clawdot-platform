@@ -16,6 +16,7 @@ members = [
     "chatcore-expenses",
     "chatcore-extensions",
     "chatcore-google",
+    "chatcore-google-browser-editor",
     "chatcore-jobs",
     "chatcore-memory",
     "chatcore-polls",
@@ -704,6 +705,27 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pypdf", specifier = ">=6.21.4,<7" },
+]
+
+[[package]]
+name = "chatcore-google-browser-editor"
+version = "0.1.0"
+source = { editable = "services/google-browser-editor" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "chatcore" },
+    { name = "playwright" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11" },
+    { name = "chatcore", editable = "packages/core" },
+    { name = "playwright", specifier = ">=1.55" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pydantic-settings", specifier = ">=2.6" },
 ]
 
 [[package]]

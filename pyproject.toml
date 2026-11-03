@@ -25,6 +25,7 @@ chatcore-google = { workspace = true }
 chatcore-extensions = { workspace = true }
 chatcore-browse = { workspace = true }
 chatcore-browser-renderer = { workspace = true }
+chatcore-google-browser-editor = { workspace = true }
 chatcore-research = { workspace = true }
 chatcore-release-control = { workspace = true }
 example-bot = { workspace = true }

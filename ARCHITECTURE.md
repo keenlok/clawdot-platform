@@ -407,6 +407,18 @@ See [API editing](docs/plans/2026-11-02-google-api-editing.md) and the
 [operator guide](docs/google-workspace.md#confirmed-content-edits). Public framework delivery
 does not update the separately pinned downstream application or authorize live Google writes.
 
+The optional browser trial is a separate explicit backend, never an automatic API fallback. It
+supports exact text replacement and bold formatting only, always on a new native Doc copy. Its
+preview includes the editor account and configured chat members who receive writer access; the
+broker shares only that copy and requires API read-back before reporting a verified result. A
+dedicated editor-account session stays outside the owner OAuth profile. The worker is a separate
+service behind the shared guarded proxy, with a fixed private protocol and no API credentials.
+`GOOGLE_BROWSER_ENABLED=false` by default, and copy qualification is a separate prerequisite.
+The browser implementation is shipped inactive; release-pin integration, live qualification and
+deployment remain pending. Synthetic tests do not establish
+live Google UI or session reliability. See the [browser trial plan](docs/plans/2026-11-02-google-browser-editing.md)
+and [operator guide](docs/google-browser-editing.md).
+
 **Schema additions:**
 - `trips(id, chat_id, name, countries, currencies, settle_mode, settle_currency, status, start_date, end_date, started_at, ended_at)`, `trip_defaults(chat_key, trip_id)`, `trip_members(trip_id, user_key, added_by, added_at)`
 - `expense_events(id, chat_key, expense_id, actor_key, action, before, after, undo_of, undone_at, created_at)`: the audit and undo log
