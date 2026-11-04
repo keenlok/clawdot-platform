@@ -114,7 +114,9 @@ async def test_followup_sheet_and_itinerary_reads_support_the_same_source(google
 
 
 @pytest.mark.parametrize("reader", ["google_read_doc", "google_read_file"])
-async def test_registry_exposes_source_reference_only_on_reads(google_service, reader):
+async def test_registry_exposes_source_reference_on_reads_and_doc_edits_only(
+    google_service, reader
+):
     service, client, ctx, _ = google_service
     await share(ctx)
     client.metadata.return_value = {"mimeType": "application/vnd.google-apps.document"}
@@ -127,10 +129,11 @@ async def test_registry_exposes_source_reference_only_on_reads(google_service, r
     assert result.untrusted and not result.persist_content
     assert ctx.turn.human_urls == frozenset()
     for tool in plugin.tools():
-        if tool.writes:
-            # itinerary_import already has an unrelated CSV attachment source argument.
-            if tool.name != "itinerary_import":
-                assert "source_message_ref" not in tool.parameters["properties"]
+        if tool.writes and tool.name not in {"google_edit_doc", "itinerary_import"}:
+            assert "source_message_ref" not in tool.parameters["properties"]
+    tools = {tool.name: tool for tool in plugin.tools()}
+    assert "source_message_ref" in tools["google_edit_doc"].parameters["properties"]
+    assert "source_message_ref" in tools["itinerary_import"].parameters["properties"]
 
 
 @pytest.mark.parametrize(

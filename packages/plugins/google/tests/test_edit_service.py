@@ -1,5 +1,6 @@
 import io
 import zipfile
+from dataclasses import replace
 
 import pytest
 from chatcore_google.client import GoogleError
@@ -110,7 +111,7 @@ async def test_link_viewer_choice_applies_only_to_frozen_new_doc_copies(google_s
     client.metadata.return_value = metadata()
     client.document_for_edit.return_value = doc("Dinner at 7pm")
     edits = GoogleEditService(base)
-    with pytest.raises(ValueError, match="Original Docs stay private"):
+    with pytest.raises(ValueError, match="Original Docs stay unchanged"):
         await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm", link_viewer=True)
 
     base.settings.copy_qualified = True
@@ -135,6 +136,88 @@ async def test_link_viewer_choice_applies_only_to_frozen_new_doc_copies(google_s
     assert copied.payload["link_viewer"] is True
     assert private.payload["link_viewer"] is False
     assert "anyone with the link can view" in copied.summary.casefold()
+
+
+async def test_edit_proposal_accepts_journaled_output_even_with_wrong_optional_human_ref(
+    google_service,
+):
+    base, client, ctx, _ = google_service
+    ctx.turn.human_urls = frozenset()
+    base.settings.copy_qualified = True
+    client.metadata.return_value = {
+        **metadata("output-id"),
+        "ownedByMe": True,
+        "owners": [{"emailAddress": "owner@example.com", "permissionId": "owner-id"}],
+        "capabilities": {
+            "canEdit": True,
+            "canModifyContent": True,
+            "canCopy": True,
+            "canDownload": True,
+        },
+    }
+    client.document_for_edit.return_value = doc("Dinner at 7pm")
+    await base.repo.reserve_edit(
+        ctx.chat.key,
+        "prior-output",
+        ctx.user.ref.key,
+        0,
+        10,
+        0,
+        kind="edit_doc",
+        source_id="source-id",
+        output_binding={
+            "owner_id": "owner-id",
+            "owner_email": "owner@example.com",
+            "thread_id": None,
+            "mode": "copy",
+        },
+    )
+    await base.repo.update_edit_result(
+        ctx.chat.key, "prior-output", phase="destination_created", destination_id="output-id"
+    )
+
+    action = await GoogleEditService(base).propose_doc(
+        ctx,
+        url("output-id"),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        source_message_ref="not-a-human-message",
+    )
+
+    assert action.payload["source"]["file_id"] == "output-id"
+    assert action.payload["source"]["authority"]["action_id"] == "prior-output"
+
+
+async def test_external_doc_source_message_ref_is_frozen_and_rechecked_at_commit(google_service):
+    from chatcore.testing import message
+
+    base, client, ctx, _ = google_service
+    ctx.turn.human_urls = frozenset()
+    client.metadata.return_value = metadata()
+    client.document_for_edit.return_value = doc("Dinner at 7pm")
+    human = replace(
+        message("Please edit " + url(), sender=ctx.user, chat=ctx.chat),
+        message_id="human-doc-source",
+    )
+    await ctx.stores.repo.log_message(human)
+    edits = GoogleEditService(base)
+
+    action = await edits.propose_doc(
+        ctx,
+        url(),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        source_message_ref="human-doc-source",
+    )
+
+    assert action.payload["source"]["authority"] == {
+        "kind": "human_message",
+        "message_id": "human-doc-source",
+    }
+    await ctx.stores.repo.purge_user(ctx.chat, ctx.user.ref)
+    with pytest.raises(ValueError, match="source must be an existing human message"):
+        await edits.commit(action, ctx)
+    client.edit_document.assert_not_awaited()
 
 
 async def test_doc_confirmation_uses_frozen_range_revision_and_verifies_readback(google_service):
@@ -162,6 +245,227 @@ async def test_doc_confirmation_uses_frozen_range_revision_and_verifies_readback
     journal = await base.repo.edit_result(ctx.chat.key, action.id)
     assert journal["phase"] == "verified"
     client.grant_writer.assert_not_awaited()
+
+
+async def test_doc_verification_retries_stale_readback_without_repeating_mutation(
+    google_service, monkeypatch
+):
+    import asyncio
+
+    delays = []
+
+    async def record_sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", record_sleep)
+    base, client, ctx, _ = google_service
+    client.metadata.return_value = metadata()
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm"),
+        doc("Dinner at 7pm"),
+        doc("Dinner at 7pm"),
+        doc("Dinner at 8pm", "rev-2"),
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm")
+
+    result = await edits.commit(action, ctx)
+
+    assert "verified" in result.lower()
+    assert client.edit_document.await_count == 1
+    assert client.document_for_edit.await_count == 4
+    assert delays == [0.1]
+
+
+async def test_doc_verification_persists_text_mismatch_after_bounded_reads(
+    google_service, monkeypatch
+):
+    import asyncio
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    base, client, ctx, _ = google_service
+    client.metadata.return_value = metadata()
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm"),
+        doc("Dinner at 7pm"),
+        doc("Dinner at 7pm"),
+        doc("Dinner at 6pm", "rev-2"),
+        doc("Dinner at 6pm", "rev-3"),
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm")
+
+    result = await edits.commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "Uncertain" in result and url("file") in result
+    assert "no link-access change was attempted" in result.casefold()
+    assert journal["phase"] == "uncertain"
+    assert journal["error_category"] == "text_mismatch"
+    assert client.edit_document.await_count == 1
+    assert client.document_for_edit.await_count == 5
+
+
+async def test_doc_verification_retries_read_error_then_exact_readback(google_service, monkeypatch):
+    import asyncio
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    base, client, ctx, _ = google_service
+    client.metadata.return_value = metadata()
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm"),
+        doc("Dinner at 7pm"),
+        GoogleError("temporary read failure"),
+        doc("Dinner at 8pm", "rev-2"),
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm")
+
+    result = await edits.commit(action, ctx)
+
+    assert "verified" in result.lower()
+    assert client.edit_document.await_count == 1
+    assert client.document_for_edit.await_count == 4
+
+
+async def test_doc_verification_ignores_unrelated_inline_image_and_keeps_target_checks(
+    google_service,
+):
+    base, client, ctx, _ = google_service
+    base.settings.copy_qualified = True
+    client.metadata.side_effect = [metadata(), metadata(), metadata("copy-id"), metadata("copy-id")]
+    client.copy_file.return_value = {"id": "copy-id", "mimeType": DOC}
+    with_image = doc("Dinner at 8pm", "rev-2", tab_id="copy-tab")
+    content = with_image["tabs"][0]["documentTab"]["body"]["content"][0]
+    content["endIndex"] += 1
+    content["paragraph"]["elements"].append(
+        {"startIndex": 15, "endIndex": 16, "inlineObjectElement": {"inlineObjectId": "image"}}
+    )
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="copy-tab"),
+        with_image,
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(
+        ctx, url(), "Dinner at 7pm", "Dinner at 8pm", destination="copy"
+    )
+
+    result = await edits.commit(action, ctx)
+
+    assert "verified" in result.lower()
+    assert client.edit_document.await_count == 1
+
+
+async def test_doc_verification_rejects_style_mismatch_after_bounded_reads(
+    google_service, monkeypatch
+):
+    import asyncio
+
+    async def no_sleep(_delay):
+        return None
+
+    base, client, ctx, _ = google_service
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    base.settings.copy_qualified = True
+    client.metadata.side_effect = [
+        metadata(),
+        metadata(),
+        metadata("copy-id"),
+        metadata("copy-id"),
+    ]
+    client.copy_file.return_value = {"id": "copy-id", "mimeType": DOC}
+    wrong_style = doc("Dinner at 8pm", "rev-2", tab_id="copy-tab")
+    wrong_style["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "textRun"
+    ]["textStyle"] = {"italic": True}
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="copy-tab"),
+        wrong_style,
+        wrong_style,
+        wrong_style,
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(
+        ctx,
+        url(),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        destination="copy",
+        link_access="viewer",
+    )
+
+    result = await edits.commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "Uncertain" in result and "style_mismatch" in result
+    assert journal["error_category"] == "style_mismatch"
+    assert client.edit_document.await_count == 1
+    client.grant_link_viewer.assert_not_awaited()
+
+
+async def test_doc_verification_rejects_missing_target_style_coverage(google_service, monkeypatch):
+    import asyncio
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    base, client, ctx, _ = google_service
+    client.metadata.return_value = metadata()
+    missing_coverage = doc("Dinner at 8pm", "rev-2")
+    missing_coverage["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "startIndex"
+    ] = 2
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm"),
+        doc("Dinner at 7pm"),
+        missing_coverage,
+        missing_coverage,
+        missing_coverage,
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm")
+
+    result = await edits.commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "Uncertain" in result and "style_coverage" in result
+    assert journal["error_category"] == "style_coverage"
+    assert client.edit_document.await_count == 1
+
+
+async def test_doc_verification_stops_when_read_exceeds_aggregate_deadline():
+    from chatcore_google.doc_verification import verify_doc_readback
+
+    current_time = 0.0
+
+    class SlowRead:
+        async def document_for_edit(self, _file_id):
+            nonlocal current_time
+            current_time = 5.1
+            return doc("Expected\n")
+
+    result = await verify_doc_readback(
+        SlowRead(),
+        "file-id",
+        "Expected\n",
+        max_chars=100,
+        clock=lambda: current_time,
+    )
+
+    assert result.verified is False
+    assert result.category == "readback_deadline"
+    assert result.attempts == 1
 
 
 async def test_doc_confirmation_stale_revision_stops_before_mutation(google_service):
@@ -377,6 +681,54 @@ async def test_link_viewer_copy_is_shared_after_both_verified_edit_paths(
     assert "anyone with the link can view" in result.casefold()
     assert journal["phase"] == "verified" and journal["destination_id"] == "copy-id"
     client.grant_link_viewer.assert_awaited_once_with("copy-id")
+
+
+async def test_link_editor_copy_is_shared_only_after_strict_content_verification(google_service):
+    base, client, ctx, _ = google_service
+    base.settings.copy_qualified = True
+    copied_meta = metadata("copy-id")
+    copied_meta.update(
+        ownedByMe=True,
+        isAppAuthorized=True,
+        owners=[{"emailAddress": "owner@example.com", "permissionId": "owner-id"}],
+    )
+    copied_meta["capabilities"]["canShare"] = True
+    client.metadata.side_effect = [metadata(), metadata(), copied_meta, copied_meta]
+    client.copy_file.return_value = {"id": "copy-id", "mimeType": DOC}
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="copy-tab"),
+        doc("Dinner at 8pm", tab_id="copy-tab"),
+    ]
+    client.list_permissions.side_effect = [
+        {"permissions": []},
+        {
+            "permissions": [
+                {
+                    "id": "public",
+                    "type": "anyone",
+                    "role": "writer",
+                    "allowFileDiscovery": False,
+                }
+            ]
+        },
+    ]
+    action = await GoogleEditService(base).propose_doc(
+        ctx,
+        url(),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        destination="copy",
+        link_access="editor",
+    )
+
+    result = await GoogleEditService(base).commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "anyone with the link can edit" in result.casefold()
+    assert journal["phase"] == "verified" and journal["destination_id"] == "copy-id"
+    client.grant_link_editor.assert_awaited_once_with("copy-id")
 
 
 async def test_wrong_copy_mime_is_recorded_partial_with_known_destination(google_service):

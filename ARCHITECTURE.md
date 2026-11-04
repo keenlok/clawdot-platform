@@ -28,7 +28,7 @@ earlier history (`clawdot-platform-history`) remains private.
 | Web search | Tavily |
 | Storage | Postgres, Elasticsearch and Valkey backends, or in-memory stores for the scaffold (§3a) |
 | Security | Basic baseline in §6a: scoped credentials, untrusted-content rules, SSRF guard, hardened container, retention and deletion |
-| Google output Docs | A confirmed new native Doc may be shared as non-discoverable anyone/reader only when its preview freezes that choice. Source files, originals, Sheets and browser trials keep separate sharing rules; the reusable framework defaults to private. |
+| Google output Docs | A confirmed new native Doc may be private or shared as non-discoverable anyone/reader or anyone/writer when its preview freezes that choice. A retained output journal binds continuation authority to the same owner and exact chat/topic. Originals, external sources, Sheets and browser trials keep separate sharing rules; the reusable framework defaults to private. |
 | Deploy target | Selected and operated by each downstream application (§6) |
 | Web page tool | A single `fetch_web_page`: HTTP fetch plus text extraction, with no headless browser |
 | Expense currency | SGD by default. A **trip** sets its own currencies, and each trip chooses whether to settle in SGD or per currency (§4) |
@@ -417,6 +417,14 @@ privacy purge cascades immediately. Copy qualification remains disabled by defau
 See [API editing](docs/plans/2026-11-02-google-api-editing.md) and the
 [operator guide](docs/google-workspace.md#confirmed-content-edits). Public framework delivery
 does not update the separately pinned downstream application or authorize live Google writes.
+
+**Native Doc output authority:** newly created Docs, including private outputs, are journaled with
+the owner identity, chat/topic and creation mode. A complete retained binding allows later native
+Doc reads/edits only in that same chat/topic after owner and Google permission checks; legacy,
+purged, ambiguous or mismatched output records do not authorize access. Sharing choices are frozen
+as private, anyone/reader or anyone/writer with discovery disabled, and are applied only after
+bounded content read-back. The framework default is private. External source ACLs and the separate
+Sheet and browser authority paths are unchanged. See [output authority and access](docs/plans/2026-11-04-google-output-followups-and-access.md).
 
 The optional browser trial is a separate explicit backend, never an automatic API fallback. It
 supports exact text replacement and bold formatting only, always on a new native Doc copy. Its

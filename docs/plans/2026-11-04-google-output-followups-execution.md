@@ -3,6 +3,9 @@
 > For agentic workers: use the executing-plans skill task by task. AGENTS.md requires Luna
 > execution and Sol independent review; the coordinator integrates and releases.
 
+**Status:** Runtime implemented and independently reviewed; release and downstream delivery
+remain CI-gated. Actual rollout receipt is recorded on the delivery PR.
+
 **Goal:** Let the bot safely continue editing its own retained native Doc outputs, robustly
 verify a single edit, and offer private/viewer/editor access with viewer as SBot's default.
 
@@ -46,6 +49,7 @@ wiki, integration verification and shipping; Sol reviews runtime and maintenance
 ```python
 ACCESS_LEVELS = frozenset({"private", "viewer", "editor"})
 
+
 def resolve_access(settings, link_access=None, link_viewer=None):
     if link_access is not None and link_viewer is not None:
         raise ValueError("Use link_access or link_viewer, not both.")
@@ -58,8 +62,10 @@ def resolve_access(settings, link_access=None, link_viewer=None):
             raise ValueError("link_viewer must be a boolean.")
         return "viewer" if link_viewer else "private"
     configured = settings.new_docs_link_access
-    return configured if configured is not None else (
-        "viewer" if settings.new_docs_link_viewer else "private"
+    return (
+        configured
+        if configured is not None
+        else ("viewer" if settings.new_docs_link_viewer else "private")
     )
 ```
 

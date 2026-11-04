@@ -1,6 +1,7 @@
 # Google output continuation, verification and access levels
 
-Status: Approved design, implementation in progress. The owner approved viewer by default
+Status: Live limited once v0.5.0 is published; downstream installed receipt follows on its delivery
+PR. The owner approved viewer by default
 and editor when explicitly requested on 2026-11-04. Existing files remain unchanged.
 
 ## Goal and observed evidence
@@ -173,3 +174,26 @@ capture, exact nullable-topic semantics, rollback-compatible legacy denial and c
 regressions. Existing manual permissions remain untouched. The historical verification criterion
 that failed is not recoverable from its generic journal entry; bounded GET retries and precise
 future diagnostics improve that path without treating a genuine mismatch as success.
+
+## Implementation validation
+
+The executor recorded RED/GREEN coverage for access choices, durable bindings, own-output
+continuation and stale read-back behavior. Final focused Google/Postgres/API/source checks
+passed 149 tests; catalog, generated wiki, boundaries, plans and request-snapshot checks passed
+61 tests. The coordinator's complete platform suite passed 3,758 tests, three environment skips
+and 26 browser/sandbox deselections; 14 existing Telegram deprecation warnings remain.
+
+Independent Sol review cleared the binding SQL/repository layer, including all 16 nullable
+binding combinations and ambiguous destinations, and the final runtime (124 focused checks).
+Review corrected create-only completeness and a missing-legacy-choice promotion in an unused
+compatibility wrapper. Edit verification still permits unrelated nontext content while
+requiring exact flattened text, target style and coverage. All 25 prior migration hashes are
+unchanged; only additive Google 0005 is introduced.
+
+Whole-tree lint, changed-file formatting, lock/diff checks, generator --check and Gitleaks
+tree/history passed. Full-tree formatting retains the same 14 unchanged Markdown exceptions.
+Installed scaffold wheels passed the outside-checkout smoke; the scaffold image built and its
+read-only/network-disabled console smoke passed. All 34 Google code/SQL/explainer resources
+in the candidate wheel match the reviewed source. No extra Google file or permission mutation
+was used for qualification. Released tag identity, final downstream app checks and actual
+health-gated deployment evidence will be recorded on the implementation/delivery PRs.

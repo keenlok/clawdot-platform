@@ -211,6 +211,37 @@ async def test_link_viewer_grant_is_fixed_and_readback_includes_discovery_flag(t
     assert "allowFileDiscovery" in read.url.params["fields"]
 
 
+async def test_link_editor_grant_is_fixed_and_not_discoverable(tmp_path):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        return httpx.Response(
+            200,
+            json={"type": "anyone", "role": "writer", "allowFileDiscovery": False},
+        )
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        await client.grant_link_access("new-doc", "editor")
+        with pytest.raises(GoogleError, match="viewer or editor"):
+            await client.grant_link_access("new-doc", "owner")
+
+    grants = [
+        request
+        for request in calls
+        if request.method == "POST" and request.url.host == "www.googleapis.com"
+    ]
+    assert len(grants) == 1
+    assert json.loads(grants[0].content) == {
+        "type": "anyone",
+        "role": "writer",
+        "allowFileDiscovery": False,
+    }
+
+
 async def test_account_change_and_revoked_credentials_fail_closed(tmp_path):
     def transport(request):
         if request.url.host == "oauth2.googleapis.com":
