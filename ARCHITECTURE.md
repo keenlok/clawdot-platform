@@ -28,6 +28,7 @@ earlier history (`clawdot-platform-history`) remains private.
 | Web search | Tavily |
 | Storage | Postgres, Elasticsearch and Valkey backends, or in-memory stores for the scaffold (§3a) |
 | Security | Basic baseline in §6a: scoped credentials, untrusted-content rules, SSRF guard, hardened container, retention and deletion |
+| Google output Docs | A confirmed new native Doc may be shared as non-discoverable anyone/reader only when its preview freezes that choice. Source files, originals, Sheets and browser trials keep separate sharing rules; the reusable framework defaults to private. |
 | Deploy target | Selected and operated by each downstream application (§6) |
 | Web page tool | A single `fetch_web_page`: HTTP fetch plus text extraction, with no headless browser |
 | Expense currency | SGD by default. A **trip** sets its own currencies, and each trip chooses whether to settle in SGD or per currency (§4) |

@@ -120,9 +120,12 @@ class GoogleRepository:
         self, chat, action_id, requester, rows, daily_limit, revision, *, kind, source_id
     ):
         """Atomically reserve replay protection and the edit result journal."""
-        if kind not in {"edit_doc", "edit_sheet", "browser_edit_doc"}:
+        if kind not in {"edit_doc", "edit_sheet", "browser_edit_doc", "create_doc"}:
             raise ValueError("Unknown Google edit action kind.")
-        if not isinstance(source_id, str) or not 1 <= len(source_id) <= 200:
+        if kind == "create_doc":
+            if source_id is not None:
+                raise ValueError("A new Doc reservation cannot have a source ID.")
+        elif not isinstance(source_id, str) or not 1 <= len(source_id) <= 200:
             raise ValueError("A valid Google source ID is required.")
         now = datetime.now(UTC)
         if self.db is not None:
@@ -218,7 +221,7 @@ class GoogleRepository:
                 claimed = await tx.fetchval(
                     "UPDATE google_edit_results SET destination_creation_claimed=TRUE,"
                     "updated_at=now() WHERE chat_key=$1 AND action_id=$2 AND kind=$3 "
-                    "AND source_id=$4 AND phase='reserved' "
+                    "AND source_id IS NOT DISTINCT FROM $4 AND phase='reserved' "
                     "AND destination_creation_claimed=FALSE RETURNING TRUE",
                     chat,
                     action_id,
@@ -336,7 +339,7 @@ class GoogleRepository:
         if self.db is not None:
             async with self.db.transaction() as tx:
                 row = await tx.fetchrow(
-                    "SELECT phase,destination_id FROM google_edit_results "
+                    "SELECT phase,destination_id,kind FROM google_edit_results "
                     "WHERE chat_key=$1 AND action_id=$2 FOR UPDATE",
                     chat,
                     action_id,
@@ -366,6 +369,9 @@ class GoogleRepository:
                     "partial": set(),
                     "uncertain": set(),
                 }
+                if row["kind"] in {"edit_doc", "create_doc"}:
+                    allowed["shared"].add("verified")
+                    allowed["applying"].add("shared")
                 if old_phase != phase and phase not in allowed.get(old_phase, set()):
                     raise ValueError("Google edit result is already terminal.")
                 if destination_id and old_destination and old_destination != destination_id:
@@ -398,6 +404,9 @@ class GoogleRepository:
             "partial": set(),
             "uncertain": set(),
         }
+        if current["kind"] in {"edit_doc", "create_doc"}:
+            allowed["shared"].add("verified")
+            allowed["applying"].add("shared")
         if old_phase != phase and phase not in allowed.get(old_phase, set()):
             raise ValueError("Google edit result phase transition is not allowed.")
         if destination_id and old_destination and old_destination != destination_id:

@@ -11,6 +11,13 @@ from chatcore.files import FilePlatform
 from chatcore.pending import PendingAction
 
 from chatcore_google.docx import docx_text
+from chatcore_google.edit_snapshot import flatten_doc_snapshot
+from chatcore_google.link_sharing import (
+    publish_doc_link_viewer,
+    record_result,
+    web_url,
+    write_outcome_uncertain,
+)
 from chatcore_google.permissions import authorize
 from chatcore_google.refs import approved_ref, approved_source_ref
 from chatcore_google.render import doc_text, literal_rows
@@ -290,7 +297,9 @@ class GoogleService:
             "This applies to Google and itinerary reads/writes.",
         )
 
-    async def propose(self, ctx, kind, *, url=None, title=None, text=None, rows=None, tab=None):
+    async def propose(
+        self, ctx, kind, *, url=None, title=None, text=None, rows=None, tab=None, link_viewer=None
+    ):
         await self.authorize(ctx, write=True)
         if kind not in ("append", "create_doc", "create_sheet"):
             raise ValueError("Unknown Google write operation.")
@@ -318,6 +327,12 @@ class GoogleService:
             payload["title"] = title
             payload["mime"] = DOC if kind == "create_doc" else SHEET
             name = title
+            if kind == "create_doc":
+                if link_viewer is not None and type(link_viewer) is not bool:
+                    raise ValueError("Specify whether anyone with the link may view the new Doc.")
+                payload["link_viewer"] = (
+                    self.settings.new_docs_link_viewer if link_viewer is None else link_viewer
+                )
         if payload["mime"] == SHEET:
             if text is not None:
                 raise ValueError("Provide rows for a Sheet.")
@@ -331,9 +346,24 @@ class GoogleService:
         _, revision = await self.repo.settings(ctx.chat.key)
         payload.update(owner=owner, revision=revision)
         # Long previews are attached in full by action(); the pending payload stays frozen.
+        link_line = (
+            "Access: anyone with the link can view (not discoverable).\n"
+            if kind == "create_doc" and payload.get("link_viewer") is True
+            else "Access: private; existing access settings are unchanged.\n"
+            if kind == "create_doc"
+            else ""
+        )
+        target = (
+            "new Doc with link-viewer access"
+            if kind == "create_doc" and payload.get("link_viewer") is True
+            else "new private file"
+            if kind in {"create_doc", "create_sheet"}
+            else url
+        )
         summary = (
             f"{kind.replace('_', ' ').title()}: {name}\n"
-            f"Owner: {self.settings.owner_email}\nTarget: {url or 'new private file'}\n\n{preview}"
+            + link_line
+            + f"Owner: {self.settings.owner_email}\nTarget: {target}\n\n{preview}"
         )
         return await self.action(ctx, kind, payload, summary)
 
@@ -419,6 +449,8 @@ class GoogleService:
             rows = self.rows(payload["rows"])
         elif not 0 < len(payload["text"]) <= self.settings.max_chars:
             raise ValueError("Document text exceeds the current character limit; request again.")
+        if action.kind == "create_doc" and payload.get("link_viewer") is True:
+            return await self._create_link_viewer_doc(action, ctx, payload)
         await self.reserve(action, ctx)
         if action.kind == "create_doc":
             result = await self.client.request(
@@ -461,6 +493,195 @@ class GoogleService:
             ],
         )
         return f"Created https://docs.google.com/spreadsheets/d/{file_id}/edit (sharing unchanged)."
+
+    async def _create_link_viewer_doc(self, action, ctx, payload):
+        """Create, journal, verify and then share a confirmed native Doc output."""
+        await self.repo.reserve_edit(
+            ctx.chat.key,
+            action.id,
+            ctx.user.ref.key,
+            0,
+            self.settings.suggestion_rows_per_day,
+            payload["revision"],
+            kind="create_doc",
+            source_id=None,
+        )
+        await self.repo.claim_destination_creation(
+            ctx.chat.key,
+            action.id,
+            kind="create_doc",
+            source_id=None,
+            revision=payload["revision"],
+        )
+        try:
+            result = await self.client.request(
+                "POST", "docs.googleapis.com", "/v1/documents", json={"title": payload["title"]}
+            )
+        except Exception as exc:
+            uncertain = write_outcome_uncertain(exc)
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain" if uncertain else "conflict",
+                failed_stage="destination",
+                error_category="remote_unknown" if uncertain else "refused",
+            )
+            return (
+                "Uncertain: Google may have created the Doc without returning its ID; "
+                "inspect Drive before retrying."
+                if uncertain
+                else "Google refused to create the Doc; no content was written."
+            )
+        destination_id = result.get("documentId") if isinstance(result, dict) else None
+        if not isinstance(destination_id, str) or not 1 <= len(destination_id) <= 200:
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain",
+                failed_stage="destination",
+                error_category="missing_id",
+            )
+            return (
+                "Uncertain: Google may have created the Doc without returning a valid ID; "
+                "inspect Drive."
+            )
+        safe_url = (
+            web_url(destination_id)
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id)
+            else None
+        )
+        result_record = await record_result(
+            self,
+            action,
+            ctx,
+            phase="destination_created",
+            destination_id=destination_id,
+        )
+        if isinstance(result_record, Exception):
+            location = f"{safe_url}" if safe_url else "the returned destination ID"
+            return (
+                f"Partial: Google created {location}, but its ID could not be durably journaled; "
+                "no content or sharing change was attempted. Inspect Drive before retrying."
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id):
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="partial",
+                destination_id=destination_id,
+                failed_stage="destination_validation",
+                error_category="invalid_remote_id",
+            )
+            return (
+                "Partial: Google returned a destination ID that cannot be opened safely; "
+                "inspect Drive."
+            )
+        url = web_url(destination_id)
+        try:
+            metadata = await self.client.metadata(destination_id)
+            self.check_metadata(destination_id, metadata)
+            if metadata.get("mimeType") != DOC:
+                raise ValueError("Google created an unexpected destination type.")
+        except Exception:
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="partial",
+                destination_id=destination_id,
+                failed_stage="destination_validation",
+                error_category="inaccessible_or_wrong_type",
+            )
+            return (
+                f"Partial: the Doc is at {url}; its destination could not be validated, "
+                "so no content was written."
+            )
+        applying = await record_result(
+            self,
+            action,
+            ctx,
+            phase="applying",
+            destination_id=destination_id,
+            failed_stage="content_attempt",
+        )
+        if isinstance(applying, Exception):
+            return (
+                f"Partial: the Doc is at {url}; the content attempt could not be durably recorded, "
+                "so no content was written."
+            )
+        append_error = None
+        try:
+            await self.append_doc(destination_id, payload["text"])
+        except Exception as exc:
+            append_error = exc
+        readback_completed = False
+        try:
+            document = await self.client.document_for_edit(destination_id)
+            snapshot = flatten_doc_snapshot(
+                document,
+                tab_id=None,
+                max_chars=self.settings.max_chars + 1,
+                file_id=destination_id,
+            )
+            readback_completed = True
+        except Exception:
+            snapshot_verified = False
+        else:
+            snapshot_verified = snapshot.complete and snapshot.text == payload["text"] + "\n"
+        if not snapshot_verified:
+            uncertain = (
+                write_outcome_uncertain(append_error) if append_error else not readback_completed
+            )
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain" if uncertain else "partial",
+                destination_id=destination_id,
+                failed_stage="content_verification",
+                error_category="remote_unknown" if uncertain else "readback_mismatch",
+            )
+            return (
+                f"{'Uncertain' if uncertain else 'Partial'}: the Doc is at {url}; "
+                "its content was not verified."
+            )
+
+        try:
+            shared, message = await publish_doc_link_viewer(
+                self, action, ctx, payload, destination_id
+            )
+        except Exception:
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain",
+                destination_id=destination_id,
+                failed_stage="sharing_result",
+                error_category="journal_or_preflight_failure",
+            )
+            return (
+                f"Uncertain: the Doc is at {url}; its link-viewer sharing result could not be "
+                "safely finalized. Inspect access before retrying."
+            )
+        if not shared:
+            return message
+        finalized = await record_result(
+            self,
+            action,
+            ctx,
+            phase="verified",
+            destination_id=destination_id,
+        )
+        if isinstance(finalized, Exception):
+            return (
+                f"Uncertain: the Doc is at {url}; its content and link-viewer access were "
+                "read-back verified, but final journal completion failed. Inspect before retrying."
+            )
+        return f"Created and verified {url}; anyone with the link can view."
 
     async def append_doc(self, file_id, text, tab_id=None):
         location = {"tabId": tab_id} if tab_id else {}

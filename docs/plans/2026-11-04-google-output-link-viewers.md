@@ -1,6 +1,6 @@
 # Link-viewer access for new output Docs
 
-Status: Planned. The owner requested both an existing generated output and future output
+Status: Live limited once v0.4.0 is published; the framework default remains private. The owner requested both an existing generated output and future output
 copies to be viewable by anyone with the link. This explicitly extends the earlier owner-only
 API-output policy; it does not authorize sharing source files or enabling browser trials.
 
@@ -83,3 +83,22 @@ Execution roles: Claude CLI is installed but its authentication probe failed wit
 OAuth. Under AGENTS.md's unavailable-model fallback, Codex executes and an independent Codex
 reviews; no Claude review is claimed. The requested sharing behavior above is the approved
 scope; new-file writes still require the normal concrete in-bot confirmation.
+
+## Validation record
+
+New client/preview regressions failed before implementation. Google and disposable-Postgres
+checks passed 299 tests; catalog, wiki, boundaries, plan index, tool audit, request snapshots
+and explainers passed 307 checks. The complete platform suite passed 3,714 tests, three
+environment skips and 26 browser/sandbox deselections, with 14 Telegram deprecation warnings.
+Skips were unavailable Elasticsearch and FFmpeg. Whole-tree lint, 12 changed Python files'
+formatting, lock/diff checks and Gitleaks passed. Full-tree formatting retains the same 14
+unchanged Markdown exceptions. Installed scaffold wheels passed the outside-checkout smoke;
+the scaffold container built and its network-disabled read-only console smoke passed.
+
+Independent review resolved two failure-reporting findings: malformed/oversized successful
+POST responses remain uncertain, and journal failures retain known safe destination URLs.
+Eighty focused checks and a final 51-test ACL-delta recheck passed. No runtime blocker remains.
+Candidate first-party wheels are tested against the private app before release. No additional
+Google file was created or shared for these tests; the explicitly authorized existing-output
+grant is recorded privately. The published tag, downstream exact pin, additive migration and
+health-gated rollout will be recorded on the linked delivery PRs.

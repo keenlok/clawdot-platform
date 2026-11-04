@@ -2,7 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
-| [New output Doc link viewers](2026-11-04-google-output-link-viewers.md) | Planned | Explicit confirmed link-viewer sharing for new output Docs; source, Sheet and browser policies unchanged |
+| [New output Doc link viewers](2026-11-04-google-output-link-viewers.md) | Live limited | v0.4.0 release delivers preview-frozen access for new output Docs; framework default stays private; source/Sheet/browser policies unchanged; downstream rollout tracked on PR |
 
 Every plan, design and review record in the repository, with its current status. The
 architecture spec is [`ARCHITECTURE.md`](../../ARCHITECTURE.md); the rules for changing the repo are
