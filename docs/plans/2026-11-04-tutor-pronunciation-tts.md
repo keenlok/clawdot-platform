@@ -4,7 +4,7 @@
 
 **Goal:** Generate one on-demand Cantonese, Mandarin Chinese or Japanese pronunciation clip at normal speed; provide a slower clip only when the learner explicitly asks.
 
-**Status:** Implementation approved 2026-11-04 after owner review of the revised plan. The owner explicitly authorized implementation using mocks and synthetic audio, superseding the live-qualification prerequisite for coding. The feature remains disabled by default. Live provider/account/audio qualification below remains a prerequisite to activation; this approval does not satisfy it or enable TTS.
+**Status (2026-11-05):** Framework implementation shipped in v0.3.0 and remains disabled by default. The owner accepted a native Cantonese normal-speed sample and authorized that voice; PR #14 prepares its model-route correction and v0.5.1. Publication and downstream activation remain pending. Other language/pace qualification is separate. The original implementation approval and qualification contract below are retained as the design record; later evidence and corrections are recorded at the end.
 
 **Architecture:** The tutor plugin owns the provider client, usage limits, optional local slowdown and tool instructions. A small optional voice protocol supports direct Telegram delivery. Downstream applications own their wiring, image dependencies, credentials, platform release pins and activation.
 
@@ -20,7 +20,9 @@
 - The voice is sent inside the tool call and arrives before the final tutor text. V1 preserves the exact current chat/topic but does not create a native reply to the learner's message, matching the existing file-delivery pattern. This is an explicit v1 limitation: no reply-chain attribution guarantee for the clip itself. Do not widen `ToolContext` solely for reply threading in this version.
 - Direct Telegram only. Leave `BridgeTelegramPlatform`, release-control operations and protected transport allowlists unchanged. The optional protocol gate hides pronunciation in bridge mode and other unsupported platforms. A later bridge plan can add it.
 
-## Provider evidence and slower-speech decision
+## Original provider evidence and slower-speech decision
+
+This records the original v3 proposal. The compatibility correction below supersedes its Cantonese model route.
 
 The [model reference](https://elevenlabs.io/docs/overview/models#eleven-v3) documents v3's three languages and the `yue` code. The [speech endpoint](https://elevenlabs.io/docs/api-reference/text-to-speech/convert) returns audio from text and a selected voice. However, the [product guide](https://elevenlabs.io/docs/eleven-creative/playground/text-to-speech#speed) explicitly excludes v3 from speed control. Do not send `voice_settings.speed: 0.75` or present an accepted but ignored field as evidence of slow speech.
 
@@ -34,7 +36,7 @@ Use an operator-supplied restricted key and selected voices for a deliberately s
 
 Record date, model, requested language, HTTP status/content type, detected MP3 signature, normal/slow durations and listening verdict. Confirm `yue` actually sounds Cantonese; distinguish Mandarin; check Japanese reading. Slow output must be approximately 1/0.75 times the normal duration (within 10% allowing MP3 padding), contain the same words, and preserve recognisable tones/pitch and intelligibility. A qualified listener must audition real context-sensitive phrases, not infer quality from duration or HTTP 200 alone. Check selected voice access and model availability for the account.
 
-**Evidence state:** no live trial, account setting check or pronunciation audition has been performed. The implementation may be built against mocks and synthetic audio, but it must remain disabled until the record passes. If either provider language selection or local slowdown fails, revise the chosen approach and obtain approval; do not silently omit slow support or substitute a provider. Missing credentials are a reason to keep activation blocked, not to claim success.
+**Evidence state at plan approval (2026-11-04):** no live trial, account setting check or pronunciation audition had been performed. The implementation may be built against mocks and synthetic audio, but it must remain disabled until the record passes. If either provider language selection or local slowdown fails, revise the chosen approach and obtain approval; do not silently omit slow support or substitute a provider. Missing credentials are a reason to keep activation blocked, not to claim success.
 
 ## Configuration, cost and privacy
 
@@ -170,12 +172,12 @@ All 17 framework wheels were independently built and installed into the private 
 integration environment. The downstream bot image exercised this exact processor and wheel set
 with synthetic audio: duration ratio 1.346, normal 440.3 Hz and slowed 440.1 Hz. This confirms
 container codec/filter behavior, not linguistic quality. Live provider, native-listener and account
-privacy/spending qualification remains pending before activation. Implementation is in review in
-[PR #13](https://github.com/keenlok/clawdot-platform/pull/13); private integration is
-[PR #10](https://github.com/keenlok/clawdot-deployments/pull/10).
+privacy/spending qualification remains pending before activation. Framework implementation shipped in
+[PR #13](https://github.com/keenlok/clawdot-platform/pull/13); downstream integration is
+maintained separately.
 
 
-### Activation authorization and release preparation
+### Activation authorization and v0.3.0 preparation (historical)
 
 The owner requested “enable” after implementation review on 2026-11-04. This authorizes the
 reviewed release, downstream pin/configuration and deployment work, without another activation
@@ -184,3 +186,53 @@ qualification remains unperformed. Prepare v0.3.0 through the existing CI-gated 
 do not enable a nonfunctional tool or invent a released pin. The failed PR CI check was reproduced:
 the tutor's generated wiki page was stale. Regenerating the maintained page fixes the exact
 `generate_explainers.py --check` failure without changing runtime code.
+
+
+## Live provider compatibility correction (owner activation, 2026-11-04)
+
+A bounded operator qualification found that the live API rejects `eleven_v3` with `language_code=yue` as
+`unsupported_language` (HTTP 400); Mandarin/`zh` and Japanese/`ja` succeeded on v3. A deliberate
+v4 Cantonese probe succeeded with HTTP 200 and valid MP3.
+This live result supersedes the earlier v3 Cantonese assumption; production must not retry or
+silently omit the explicit language code.
+
+Approved-scope correction under the existing activation request: keep model choice server-owned,
+use `eleven_v4` only for Cantonese, and preserve `eleven_v3` for Mandarin/Japanese. Add regression
+coverage for the exact model/language/voice request per language, with no runtime fallback or retry.
+Preserve all authorization, quotas, request limits, captions, MP3 caps and local slow processing.
+Update the changelog, generated explainer/wiki and release metadata through normal CI;
+downstream integration then selects the actual published tag and exact commit. Credentials remain
+operator-owned and outside code-writing/review processes. The provider probes are operator
+qualification, not automated regression tests; regressions use mock HTTP transport only.
+
+
+The API-only compatibility correction was implemented by Codex and independently reviewed by
+Codex with no actionable findings. The red/green mock regression failed for Cantonese under v3
+then passed with the fixed mapping. Earlier linguistic qualification rejected candidate voices;
+API acceptance alone did not qualify their pronunciation. Provider choice and downstream
+activation were deferred while the operator evaluated suitable voices.
+
+## Cantonese acceptance and patch preparation (2026-11-05)
+
+The owner accepted a native Cantonese normal-speed sample and explicitly authorized enabling
+that selected voice. This supersedes the earlier deferral for this Cantonese candidate; it does
+not certify Mandarin/Japanese candidates or linguistic quality of slow output. Voice selection,
+credentials, account controls and activation records remain operator-owned. The framework still
+ships disabled by default, supports partial language configuration, and requires qualification
+for each downstream language/pace that is enabled.
+
+[PR #14](https://github.com/keenlok/clawdot-platform/pull/14) prepares the narrow fixed-model route
+and v0.5.1 after merging current v0.5.0 main, preserving its Google document features unchanged.
+No permission, dependency or migration change is introduced by this patch. The release workflow
+publishes an immutable tag only after the reviewed version bump reaches main and both CI and
+scaffold jobs pass. This record does not claim a published v0.5.1 tag or a deployed application.
+Codex executed and self-reviewed this update; Claude final review is unavailable because its CLI
+is signed out, so the documented unavailable-model fallback applies. Independent review and CI
+remain required before merge.
+
+Validation on the merged v0.5.0 base: locked workspace sync, full Ruff lint, generated wiki check,
+changed-file formatting and secret scan passed. Required Postgres suite: **3,758 passed, 3 skipped,
+26 deselected** using an owned temporary local development database. The old Cantonese v3 route
+fails the exact mock request assertion while Mandarin/Japanese pass; the fixed speech suite passes
+all 24 tests. Full formatting reports 14 pre-existing Markdown failures, each byte-identical to
+current main. No live provider request was used for these checks.

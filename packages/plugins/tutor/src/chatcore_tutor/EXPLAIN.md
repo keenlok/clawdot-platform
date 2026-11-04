@@ -30,8 +30,11 @@ on the app's addressing policy and explicit topic configuration, not a passing l
 **Optional pronunciation.** When explicitly enabled and a supported voice is configured, the skill
 can send one requested Cantonese, Mandarin Chinese or Japanese voice clip through the current
 voice-capable platform. Generation is disabled by default. The target phrase is sent to ElevenLabs;
-caption pronunciation annotations stay local. Slow playback requires FFmpeg and runs only on
-explicit request. Live provider, account and listener qualification remains an activation gate.
+caption pronunciation annotations stay local. The service selects fixed models by language:
+`eleven_v4` for Cantonese and `eleven_v3` for Mandarin Chinese and Japanese. Model choice is not
+a tool argument or environment override, and the service does not retry or fall back between
+models. Slow playback requires FFmpeg and runs only on explicit request. Live provider, account
+and listener qualification remains an activation gate.
 
 ## Limitations
 Grammar judgments, romanisation and translations are model-generated and can be incorrect.

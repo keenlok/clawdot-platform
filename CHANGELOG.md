@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-05
+
+### Fixed
+
+- Tutor pronunciation now selects `eleven_v4` for Cantonese, whose `yue` language code is not
+  supported by v3; Mandarin Chinese (`zh`) and Japanese (`ja`) continue to use `eleven_v3`.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added
@@ -112,7 +119,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/keenlok/clawdot-platform/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/keenlok/clawdot-platform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/keenlok/clawdot-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keenlok/clawdot-platform/compare/v0.2.0...v0.3.0
