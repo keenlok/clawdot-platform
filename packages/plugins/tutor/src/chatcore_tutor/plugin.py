@@ -8,16 +8,20 @@ from dataclasses import dataclass
 
 from chatcore.command_prompts import CommandReply
 from chatcore.events import AttachmentKind, ChatRef, IncomingMessage, UserRef
+from chatcore.files import VoicePlatform
 from chatcore.pending import PendingAction
 from chatcore.plugin import BasePlugin, Command, CommandContext
 from chatcore.skills import Skill
 from chatcore.store.base import Stores
 from chatcore.tools.registry import Tool, ToolContext, ToolResult
 
+from chatcore_tutor.audio import valid_tutor_text
 from chatcore_tutor.languages import LANGUAGES, LEVELS, Language, lookup_language, parse_level
 from chatcore_tutor.models import TutorProfile, TutorTopic
-from chatcore_tutor.permissions import is_group_manager
+from chatcore_tutor.permissions import is_group_manager, may_pronounce
 from chatcore_tutor.repository import MemoryTutorRepo, TutorRepo
+from chatcore_tutor.settings import TutorSettings
+from chatcore_tutor.speech import SpeechError, SpeechService
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +35,20 @@ LANGUAGE_TUTOR_INSTRUCTIONS = (
     "CEFR: A1–A2 short everyday sentences; B1–B2 natural phrases/common idioms; C1–C2 "
     "nuance/register. In practice, end with one short prompt. For plain translation, give "
     "translation + romanisation, no lesson. Otherwise help normally in explanation language."
+)
+PRONUNCIATION_INSTRUCTIONS = (
+    "For an explicit request to hear Cantonese, Mandarin Chinese or Japanese, call "
+    "pronounce_tutor_text once with the phrase and Jyutping, tone-marked Pinyin or kana. Select "
+    "Cantonese or Mandarin explicitly. Use slow only on request; clip comes before text."
+)
+_ACTIVE_LANGUAGE_TUTOR_INSTRUCTIONS = (
+    "Use for practice, questions and translation; ignore passing mentions. Explain in the profile "
+    "or usual language, even if target; prefer it to message language. Give each non-Latin "
+    "target line bracketed romanisation then translation. Correct as: their words → fix + brief "
+    "reason (max three; never rewrite all). Match CEFR: A1–A2 short everyday sentences; B1–B2 "
+    "natural phrases/idioms; C1–C2 nuance/register. End practice with one short prompt. Plain "
+    "translation gets translation + romanisation, no lesson. Otherwise use the explanation "
+    "language."
 )
 
 _EMPTY_SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -50,6 +68,21 @@ _USAGE = "Use /tutor <language> <level> [<explanation languages>]. Supported lan
     _LANGUAGE_LIST + ". Levels: " + ", ".join(LEVELS) + "."
 )
 _USAGE_HINT = "Use /tutor <language> <level> [<explanation languages>]; /tutor off pauses."
+
+
+def _valid_pronunciation_request(
+    text: object, language: object, pronunciation: object, pace: object
+) -> bool:
+    if (
+        not valid_tutor_text(text)
+        or not valid_tutor_text(pronunciation, max_chars=240)
+        or not isinstance(language, str)
+        or language not in {"Cantonese", "Mandarin Chinese", "Japanese"}
+        or not isinstance(pace, str)
+        or pace not in {"normal", "slow"}
+    ):
+        return False
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,9 +199,30 @@ class TutorPlugin(BasePlugin):
     help_title = "Language tutor"
     migrations_package = "chatcore_tutor.migrations"
 
-    def __init__(self, access, platform) -> None:
+    def __init__(self, access, platform, *, settings: TutorSettings | None = None) -> None:
         self.access, self.platform = access, platform
+        self.settings = settings or TutorSettings()
+        self.speech = SpeechService(self.settings)
         self.memory_repo = MemoryTutorRepo()
+
+    @property
+    def pronunciation_available(self) -> bool:
+        return bool(
+            self.settings.TUTOR_TTS_ENABLED
+            and self.settings.ELEVENLABS_API_KEY.get_secret_value()
+            and self.settings.TUTOR_TTS_MAX_CHARS_PER_DAY > 0
+            and any(
+                (
+                    self.settings.TUTOR_TTS_CANTONESE_VOICE_ID,
+                    self.settings.TUTOR_TTS_MANDARIN_VOICE_ID,
+                    self.settings.TUTOR_TTS_JAPANESE_VOICE_ID,
+                )
+            )
+            and isinstance(self.platform, VoicePlatform)
+        )
+
+    async def aclose(self) -> None:
+        await self.speech.aclose()
 
     def repo(self, stores: Stores) -> TutorRepo | MemoryTutorRepo:
         return TutorRepo(stores.db) if stores.db is not None else self.memory_repo
@@ -206,7 +260,7 @@ class TutorPlugin(BasePlugin):
                 )
             )
 
-        return [
+        tools = [
             Tool(
                 "get_tutor_profile",
                 "Return the requester's own language-tutor settings and, in a group, this topic's "
@@ -215,47 +269,149 @@ class TutorPlugin(BasePlugin):
                 get_tutor_profile,
             )
         ]
+        if self.pronunciation_available:
+            tools.append(self._pronunciation_tool())
+        return tools
+
+    def _pronunciation_tool(self) -> Tool:
+        schema = {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Target-language word or short phrase only; 1–120 characters.",
+                },
+                "language": {
+                    "type": "string",
+                    "enum": ["Cantonese", "Mandarin Chinese", "Japanese"],
+                    "description": "Explicit pronunciation language; select Cantonese and "
+                    "Mandarin separately.",
+                },
+                "pronunciation": {
+                    "type": "string",
+                    "description": "Caption aid: toned Jyutping/Pinyin or kana; 1–240 "
+                    "characters. Not spoken or sent to the provider.",
+                },
+                "pace": {
+                    "type": "string",
+                    "enum": ["normal", "slow"],
+                    "description": "Defaults to normal. Use slow only on explicit request; "
+                    "one clip per turn.",
+                },
+            },
+            "required": ["text", "language", "pronunciation"],
+            "additionalProperties": False,
+        }
+
+        async def pronounce(
+            ctx: ToolContext, *, text: str, language: str, pronunciation: str, pace: str = "normal"
+        ) -> ToolResult:
+            name = "pronounce_tutor_text"
+            if ctx.turn.tool_attempts.get(name, 0):
+                return ToolResult.error("A pronunciation clip was already attempted this turn.")
+            if not _valid_pronunciation_request(text, language, pronunciation, pace):
+                return ToolResult.error("Invalid pronunciation request.")
+            if not self.pronunciation_available or not await may_pronounce(self.access, ctx):
+                return ToolResult.error("Pronunciation is unavailable here.")
+            if ctx.turn.tool_attempts.get(name, 0):
+                return ToolResult.error("A pronunciation clip was already attempted this turn.")
+            ctx.turn.tool_attempts[name] = 1
+            caption = f"{text}\n{pronunciation}\n{'Slow' if pace == 'slow' else 'Normal'}"
+            try:
+                caption_length = len(caption.encode("utf-16-le")) // 2
+            except UnicodeEncodeError:
+                return ToolResult.error("Invalid pronunciation request.")
+            if caption_length > 1024:
+                return ToolResult.error("Pronunciation caption is too long.")
+            try:
+                audio = await self.speech.synthesize(
+                    text, language, user_key=ctx.user.ref.key, pace=pace
+                )
+                if not await may_pronounce(self.access, ctx):
+                    return ToolResult.error("Pronunciation delivery is no longer allowed.")
+                await ctx.platform.send_voice(
+                    ctx.chat, "pronunciation.mp3", audio, caption=caption, thread_id=ctx.thread_id
+                )
+                return ToolResult("Pronunciation clip sent before the text response.")
+            except SpeechError:
+                return ToolResult.error("Could not generate the pronunciation clip.")
+            except Exception as exc:
+                log.warning("tutor pronunciation delivery failed error=%s", type(exc).__name__)
+                return ToolResult.error("Could not deliver the pronunciation clip.")
+
+        return Tool(
+            "pronounce_tutor_text",
+            "Generate one requested tutor pronunciation clip.",
+            schema,
+            pronounce,
+            writes=False,
+        )
+
+    def tool_gates(self):
+        from chatcore_tutor.gates import build_gates
+
+        return build_gates(self)
 
     def skills(self):
+        instructions = LANGUAGE_TUTOR_INSTRUCTIONS
+        examples = (
+            "correct my japanese sentence",
+            "how do I say this in korean",
+            "teach me some basic thai phrases",
+            "is my grammar right in this french sentence",
+            "quiz me on japanese vocabulary",
+            "explain this japanese grammar point",
+            "帮我纠正这句日语",
+            "这个韩语语法怎么用",
+            "教我几句简单的泰语",
+            "can help me practise my japanese anot",
+            "what's the difference between は and が",
+        )
+        keywords = (
+            "grammar",
+            "vocabulary",
+            "vocab",
+            "conjugate",
+            "conjugation",
+            "jlpt",
+            "hsk",
+            "topik",
+            "cefr",
+            "romaji",
+            "furigana",
+            "pinyin",
+            "语法",
+            "生词",
+            "文法",
+        )
+        if self.pronunciation_available:
+            instructions = _ACTIVE_LANGUAGE_TUTOR_INSTRUCTIONS
+            instructions += " " + PRONUNCIATION_INSTRUCTIONS
+            examples += ("say this phrase aloud in Japanese",)
+            keywords += (
+                "pronunciation",
+                "pronounce",
+                "aloud",
+                "jyutping",
+                "tones",
+                "听发音",
+                "発音",
+            )
         return [
             Skill(
                 "language_tutor",
                 "Language practice: explanations, corrections and drills at the learner's level",
+                examples,
                 (
-                    "correct my japanese sentence",
-                    "how do I say this in korean",
-                    "teach me some basic thai phrases",
-                    "is my grammar right in this french sentence",
-                    "quiz me on japanese vocabulary",
-                    "explain this japanese grammar point",
-                    "帮我纠正这句日语",
-                    "这个韩语语法怎么用",
-                    "教我几句简单的泰语",
-                    "can help me practise my japanese anot",
-                    "what's the difference between は and が",
+                    ("get_tutor_profile", "pronounce_tutor_text")
+                    if self.pronunciation_available
+                    else ("get_tutor_profile",)
                 ),
-                ("get_tutor_profile",),
-                keywords=(
-                    "grammar",
-                    "vocabulary",
-                    "vocab",
-                    "conjugate",
-                    "conjugation",
-                    "jlpt",
-                    "hsk",
-                    "topik",
-                    "cefr",
-                    "romaji",
-                    "furigana",
-                    "pinyin",
-                    "语法",
-                    "生词",
-                    "文法",
-                ),
+                keywords=keywords,
                 commands=("tutor",),
                 max_steps=3,
                 sticky_turns=3,
-                instructions=LANGUAGE_TUTOR_INSTRUCTIONS,
+                instructions=instructions,
                 context=self._skill_context,
                 pin=self._skill_pin,
             )

@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from chatcore.events import (
@@ -20,6 +20,7 @@ from chatcore.events import (
     MessageRef,
     UserRef,
 )
+from chatcore.files import VoicePlatform
 from chatcore.platform import Capabilities, ChatPlatform, PlatformError
 from chatcore_telegram import TelegramPlatform, TelegramSettings
 from pydantic import SecretStr
@@ -135,6 +136,60 @@ async def test_ptb_dispatch_passes_update_and_context_to_adapter() -> None:
         assert event.text == "/help"
     finally:
         await app.shutdown()
+
+
+async def test_send_voice_uploads_mp3_to_exact_chat_topic_and_caption() -> None:
+    bot = AsyncMock()
+    bot.send_voice.return_value = SimpleNamespace(message_id=29)
+    platform = make_platform(bot)
+    chat = ChatRef("tg", "-100")
+    assert isinstance(platform, VoicePlatform)
+    result = await platform.send_voice(
+        chat,
+        "pronunciation.mp3",
+        b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x64",
+        caption="こんにちは\nNormal",
+        thread_id="42",
+    )
+    assert result == MessageRef(chat, "29", "42")
+    bot.send_voice.assert_awaited_once_with(
+        chat_id="-100",
+        voice=ANY,
+        caption="こんにちは\nNormal",
+        message_thread_id=42,
+    )
+    assert bot.send_voice.await_args.kwargs["voice"].mimetype == "audio/mpeg"
+    assert bot.send_voice.await_args.kwargs["voice"].filename == "pronunciation.mp3"
+
+
+async def test_voice_rejects_bounds_and_sanitizes_one_ambiguous_send() -> None:
+    from telegram.error import BadRequest, NetworkError
+
+    bot = AsyncMock()
+    platform = make_platform(bot)
+    chat = ChatRef("tg", "-100")
+    valid = b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x64"
+    with pytest.raises(PlatformError):
+        await platform.send_voice(chat, "../unsafe.mp3", valid)
+    with pytest.raises(PlatformError):
+        await platform.send_voice(chat, "pronunciation.mp3", b"invalid")
+    with pytest.raises(PlatformError):
+        await platform.send_voice(chat, "pronunciation.mp3", valid + b"x" * (2 * 1024 * 1024))
+    with pytest.raises(PlatformError):
+        await platform.send_voice(chat, "pronunciation.mp3", valid, caption="x" * 1025)
+    assert bot.send_voice.await_count == 0
+
+    bot.send_voice.side_effect = BadRequest("provider body and credential detail")
+    with pytest.raises(PlatformError) as error:
+        await platform.send_voice(chat, "pronunciation.mp3", valid)
+    assert "credential detail" not in str(error.value)
+    assert bot.send_voice.await_count == 1
+
+    bot.send_voice.side_effect = NetworkError("ambiguous secret detail")
+    with pytest.raises(PlatformError) as error:
+        await platform.send_voice(chat, "pronunciation.mp3", valid)
+    assert "ambiguous secret detail" not in str(error.value)
+    assert bot.send_voice.await_count == 2
 
 
 @pytest.mark.parametrize("private", [False, True])

@@ -50,6 +50,8 @@ class TurnState:
     limits: Any | None = None
     human_urls: frozenset[str] = frozenset()
     """Current human request and same-topic reply-chain URLs, excluding ambient/search data."""
+    tool_attempts: dict[str, int] = field(default_factory=dict)
+    """Ephemeral per-turn attempt counts for tools that must be used at most once."""
 
 
 @dataclass(slots=True)

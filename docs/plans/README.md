@@ -101,6 +101,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 
 | Plan | Status | PR | Notes |
 | --- | --- | --- | --- |
+| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Planned | [#13](https://github.com/keenlok/clawdot-platform/pull/13) | Implementation built and in review; default-disabled direct Telegram pronunciation, three-language synthesis and explicit local slowdown. Live provider, account and linguistic qualification remains an activation gate |
 | [skill-layer.md](skill-layer.md) | Live, limited | history #14 | Design. `SKILLS_MODE=on` only for the owner's test chats; other chats use the legacy prompt |
 | [skill-layer-astra-review.md](skill-layer-astra-review.md) | Record | history #14 | Independent design review |
 | [tool-descriptions.md](tool-descriptions.md) | Live | history #17 | Stage 0a |
