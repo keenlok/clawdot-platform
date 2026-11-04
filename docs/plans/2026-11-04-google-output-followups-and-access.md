@@ -36,23 +36,40 @@ Reserved/unknown destinations, original-source results, browser trials, other ch
 changed owners and arbitrary IDs do not qualify. Retention/purge removes this authority along
 with its existing records; a retained human link remains the normal fallback.
 
-Reuse the durable result/action records and pending-action topic binding. Recheck normal
-membership, opt-out, writer, owner, metadata and live edit permissions; authorization to a
-known file does not bypass a fresh concrete write preview. Preserve legacy result compatibility:
+Extend the plugin's result journal through additive migration 0005 with a durable output
+binding: configured owner permission ID, owner email, exact nullable thread/topic and new-output
+mode (create/copy/docx_import). Capture these together with the confirmed reservation, before
+remote creation. Do not join core pending_actions as permanent authority: normal cleanup deletes
+used confirmations. Authority becomes usable only when that bound journal has a known distinct
+new destination ID in an eligible post-creation phase and current metadata passes owner/app checks.
+
+Use an explicit all-or-none binding invariant: all new binding fields absent means legacy and
+untrusted; owner ID/email and output mode present means the nullable topic was deliberately
+captured. Reject malformed/partial bindings. SQL CHECK constraints must reject missing required
+fields explicitly, accounting for SQL NULL semantics. A root topic (None) and a non-root topic
+match exactly; never substitute the current topic or configured owner for missing historical data.
+Preserve compatible old INSERTs for rollback by permitting completely absent legacy bindings.
+No migration backfill guesses historical authority from current configuration. Legacy outputs
+without this durable binding continue to use independently verified retained human links; the
+new source_message_ref option lets a bot use an earlier matching human post without a repost.
+
+Recheck normal membership, opt-out, writer, owner, metadata and live edit permissions; known-file
+authority does not bypass a fresh concrete write preview. Preserve legacy result compatibility:
 API edits did not consistently set the browser destination_creation_claimed flag, so that flag
-alone must not be mistaken for the sole proof of a recorded created destination.
+alone is not the proof of a recorded created destination. Retention/user/chat purge revokes the
+binding with its journal row. Recheck binding after Google I/O and at commit to catch revocation.
 
 Both native-Doc reading and API edit proposal paths use this resolver. A wrong or unnecessary
 source_message_ref does not defeat independently proven output authority. External-file source
 references remain strictly human and same-topic. Add the existing source_message_ref option to
-API edit tools if needed to avoid the observed read-then-edit unknown-argument dead end, with
+API Doc edit proposals to avoid the observed read-then-edit unknown-argument dead end, with
 its human message checked at proposal time and its source binding frozen/rechecked at commit.
 Sheet and browser authority do not expand as a side effect.
 
 Journal all future create_doc outputs, including explicit private choices, using existing
 migration 0004 support. Keep old pending actions' access intent and replay protection intact.
-No applied migration changes. A new migration is unnecessary unless implementation evidence
-shows a missing durable binding; any such need requires an additive reviewed migration.
+No applied migration changes. Migration 0005 adds only the durable binding described above;
+existing journal retention and action foreign keys remain authoritative.
 
 ### 2. Verify reads robustly and report the actual stage
 
@@ -115,14 +132,17 @@ current manually edited output and its ACL intact. No email recipients or notifi
 Use synthetic/local fixtures first; no extra live Google file or permission mutation is
 needed or authorized by this design. Tests cover same-topic retained output success; cross-chat,
 wrong owner, fabricated/bot-history source denial; known uncertain destination follow-up;
-private create journaling; human source references; stale read then exact success; permanent
+private create journaling; continuation after confirmation cleanup and process restart; legacy
+missing/partial bindings denied; root versus non-root topic exactness; purge/revocation; human
+source references; stale read then exact success; permanent
 text/style/read failures; one mutation only; viewer/editor/private defaults and overrides;
 legacy payloads after flips; unexpected ACLs and exact ACL delta; original/Sheet/browser isolation;
 concurrency/replay and PostgreSQL retention/constraints. Preserve snapshot/catalog/routing tests,
 800-character plugin instructions, package boundaries and existing migration checksums.
 
 Implementation maps to the Google plugin's refs/repository/service/edit_service/client/settings,
-link-sharing helpers and corresponding tests. Keep domain checks out of generic core. Update
+link-sharing helpers, additive Google migration 0005 and corresponding tests. Keep domain checks
+out of generic core. Update
 capability docs, packaged explainer and generated wiki, architecture decision, changelog and
 plan index. Treat trusted-output authority and writer access as explicit permission changes in
 the PR even if no gates.py or permissions.py edit is required. No new third-party dependency.
@@ -142,3 +162,12 @@ then the installed health-gated auto-deploy. Verify effective access default, ex
 provenance, migration state, healthy services and rollback artifacts. Attach runtime receipts to
 PRs without a documentation-only follow-up deployment. Do not replay the earlier uncertain edit
 or modify the existing output manually as a qualification shortcut.
+
+## Design review
+
+Independent review identified the missing durable owner/topic binding and routine deletion of
+used core confirmations. This design now requires additive plugin migration 0005, atomic binding
+capture, exact nullable-topic semantics, rollback-compatible legacy denial and cleanup/restart
+regressions. Existing manual permissions remain untouched. The historical verification criterion
+that failed is not recoverable from its generic journal entry; bounded GET retries and precise
+future diagnostics improve that path without treating a genuine mismatch as success.
