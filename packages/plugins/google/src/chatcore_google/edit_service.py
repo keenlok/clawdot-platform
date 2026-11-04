@@ -19,6 +19,7 @@ from chatcore_google.edit_snapshot import (
     sheet_range_shape,
     validate_sheet_values,
 )
+from chatcore_google.link_sharing import publish_doc_link_viewer, record_result
 from chatcore_google.refs import approved_ref
 from chatcore_google.service import select_tab
 
@@ -124,7 +125,15 @@ class GoogleEditService:
         return snapshot
 
     async def propose_doc(
-        self, ctx, url, find, replacement, tab_id=None, destination="auto", copy_title=None
+        self,
+        ctx,
+        url,
+        find,
+        replacement,
+        tab_id=None,
+        destination="auto",
+        copy_title=None,
+        link_viewer=None,
     ):
         if not isinstance(find, str) or not find or "\n" in find or "\r" in find:
             raise ValueError("Find text must be nonempty and stay within one paragraph.")
@@ -137,6 +146,17 @@ class GoogleEditService:
             raise ValueError("The supplied Docs tab ID disagrees with the tab selected by the URL.")
         mime = metadata["mimeType"]
         chosen = self._destination(metadata, destination)
+        if link_viewer is not None and type(link_viewer) is not bool:
+            raise ValueError("Specify whether anyone with the link may view a new Doc copy.")
+        if chosen.mode == "original" and link_viewer is True:
+            raise ValueError(
+                "Original Docs stay private; choose destination=copy for a separate output."
+            )
+        frozen_link_viewer = (
+            self.settings.new_docs_link_viewer
+            if link_viewer is None and chosen.mode != "original"
+            else bool(link_viewer)
+        )
         name = str(metadata.get("name", "Document"))[:300]
         title = _copy_title(name, copy_title) if chosen.mode != "original" else None
         source = {
@@ -190,6 +210,7 @@ class GoogleEditService:
             "precondition": precondition,
             "snapshot": {"text": before_text, "tab_title": tab_title},
             "edit": {"find": find, "replacement": replacement},
+            "link_viewer": frozen_link_viewer,
         }
         where = (
             "the original file"
@@ -198,7 +219,14 @@ class GoogleEditService:
         )
         summary = (
             f"Edit Google Doc: {name}\nSource: {url}\nDestination: {where}\n"
-            f"Tab: {tab_title or 'Main body'}\n\n"
+            + (
+                "Access: anyone with the link can view (not discoverable).\n"
+                if frozen_link_viewer
+                else "Access: private; existing access settings are unchanged.\n"
+                if chosen.mode != "original"
+                else "Access: original file permissions stay unchanged.\n"
+            )
+            + f"Tab: {tab_title or 'Main body'}\n\n"
             f"Before: {find!r}\nAfter: {replacement!r}\n"
             "Scope: one exact main-body paragraph or table-cell match; "
             "headers and footers are excluded."
@@ -614,6 +642,44 @@ class GoogleEditService:
             return False
         return style == match.uniform_style
 
+    async def _finish_doc_success(self, action, ctx, payload, destination_id):
+        """Finalize verified edit content, sharing only an explicitly frozen new output."""
+        if payload.get("link_viewer") is True:
+            try:
+                shared, message = await publish_doc_link_viewer(
+                    self.google, action, ctx, payload, destination_id
+                )
+            except Exception:
+                await record_result(
+                    self.google,
+                    action,
+                    ctx,
+                    phase="uncertain",
+                    destination_id=destination_id,
+                    failed_stage="sharing_result",
+                    error_category="journal_or_preflight_failure",
+                )
+                return (
+                    f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; its link-viewer "
+                    "sharing result could not be safely finalized. Inspect access before retrying."
+                )
+            if not shared:
+                return message
+        final_result = await record_result(
+            self.google,
+            action,
+            ctx,
+            phase="verified",
+            destination_id=destination_id,
+        )
+        if isinstance(final_result, Exception):
+            return (
+                f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; content and access "
+                "were verified, but final journal completion failed. Inspect before retrying."
+            )
+        suffix = "; anyone with the link can view" if payload.get("link_viewer") is True else ""
+        return f"Verified: {_web_url(destination_id, DOC)}{suffix}"
+
     async def _copy_doc_tab(self, payload, file_id):
         pre = payload["precondition"]
         raw = await self.client.document_for_edit(file_id)
@@ -644,6 +710,9 @@ class GoogleEditService:
         payload = await self._verify_pending(action, ctx)
         if action.kind not in {"edit_doc", "edit_sheet"}:
             raise ValueError("Unknown Google edit action.")
+        if action.kind == "edit_doc" and payload.get("link_viewer") is True:
+            if payload.get("destination", {}).get("mode") == "original":
+                raise ValueError("Original Docs stay private; request a separate copy.")
         confirmed_values = (
             self._confirmed_sheet_values(payload) if action.kind == "edit_sheet" else None
         )
@@ -817,8 +886,7 @@ class GoogleEditService:
                 except Exception:
                     verified = False
                 if verified:
-                    await self._phase(action, ctx, "verified", destination_id=destination_id)
-                    return f"Verified: {_web_url(destination_id, DOC)}"
+                    return await self._finish_doc_success(action, ctx, payload, destination_id)
                 stale = "HTTP 400" in str(exc)
                 phase = (
                     "partial"
@@ -868,8 +936,7 @@ class GoogleEditService:
                     category="readback_mismatch",
                 )
                 return f"Uncertain: inspect {_web_url(destination_id, DOC)} before retrying."
-            await self._phase(action, ctx, "verified", destination_id=destination_id)
-            return f"Verified: {_web_url(destination_id, DOC)}"
+            return await self._finish_doc_success(action, ctx, payload, destination_id)
 
         pre = payload["precondition"]
         if dest["mode"] == "original":

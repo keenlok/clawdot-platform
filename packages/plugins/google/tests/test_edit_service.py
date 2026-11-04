@@ -105,6 +105,38 @@ async def test_doc_proposal_is_frozen_and_performs_no_remote_write(google_servic
     client.grant_writer.assert_not_awaited()
 
 
+async def test_link_viewer_choice_applies_only_to_frozen_new_doc_copies(google_service):
+    base, client, ctx, _ = google_service
+    client.metadata.return_value = metadata()
+    client.document_for_edit.return_value = doc("Dinner at 7pm")
+    edits = GoogleEditService(base)
+    with pytest.raises(ValueError, match="Original Docs stay private"):
+        await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm", link_viewer=True)
+
+    base.settings.copy_qualified = True
+    base.settings.new_docs_link_viewer = True
+    copied = await edits.propose_doc(
+        ctx,
+        url(),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        destination="copy",
+    )
+    private = await edits.propose_doc(
+        ctx,
+        url(),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        destination="copy",
+        link_viewer=False,
+    )
+    base.settings.new_docs_link_viewer = False
+
+    assert copied.payload["link_viewer"] is True
+    assert private.payload["link_viewer"] is False
+    assert "anyone with the link can view" in copied.summary.casefold()
+
+
 async def test_doc_confirmation_uses_frozen_range_revision_and_verifies_readback(google_service):
     base, client, ctx, _ = google_service
     client.metadata.return_value = metadata()
@@ -302,6 +334,49 @@ async def test_qualified_native_copy_remaps_tab_id_and_journals_destination_befo
     assert requests[0]["deleteContentRange"]["range"]["tabId"] == "copy-tab"
     journal = await base.repo.edit_result(ctx.chat.key, action.id)
     assert journal["phase"] == "verified" and journal["destination_id"] == "copy-id"
+
+
+@pytest.mark.parametrize("write_error", [False, True])
+async def test_link_viewer_copy_is_shared_after_both_verified_edit_paths(
+    google_service, write_error
+):
+    base, client, ctx, _ = google_service
+    base.settings.copy_qualified = True
+    copied_meta = metadata("copy-id")
+    copied_meta["ownedByMe"] = True
+    copied_meta["owners"] = [{"emailAddress": "owner@example.com", "permissionId": "owner-id"}]
+    copied_meta["capabilities"]["canShare"] = True
+    client.metadata.side_effect = [metadata(), metadata(), copied_meta, copied_meta]
+    client.copy_file.return_value = {"id": "copy-id", "mimeType": DOC}
+    client.document_for_edit.side_effect = [
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="source-tab"),
+        doc("Dinner at 7pm", tab_id="copy-tab"),
+        doc("Dinner at 8pm", tab_id="copy-tab"),
+    ]
+    if write_error:
+        client.edit_document.side_effect = GoogleError(
+            "Google request failed; a write may have completed."
+        )
+    client.list_permissions.side_effect = [
+        {"permissions": []},
+        {"permissions": [{"type": "anyone", "role": "reader", "allowFileDiscovery": False}]},
+    ]
+    action = await GoogleEditService(base).propose_doc(
+        ctx,
+        url(),
+        "Dinner at 7pm",
+        "Dinner at 8pm",
+        destination="copy",
+        link_viewer=True,
+    )
+
+    result = await GoogleEditService(base).commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "anyone with the link can view" in result.casefold()
+    assert journal["phase"] == "verified" and journal["destination_id"] == "copy-id"
+    client.grant_link_viewer.assert_awaited_once_with("copy-id")
 
 
 async def test_wrong_copy_mime_is_recorded_partial_with_known_destination(google_service):

@@ -18,6 +18,8 @@ targets and frozen destinations. A source-derived separate revision uses the qua
 DOCX revisions import the original package before bounded edits instead of reconstructing its text.
 Creating a document from scratch is a different operation. Browser editing requires an explicit
 request and separate qualification; an API failure never automatically authorizes browser fallback.
+New native Doc outputs can be link viewers only when that choice appears in the confirmed preview.
+Original Docs retain their permissions; Sheets and browser trials use their existing policies.
 
 ## Storage
 Original file contents and saved changes live in Google services, not chat memory. The plugin stores
@@ -29,8 +31,9 @@ of blindly creating another copy. This is not a backup of every Google file or f
 ## Safety
 Writes need requester confirmation of their preview. Handlers recheck source provenance, access,
 destinations and preconditions. Docs use revision-aware UTF-16 targets; Sheets previews disclose the
-collaborator race. API editing does not itself share the source. Browser copy access is separately
-disclosed and constrained. File contents are untrusted data and cannot authorize a different write.
+collaborator race. Link-viewer access applies only to a new Doc output after content verification;
+source permissions stay unchanged. Browser copy access is separately disclosed and constrained.
+File contents are untrusted data and cannot authorize a different write.
 
 ## Limitations
 Supported edits are bounded operations, not arbitrary document redesign. Google import/conversion

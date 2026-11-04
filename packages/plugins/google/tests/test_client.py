@@ -169,7 +169,46 @@ async def test_browser_trial_permissions_are_fixed_to_individual_writer_grants(t
         "emailAddress": "editor@example.com",
     }
     read = next(request for request in calls if request.method == "GET")
-    assert "nextPageToken,permissions(id,type,role,emailAddress)" == read.url.params["fields"]
+    assert "allowFileDiscovery" in read.url.params["fields"]
+
+
+async def test_link_viewer_grant_is_fixed_and_readback_includes_discovery_flag(tmp_path):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        if request.method == "GET":
+            return httpx.Response(200, json={"permissions": []})
+        return httpx.Response(
+            200,
+            json={
+                "id": "permission-id",
+                "type": "anyone",
+                "role": "reader",
+                "allowFileDiscovery": False,
+            },
+        )
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        await client.grant_link_viewer("new-doc")
+        await client.list_permissions("new-doc")
+
+    grant = next(
+        request
+        for request in calls
+        if request.method == "POST" and request.url.host == "www.googleapis.com"
+    )
+    assert grant.url.path.endswith("/files/new-doc/permissions")
+    assert json.loads(grant.content) == {
+        "type": "anyone",
+        "role": "reader",
+        "allowFileDiscovery": False,
+    }
+    read = next(request for request in calls if request.method == "GET")
+    assert "allowFileDiscovery" in read.url.params["fields"]
 
 
 async def test_account_change_and_revoked_credentials_fail_closed(tmp_path):

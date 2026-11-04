@@ -227,7 +227,6 @@ async def test_destination_creation_claim_is_durable_and_one_time(google_db):
             source_id="source-id",
             revision=0,
         )
-
     await repo.configure("fake:claim", True, 0)
     with pytest.raises(ValueError, match="settings"):
         await GoogleRepository(google_db).claim_destination_creation(
@@ -236,6 +235,54 @@ async def test_destination_creation_claim_is_durable_and_one_time(google_db):
             kind="browser_edit_doc",
             source_id="source-id",
             revision=0,
+        )
+
+
+async def test_create_doc_reservation_allows_null_source_but_existing_edit_kinds_do_not(google_db):
+    repo = GoogleRepository(google_db)
+    await repo.reserve_edit(
+        "fake:create",
+        "create-action",
+        "fake:alice",
+        0,
+        10,
+        0,
+        kind="create_doc",
+        source_id=None,
+    )
+    result = await repo.edit_result("fake:create", "create-action")
+    assert result["kind"] == "create_doc" and result["source_id"] is None
+    assert await repo.claim_destination_creation(
+        "fake:create",
+        "create-action",
+        kind="create_doc",
+        source_id=None,
+        revision=0,
+    )
+    with pytest.raises(ValueError, match="already|claimed"):
+        await repo.claim_destination_creation(
+            "fake:create",
+            "create-action",
+            kind="create_doc",
+            source_id=None,
+            revision=0,
+        )
+    await repo.reserve("fake:create", "bad-edit-action", "fake:alice", 0, 10, 0)
+    with pytest.raises(asyncpg.CheckViolationError):
+        await google_db.execute(
+            "INSERT INTO google_edit_results(chat_key,action_id,kind,phase,source_id) "
+            "VALUES('fake:create','bad-edit-action','edit_doc','reserved',NULL)"
+        )
+    with pytest.raises(ValueError, match="source"):
+        await repo.reserve_edit(
+            "fake:create",
+            "edit-action",
+            "fake:alice",
+            0,
+            10,
+            0,
+            kind="edit_doc",
+            source_id=None,
         )
 
 

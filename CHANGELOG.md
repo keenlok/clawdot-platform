@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-04
+
+### Added
+
+- Optional, preview-frozen link-viewer access for newly created or copied native Google Docs.
+  Sharing is limited to anyone/reader with search discovery disabled, occurs after content read-back,
+  and is journaled with known partial or uncertain outcomes. The framework default remains private.
+- Additive Google migration `0004_create_doc_results.sql` extends the existing result journal
+  for newly created Docs while keeping source IDs required for all existing edit kinds.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added
@@ -84,7 +94,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/keenlok/clawdot-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keenlok/clawdot-platform/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/keenlok/clawdot-platform/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/keenlok/clawdot-platform/compare/v0.1.2...v0.1.3

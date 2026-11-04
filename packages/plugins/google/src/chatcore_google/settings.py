@@ -20,6 +20,7 @@ class GoogleSettings(BaseSettings):
     max_edit_cells: int = Field(default=100, ge=1, le=100)
     edit_unresolved_retention_days: int = Field(default=90, ge=90, le=3650)
     copy_qualified: bool = False
+    new_docs_link_viewer: bool = False
     browser_enabled: bool = False
     browser_url: str = ""
     browser_token_file: str = ""

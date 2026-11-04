@@ -222,8 +222,8 @@ class GoogleClient:
             f"/drive/v3/files/{file_id}",
             params={
                 "fields": "id,name,mimeType,size,modifiedTime,trashed,version,headRevisionId,"
-                "isAppAuthorized,copyRequiresWriterPermission,contentRestrictions,"
-                "capabilities(canEdit,canModifyContent,canCopy,canDownload)",
+                "isAppAuthorized,ownedByMe,owners(emailAddress,permissionId),copyRequiresWriterPermission,contentRestrictions,"
+                "capabilities(canEdit,canModifyContent,canCopy,canDownload,canShare)",
                 "supportsAllDrives": "true",
             },
         )
@@ -338,6 +338,24 @@ class GoogleClient:
             json={"type": "user", "role": "writer", "emailAddress": email},
         )
 
+    async def grant_link_viewer(self, file_id):
+        """Grant exactly non-discoverable anyone/reader access to a confirmed new Doc."""
+        from urllib.parse import quote
+
+        if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+            raise GoogleError("A valid Google destination ID is required for sharing.")
+        return await self.request(
+            "POST",
+            "www.googleapis.com",
+            f"/drive/v3/files/{quote(file_id, safe='')}/permissions",
+            params={
+                "supportsAllDrives": "true",
+                "sendNotificationEmail": "false",
+                "fields": "id,type,role,allowFileDiscovery",
+            },
+            json={"type": "anyone", "role": "reader", "allowFileDiscovery": False},
+        )
+
     async def list_permissions(self, file_id):
         """Read per-user role state for an action-created destination."""
         from urllib.parse import quote
@@ -351,7 +369,8 @@ class GoogleClient:
             params={
                 "supportsAllDrives": "true",
                 "pageSize": "100",
-                "fields": "nextPageToken,permissions(id,type,role,emailAddress)",
+                "fields": "nextPageToken,permissions(id,type,role,emailAddress,domain,"
+                "allowFileDiscovery)",
             },
         )
 

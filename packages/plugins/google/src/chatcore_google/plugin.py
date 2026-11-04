@@ -24,8 +24,9 @@ GOOGLE_INSTRUCTIONS = (
     "plain text. Attach on request to named trip; Confirm/Cancel; no unsolicited trip/expense "
     "edits. Preview writes; no prose permission. API edits default. Ask exact Sheet range if "
     "ambiguous. Browser only on explicit request; preview copy writer grantees; never fall back "
-    "after API failure. API edits don't share. Confirm writes; verify before claiming saved. "
-    "Sheets can race; inspect uncertain writes before retry."
+    "after API failure. New Doc previews state viewer access; originals stay unchanged. "
+    "Confirm writes; verify before claiming saved. "
+    "Inspect uncertain writes before retry."
 )
 
 SOURCE_MESSAGE = text("Original human message ID in this chat/topic containing the file link.")
@@ -176,8 +177,15 @@ class GooglePlugin(BasePlugin):
             source_message_ref=source_message_ref,
         )
 
-    async def create_doc(self, ctx, title, body):
-        return await self._write(self.service.propose, ctx, "create_doc", title=title, text=body)
+    async def create_doc(self, ctx, title, body, link_viewer=None):
+        return await self._write(
+            self.service.propose,
+            ctx,
+            "create_doc",
+            title=title,
+            text=body,
+            link_viewer=link_viewer,
+        )
 
     async def create_sheet(self, ctx, title, rows):
         return await self._write(self.service.propose, ctx, "create_sheet", title=title, rows=rows)
@@ -188,7 +196,15 @@ class GooglePlugin(BasePlugin):
         )
 
     async def edit_doc(
-        self, ctx, url, find, replacement, tab_id=None, destination="auto", copy_title=None
+        self,
+        ctx,
+        url,
+        find,
+        replacement,
+        tab_id=None,
+        destination="auto",
+        copy_title=None,
+        link_viewer=None,
     ):
         return await self._write(
             self.edits.propose_doc,
@@ -199,6 +215,7 @@ class GooglePlugin(BasePlugin):
             tab_id=tab_id,
             destination=destination,
             copy_title=copy_title,
+            link_viewer=link_viewer,
         )
 
     async def edit_sheet(self, ctx, url, tab, range, values, destination="auto", copy_title=None):
@@ -318,11 +335,17 @@ class GooglePlugin(BasePlugin):
             Tool(
                 "google_create_doc",
                 "Preview a new owner-account Google Doc for content authored from scratch or an "
-                "explicitly requested plain-text rewrite; requester must confirm.",
+                "explicitly requested plain-text rewrite; requester confirms its frozen access "
+                "choice.",
                 parameters(
                     {
                         "title": text("New document title."),
                         "body": text("Exact plain text for the new document to preview."),
+                        "link_viewer": {
+                            "type": "boolean",
+                            "description": "Anyone with the link can view (not discoverable). "
+                            "Omit to use the configured new-Doc default.",
+                        },
                     },
                     ["title", "body"],
                 ),
@@ -380,6 +403,12 @@ class GooglePlugin(BasePlugin):
                         "copy_title": text(
                             "Optional 1–200 character title for a new native Doc copy."
                         ),
+                        "link_viewer": {
+                            "type": "boolean",
+                            "description": "For a new Doc copy only: anyone with the link can "
+                            "view (not discoverable). Omit to use the configured default; "
+                            "original files are never shared.",
+                        },
                     },
                     ["url", "find", "replacement"],
                 ),
