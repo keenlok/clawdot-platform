@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Optional tutor pronunciation clips for direct Telegram: explicit Cantonese, Mandarin Chinese or
+  Japanese MP3 synthesis, process-local usage limits, optional FFmpeg slowdown and voice-message
+  delivery. TTS stays disabled by default. Activation requires live provider/account and linguistic
+  qualification, a restricted key and downstream FFmpeg installation for slow speech. No migration
+  or Python dependency was added.
+
 ## [0.2.0] - 2026-11-04
 
 ### Added

@@ -27,6 +27,12 @@ The tool reads the requester's own profile. Group/topic changes require the appl
 checks; profile reads do not grant permission to change group settings. Auto-reply behavior depends
 on the app's addressing policy and explicit topic configuration, not a passing language mention.
 
+**Optional pronunciation.** When explicitly enabled and a supported voice is configured, the skill
+can send one requested Cantonese, Mandarin Chinese or Japanese voice clip through the current
+voice-capable platform. Generation is disabled by default. The target phrase is sent to ElevenLabs;
+caption pronunciation annotations stay local. Slow playback requires FFmpeg and runs only on
+explicit request. Live provider, account and listener qualification remains an activation gate.
+
 ## Limitations
 Grammar judgments, romanisation and translations are model-generated and can be incorrect.
 Stored preferences can be missing or outdated. A configured profile does not guarantee every reply

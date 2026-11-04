@@ -25,6 +25,7 @@ from chatcore.events import (
     User,
     UserRef,
 )
+from chatcore.files import VoicePlatform
 from chatcore.images import error_label
 from chatcore.platform import Capabilities, EventHandler, PlatformError
 from chatcore.polls import PollLimits, PollResult, SentPoll
@@ -37,6 +38,7 @@ from telegram import (
     ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputFile,
     LinkPreviewOptions,
     ReplyParameters,
     Update,
@@ -59,6 +61,7 @@ from chatcore_telegram.menu import fit_menu
 
 NAME = "tg"
 MAX_FILE_BYTES = 20 * 1024 * 1024
+MAX_VOICE_BYTES = 2 * 1024 * 1024
 _COMMAND_NAME = re.compile(r"^[a-z0-9_]{1,32}$")
 logger = logging.getLogger(__name__)
 logging.getLogger("telegram").setLevel(logging.WARNING)
@@ -78,7 +81,7 @@ class TelegramSettings(BaseSettings):
     )
 
 
-class TelegramPlatform:
+class TelegramPlatform(VoicePlatform):
     """Bridge Telegram updates and methods to the platform independent core."""
 
     name = NAME
@@ -560,6 +563,42 @@ class TelegramPlatform:
             chat_id=chat.id,
             document=data,
             filename=filename,
+            caption=caption,
+            message_thread_id=int(thread_id) if thread_id else None,
+        )
+        return MessageRef(chat, str(msg.message_id), thread_id)
+
+    async def send_voice(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef:
+        if filename != "pronunciation.mp3" or not isinstance(data, bytes) or not data:
+            raise PlatformError("InvalidVoice")
+        if len(data) > MAX_VOICE_BYTES:
+            raise PlatformError("VoiceTooLarge")
+        valid_id3 = data.startswith(b"ID3") and len(data) > 10
+        valid_frame = (
+            len(data) >= 4
+            and data[0] == 0xFF
+            and (data[1] & 0xE0) == 0xE0
+            and (data[1] & 0x06) != 0
+        )
+        if not (valid_id3 or valid_frame):
+            raise PlatformError("InvalidVoice")
+        if caption is not None:
+            from chatcore_telegram.formatting import utf16_length
+
+            if utf16_length(caption) > 1024:
+                raise PlatformError("CaptionTooLong")
+        msg = await self._safe(
+            self._application.bot.send_voice,
+            chat_id=chat.id,
+            voice=InputFile(data, filename=filename),
             caption=caption,
             message_thread_id=int(thread_id) if thread_id else None,
         )

@@ -1,10 +1,10 @@
 # Tutor pronunciation TTS framework plan
 
-> **For agentic workers:** After qualification and owner approval, use executing-plans and the execution/review roles in `AGENTS.md` and `ARCHITECTURE.md` §7b.
+> **For agentic workers:** Implement only after explicit owner approval; preserve the live qualification gate before activation.
 
 **Goal:** Generate one on-demand Cantonese, Mandarin Chinese or Japanese pronunciation clip at normal speed; provide a slower clip only when the learner explicitly asks.
 
-**Status:** Planned; not approved for implementation. The live provider/audio qualification below is a prerequisite to implementation approval. Merging this planning document does not satisfy that gate or enable TTS.
+**Status:** Implementation approved 2026-11-04 after owner review of the revised plan. The owner explicitly authorized implementation using mocks and synthetic audio, superseding the live-qualification prerequisite for coding. The feature remains disabled by default. Live provider/account/audio qualification below remains a prerequisite to activation; this approval does not satisfy it or enable TTS.
 
 **Architecture:** The tutor plugin owns the provider client, usage limits, optional local slowdown and tool instructions. A small optional voice protocol supports direct Telegram delivery. Downstream applications own their wiring, image dependencies, credentials, platform release pins and activation.
 
@@ -28,13 +28,13 @@ Use `eleven_v3` for normal synthesis, fixed `mp3_44100_128` output and explicit 
 
 Alternatives considered: a provider-native slow model would avoid the binary but is not qualified for all three languages; changing providers requires a separately approved provider choice. V3 speed parameters and audio-tag suggestions are not reliable speed controls. Local slowdown is the specified candidate, subject to the following gate.
 
-### Qualification gate before implementation approval
+### Live qualification gate before activation
 
 Use an operator-supplied restricted key and selected voices for a deliberately small paid trial: normal v3 `你好` in Cantonese and Mandarin, plus `こんにちは` in Japanese; then locally slow each returned clip. Allow at most six provider requests and 720 input characters in total, including up to three context-sensitive phrases, with no automatic retries. No application code is required for this one-off qualification. Do not retrieve secrets from unrelated projects or publish raw account/voice identifiers in the qualification record.
 
 Record date, model, requested language, HTTP status/content type, detected MP3 signature, normal/slow durations and listening verdict. Confirm `yue` actually sounds Cantonese; distinguish Mandarin; check Japanese reading. Slow output must be approximately 1/0.75 times the normal duration (within 10% allowing MP3 padding), contain the same words, and preserve recognisable tones/pitch and intelligibility. A qualified listener must audition real context-sensitive phrases, not infer quality from duration or HTTP 200 alone. Check selected voice access and model availability for the account.
 
-**Evidence state:** no live trial, account setting check or pronunciation audition has been performed. Until the record passes, both the provider choice and the local slowdown candidate remain unqualified and implementation approval stays blocked. If either fails, revise the chosen approach and obtain approval; do not silently omit slow support or substitute a provider. Missing credentials are a reason to keep a planned record, not to claim success.
+**Evidence state:** no live trial, account setting check or pronunciation audition has been performed. The implementation may be built against mocks and synthetic audio, but it must remain disabled until the record passes. If either provider language selection or local slowdown fails, revise the chosen approach and obtain approval; do not silently omit slow support or substitute a provider. Missing credentials are a reason to keep activation blocked, not to claim success.
 
 ## Configuration, cost and privacy
 
@@ -85,46 +85,46 @@ Use only `ctx.chat`, `ctx.thread_id` and `ctx.platform` for delivery. The curren
 }
 ```
 
-## Implementation tasks after qualification and approval
+## Approved implementation tasks
 
 ### 1. Optional delivery protocol and turn accounting
 
 **Modify:** `packages/core/src/chatcore/files.py`, `packages/core/src/chatcore/testing.py`, `packages/core/src/chatcore/tools/registry.py`.
 **Create test:** `packages/core/tests/test_voice_platform.py`.
 
-- [ ] Add failing tests for optional protocol detection, recorded bytes/caption/topic, and distinct attempt counters across turns.
-- [ ] Add `VoicePlatform.send_voice(chat, filename, data, *, caption=None, thread_id=None) -> MessageRef` as a runtime-checkable optional protocol. Do not widen required `ChatPlatform` or change existing file/text records.
-- [ ] Add the turn counter map and a dedicated fake voice list. Run focused core tests and request snapshots; verify counters are neither persisted nor sent to the model.
+- [x] Add failing tests for optional protocol detection, recorded bytes/caption/topic, and distinct attempt counters across turns.
+- [x] Add `VoicePlatform.send_voice(chat, filename, data, *, caption=None, thread_id=None) -> MessageRef` as a runtime-checkable optional protocol. Do not widen required `ChatPlatform` or change existing file/text records.
+- [x] Add the turn counter map and a dedicated fake voice list. Run focused core tests and request snapshots; verify counters are neither persisted nor sent to the model.
 
 ### 2. Direct Telegram adapter
 
 **Modify:** `packages/adapters/telegram/src/chatcore_telegram/__init__.py`, `packages/adapters/telegram/tests/test_telegram.py`.
 **Regression test:** `packages/adapters/telegram/tests/test_bridge_adapter.py`.
 
-- [ ] Add tests for MP3 byte upload to `bot.send_voice`, MIME type, exact chat/topic/caption, invalid filename/data/caption bounds and safe delivery failures.
-- [ ] Implement direct voice delivery using established adapter conventions without changing logger names. Do not add blind retries on ambiguous sends.
-- [ ] Assert `BridgeTelegramPlatform` still lacks `VoicePlatform`; no protected transport code changes. MP3 voice messages are supported by [Telegram](https://core.telegram.org/bots/api#sendvoice); waveform display may differ by client.
+- [x] Add tests for MP3 byte upload to `bot.send_voice`, MIME type, exact chat/topic/caption, invalid filename/data/caption bounds and safe delivery failures.
+- [x] Implement direct voice delivery using established adapter conventions without changing logger names. Do not add blind retries on ambiguous sends.
+- [x] Assert `BridgeTelegramPlatform` still lacks `VoicePlatform`; no protected transport code changes. MP3 voice messages are supported by [Telegram](https://core.telegram.org/bots/api#sendvoice); waveform display may differ by client.
 
 ### 3. Provider service and bounded slowdown
 
 **Modify:** `packages/plugins/tutor/src/chatcore_tutor/settings.py`.
 **Create:** `packages/plugins/tutor/src/chatcore_tutor/speech.py`, `packages/plugins/tutor/src/chatcore_tutor/slow_audio.py`, `packages/plugins/tutor/tests/test_speech.py`, `packages/plugins/tutor/tests/test_slow_audio.py`.
 
-- [ ] Write mock-transport tests for three explicit codes/voices, model/MP3 format/auth, and absence of a v3 speed parameter. Check missing configuration, canonical language validation, input and stream bounds, both MP3 signatures, safe 401/429/500/timeout errors and no retries.
-- [ ] Test atomic per-user and aggregate UTC-day reservations with an injected monotonic/UTC clock, midnight rollover, quota exhaustion, bounded user-map expiry and fail-fast two-job concurrency. Quota/busy rejections must make zero provider calls.
-- [ ] Implement one owned HTTP client with `aclose()` and safe error codes. Normal requests never invoke the processor; slow requests call the processor after exactly one provider request.
-- [ ] Test the processor boundary with a fake child for stdout overflow, timeout, cancellation, missing executable and kill/reap behaviour. Add an integration-marked real-FFmpeg test using synthetic speech-like audio to compare duration and pitch; clearly skip if the binary is absent. Synthetic tests do not replace the live linguistic qualification.
+- [x] Write mock-transport tests for three explicit codes/voices, model/MP3 format/auth, and absence of a v3 speed parameter. Check missing configuration, canonical language validation, input and stream bounds, both MP3 signatures, safe 401/429/500/timeout errors and no retries.
+- [x] Test atomic per-user and aggregate UTC-day reservations with an injected monotonic/UTC clock, midnight rollover, quota exhaustion, bounded user-map expiry and fail-fast two-job concurrency. Quota/busy rejections must make zero provider calls.
+- [x] Implement one owned HTTP client with `aclose()` and safe error codes. Normal requests never invoke the processor; slow requests call the processor after exactly one provider request.
+- [x] Test the processor boundary with a fake child for stdout overflow, timeout, cancellation, missing executable and kill/reap behaviour. Add an integration-marked real-FFmpeg test using synthetic speech-like audio to compare duration and pitch; clearly skip if the binary is absent. Synthetic tests do not replace the live linguistic qualification.
 
 ### 4. Tutor tool, gates and documentation
 
 **Modify:** `packages/plugins/tutor/src/chatcore_tutor/plugin.py`, `packages/plugins/tutor/src/chatcore_tutor/permissions.py`, `packages/plugins/tutor/tests/test_tutor.py`, `ARCHITECTURE.md`, `CHANGELOG.md`, `docs/plans/README.md`.
 **Create:** `packages/plugins/tutor/src/chatcore_tutor/gates.py`, `packages/plugins/tutor/tests/test_pronunciation.py`.
 
-- [ ] Keep `TutorPlugin(access, platform)` compatible with optional keyword settings, owned service and `aclose`. Test closing the client and disabled-feature behaviour.
-- [ ] Add the tool to `language_tutor`, pronunciation examples/keywords, argument descriptions and concise plugin-owned instructions. Add `tool_gates()` returning only `build_gates(self)`.
-- [ ] Test real-registry handler validation, one valid attempt per turn including failures, authorization/revocation, no provider call on denial, exact current-topic delivery, captions, unsupported bridge mode and truthful errors. A repeated tool invocation must not send/pay for a second clip.
-- [ ] Document delivery ordering/no native reply, bounds, processor requirements, privacy in §6a and configuration/API impact in the changelog. Call out core, adapter `__init__.py`, gates/permissions and system dependency for maintenance review. No applied migration edits.
-- [ ] Keep application routing-set changes and deployment code out of this repository. Update this plan's index/status with the actual implementation PR and activation-independent framework state.
+- [x] Keep `TutorPlugin(access, platform)` compatible with optional keyword settings, owned service and `aclose`. Test closing the client and disabled-feature behaviour.
+- [x] Add the tool to `language_tutor`, pronunciation examples/keywords, argument descriptions and concise plugin-owned instructions. Add `tool_gates()` returning only `build_gates(self)`.
+- [x] Test real-registry handler validation, one valid attempt per turn including failures, authorization/revocation, no provider call on denial, exact current-topic delivery, captions, unsupported bridge mode and truthful errors. A repeated tool invocation must not send/pay for a second clip.
+- [x] Document delivery ordering/no native reply, bounds, processor requirements, privacy in §6a and configuration/API impact in the changelog. Call out core, adapter `__init__.py`, gates/permissions and system dependency for maintenance review. No applied migration edits.
+- [x] Keep application routing-set changes and deployment code out of this repository. Update this plan's index/status with the actual implementation PR and activation-independent framework state.
 
 ## Verification and handoff
 
@@ -142,3 +142,34 @@ Format only changed files; report baseline/unavailable-service failures. No new 
 ## Review provenance and date
 
 Codex revised this generic plan and self-reviewed it after feedback on the original integration draft. The installed Claude CLI was retried on 2026-11-04 but still reports expired OAuth; the documented unavailable-model fallback applies. The product decisions preserve normal-by-default and slow-only-on-request. The date uses Asia/Singapore; 2026-11-03 17:30 UTC is 2026-11-04 01:30 there.
+
+
+## Implementation and verification record (2026-11-04)
+
+Implemented the optional voice protocol and fake records, direct Telegram MP3 delivery, per-turn
+attempt accounting, disabled-by-default tutor tool, refreshed authorization gates, bounded
+ElevenLabs client and local pitch-preserving slow processor. Partial language configuration is
+supported. Normal requests bypass FFmpeg; explicit slow requests keep one job slot through
+synthesis and processing. Protected bridge delivery remains unsupported. No Python dependency,
+applied migration, credential, provider call, release or deployment was added.
+
+Codex (gpt-6-luna) executed; independent Codex (gpt-6.1-sol) reviewed. Review fixes cover HTTP
+format placement, bounds and Unicode validation, fail-closed authorization and delivery context,
+quota/concurrency handling, cancellation-safe child cleanup, route keywords, annotation length
+and the processor's single deadline. The parent completed final verification and self-review.
+Claude final review could not run because its CLI OAuth refresh remains unavailable; the repository's
+unavailable-model fallback applies.
+
+Verification: locked workspace sync and full Ruff lint passed. Full tests passed with an isolated
+Postgres database: **3,694 passed, 3 skipped, 26 deselected**. Focused feature, adapter, routing,
+package-boundary and unchanged disabled snapshot checks passed (326 passed, 1 skipped). Changed
+Python files pass formatting; the repository-wide formatting check still lists 14 unrelated
+pre-existing Markdown files. Gitleaks found no leaks in tracked/new nonignored source.
+
+All 17 framework wheels were independently built and installed into the private app candidate
+integration environment. The downstream bot image exercised this exact processor and wheel set
+with synthetic audio: duration ratio 1.346, normal 440.3 Hz and slowed 440.1 Hz. This confirms
+container codec/filter behavior, not linguistic quality. Live provider, native-listener and account
+privacy/spending qualification remains pending before activation. Implementation is in review in
+[PR #13](https://github.com/keenlok/clawdot-platform/pull/13); private integration is
+[PR #10](https://github.com/keenlok/clawdot-deployments/pull/10).

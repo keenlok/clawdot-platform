@@ -92,6 +92,16 @@ class SentFile:
 
 
 @dataclass
+class SentVoice:
+    chat: ChatRef
+    filename: str
+    data: bytes
+    caption: str | None
+    thread_id: str | None
+    ref: MessageRef
+
+
+@dataclass
 class FakePlatform:
     """Records everything the core asks the chat app to do."""
 
@@ -112,6 +122,7 @@ class FakePlatform:
     files: dict[str, bytes] = field(default_factory=dict)
     sent: list[Sent] = field(default_factory=list)
     sent_files: list[SentFile] = field(default_factory=list)
+    sent_voices: list[SentVoice] = field(default_factory=list)
     edits: list[tuple[MessageRef, str]] = field(default_factory=list)
     left: list[ChatRef] = field(default_factory=list)
     typing_calls: int = 0
@@ -151,6 +162,19 @@ class FakePlatform:
     ) -> MessageRef:
         ref = MessageRef(chat, f"b{next(self._ids)}", thread_id)
         self.sent_files.append(SentFile(chat, filename, data, caption, thread_id, ref))
+        return ref
+
+    async def send_voice(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef:
+        ref = MessageRef(chat, f"b{next(self._ids)}", thread_id)
+        self.sent_voices.append(SentVoice(chat, filename, data, caption, thread_id, ref))
         return ref
 
     async def edit(self, message: MessageRef, text: str) -> None:

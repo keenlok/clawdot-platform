@@ -18,3 +18,18 @@ class FilePlatform(Protocol):
     ) -> MessageRef:
         """Send ``data`` as a document; errors contain only the error class name."""
         ...
+
+
+@runtime_checkable
+class VoicePlatform(Protocol):
+    """Optional capability for sending a short voice message as a response attachment."""
+
+    async def send_voice(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef: ...

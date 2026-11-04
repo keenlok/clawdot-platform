@@ -206,7 +206,7 @@ configuration remains private and inactive pending a separately reviewed redesig
 
     | Class | Files | Release path |
     |---|---|---|
-    | Gates and permission checks | `*/gates.py`, `chatcore_jobs/permissions.py`, `chatcore_polls/permissions.py` | Protected if the owner accepts layout plan D7 (pending); otherwise ordinary |
+    | Gates and permission checks | `*/gates.py`, `chatcore_jobs/permissions.py`, `chatcore_polls/permissions.py`, `chatcore_tutor/permissions.py` | Protected if the owner accepts layout plan D7 (pending); otherwise ordinary |
     | Security-critical runtime | `chatcore_extensions/{authority,runtime,sandbox,worker}.py`, `chatcore_research/quota.py` | Protected |
     | Schema | every `*/migrations/` | Protected (migration identity) |
     | Package wiring | `*/__init__.py`, `pyproject.toml` | Protected (package metadata, import surface) |
@@ -575,6 +575,9 @@ The bot records **every message** in allowlisted groups (privacy mode is off), a
   - Ledger rows stay so balances still add up; the bot says so.
 - **`/purgechat`** (admin) deletes everything for a chat, e.g. when the bot is retired from a group.
 - **No secrets or PII in logs.** Logs carry IDs, tool names, token counts, latency, error class and URL *hostnames* only. No message text, prompts, tool payloads or full URLs.
+- **Tutor pronunciation (optional and disabled by default):** when explicitly requested, the tutor sends only the target phrase to ElevenLabs for speech generation, receives an MP3 in memory, and uploads it as a Telegram voice message before its text reply. The pronunciation annotation stays local and is placed in the caption. The framework keeps no audio cache; failed or successful generation attempts consume the per-turn and process-local quota reservation. Provider requests are not made at startup.
+  - ElevenLabs retains submitted data by default; model-training use depends on the account's terms and settings, with an opt-out for future submissions. Zero Retention Mode is an eligible Enterprise feature, not a standard default. Do not promise an ordinary-plan retention period when none is specified. Before activation, the operator must record the current training opt-out and retention arrangement, establish a hard credit/overage cap where supported, and pass the live language, voice and slow-audio listening qualification in `docs/plans/2026-11-04-tutor-pronunciation-tts.md`.
+  - Slow speech uses the FFmpeg system binary (`ffmpeg`) with MP3 support and the `atempo` filter. Downstream images must install it before enabling slow requests. Normal requests do not run FFmpeg. No native reply-chain attribution is guaranteed for the voice attachment.
 - **DM and group isolation:**
   - `chat_id` is a **required** argument on every store and search function, not an optional filter.
   - Every ES query includes a `chat_id` filter.

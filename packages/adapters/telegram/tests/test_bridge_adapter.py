@@ -21,7 +21,7 @@ from chatcore.events import (
     PollAnswer,
     UserRef,
 )
-from chatcore.files import FilePlatform
+from chatcore.files import FilePlatform, VoicePlatform
 from chatcore.platform import ChatPlatform, PlatformError
 from chatcore.polls import PollPlatform, PollResult
 from chatcore_telegram.bridge import (
@@ -86,6 +86,7 @@ async def test_bridge_adapter_implements_platform_and_preserves_thread_reply_sem
     assert isinstance(platform, ChatPlatform)
     assert isinstance(platform, FilePlatform)
     assert isinstance(platform, PollPlatform)
+    assert not isinstance(platform, VoicePlatform)
     chat = ChatRef("tg", "-100")
     reply = MessageRef(chat, "12", "3")
     sent = await platform.send(chat, "**hello**", reply_to=reply, thread_id="3")
