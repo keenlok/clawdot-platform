@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from chatcore_tutor.settings import TutorSettings
@@ -19,14 +21,16 @@ def configured(**overrides):
 
 
 @pytest.mark.parametrize(
-    ("language", "code", "voice"),
+    ("language", "code", "model", "voice"),
     [
-        ("Cantonese", "yue", "voice_yue"),
-        ("Mandarin Chinese", "zh", "voice_zh"),
-        ("Japanese", "ja", "voice_ja"),
+        ("Cantonese", "yue", "eleven_v4", "voice_yue"),
+        ("Mandarin Chinese", "zh", "eleven_v3", "voice_zh"),
+        ("Japanese", "ja", "eleven_v3", "voice_ja"),
     ],
 )
-async def test_provider_request_uses_explicit_language_fixed_model_and_mp3(language, code, voice):
+async def test_provider_request_uses_language_specific_fixed_model_and_voice(
+    language, code, model, voice
+):
     seen = []
 
     async def handler(request):
@@ -40,11 +44,10 @@ async def test_provider_request_uses_explicit_language_fixed_model_and_mp3(langu
     assert audio == MP3
     request = seen[0]
     assert request.url.scheme == "https" and request.url.host == "api.elevenlabs.io"
-    assert request.url.path.endswith(f"/{voice}")
+    assert request.url.path == f"/v1/text-to-speech/{voice}"
     assert request.headers["xi-api-key"] == "test-key"
     body = request.read().decode()
-    assert f'"language_code":"{code}"' in body
-    assert '"model_id":"eleven_v3"' in body
+    assert json.loads(body) == {"text": "你好", "model_id": model, "language_code": code}
     assert request.url.params.get_list("output_format") == ["mp3_44100_128"]
     assert '"speed"' not in body
     await service.aclose()

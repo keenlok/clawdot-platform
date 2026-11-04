@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Tutor pronunciation now selects `eleven_v4` for Cantonese, whose `yue` language code is not
+  supported by v3; Mandarin Chinese (`zh`) and Japanese (`ja`) continue to use `eleven_v3`.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added

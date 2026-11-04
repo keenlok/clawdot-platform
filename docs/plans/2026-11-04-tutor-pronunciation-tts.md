@@ -184,3 +184,42 @@ qualification remains unperformed. Prepare v0.3.0 through the existing CI-gated 
 do not enable a nonfunctional tool or invent a released pin. The failed PR CI check was reproduced:
 the tutor's generated wiki page was stale. Regenerating the maintained page fixes the exact
 `generate_explainers.py --check` failure without changing runtime code.
+
+
+## Live provider compatibility correction (owner activation, 2026-11-04)
+
+The owner authorized activation and creation of the restricted TTS-only account key. A bounded
+qualification found that the live API rejects `eleven_v3` with `language_code=yue` as
+`unsupported_language` (HTTP 400); Mandarin/`zh` and Japanese/`ja` succeeded on v3. A deliberate
+v4 Cantonese probe succeeded on the same free account and voice with HTTP 200 and valid MP3.
+This live result supersedes the earlier v3 Cantonese assumption; production must not retry or
+silently omit the explicit language code.
+
+Approved-scope correction under the existing activation request: keep model choice server-owned,
+use `eleven_v4` only for Cantonese, and preserve `eleven_v3` for Mandarin/Japanese. Add regression
+coverage for the exact model/language/voice request per language, with no runtime fallback or retry.
+Preserve all authorization, quotas, request limits, captions, MP3 caps and local slow processing.
+Update the changelog, generated explainer/wiki and release metadata for v0.3.1 through normal CI;
+the private integration then selects that actual published tag and exact commit. The key remains
+private and is never provided to code-writing/review processes. The provider probes are operator
+qualification, not automated regression tests; regressions use mock HTTP transport only.
+
+
+The API-only compatibility correction was implemented by Codex gpt-6-luna and independently
+reviewed by Codex gpt-6.1-sol with no actionable findings. The red/green mock regression failed
+for Cantonese under v3 then passed with the fixed mapping; focused parent checks passed 162
+and one optional skip. The separate live free-voice qualification failed linguistic review:
+the owner heard Mandarin for Cantonese and a clipped Japanese word. These audio-quality issues
+are not resolved by the model-route fix and are not claimed as qualified. A native Cantonese
+Voice Library API probe returned HTTP 402 `payment_required` on the free account. No subscription
+was purchased. Private generation stays off and rejected voices must not be activated.
+
+
+The owner then chose to keep ElevenLabs free and investigate alternatives. Retain this narrow
+model-routing fix for review, but defer a new release and private pin until the provider path
+is selected. Current root release remains v0.3.0; no v0.3.1 tag is assumed. The requested free
+alternative investigation is not authority to purchase a plan or create a different cloud account.
+Full post-fix framework tests passed: 3,694 passed, 3 skipped, 26 deselected. Lint, generated wiki
+check and changed Python formatting passed; full formatting lists the same 14 unchanged baseline
+Markdown files. Independent review passed 383 focused tests plus 18 mock variants without findings.
+Claude auth status was checked and is still signed out; the documented model fallback applies.

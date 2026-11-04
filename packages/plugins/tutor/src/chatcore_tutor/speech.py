@@ -16,9 +16,9 @@ from chatcore_tutor.settings import TutorSettings
 
 log = logging.getLogger("chatcore_tutor")
 LANGUAGES = {
-    "Cantonese": ("yue", "TUTOR_TTS_CANTONESE_VOICE_ID"),
-    "Mandarin Chinese": ("zh", "TUTOR_TTS_MANDARIN_VOICE_ID"),
-    "Japanese": ("ja", "TUTOR_TTS_JAPANESE_VOICE_ID"),
+    "Cantonese": ("yue", "TUTOR_TTS_CANTONESE_VOICE_ID", "eleven_v4"),
+    "Mandarin Chinese": ("zh", "TUTOR_TTS_MANDARIN_VOICE_ID", "eleven_v3"),
+    "Japanese": ("ja", "TUTOR_TTS_JAPANESE_VOICE_ID", "eleven_v3"),
 }
 
 
@@ -86,7 +86,7 @@ class SpeechService:
             or not self.settings.ELEVENLABS_API_KEY.get_secret_value()
         ):
             raise SpeechError("unavailable")
-        lang_code, setting = LANGUAGES[language]
+        lang_code, setting, model = LANGUAGES[language]
         voice = getattr(self.settings, setting)
         if not voice:
             raise SpeechError("voice_unavailable")
@@ -135,7 +135,11 @@ class SpeechService:
         try:
             audio = await asyncio.wait_for(
                 self._request(
-                    text, voice, lang_code, self.settings.ELEVENLABS_API_KEY.get_secret_value()
+                    text,
+                    voice,
+                    lang_code,
+                    model,
+                    self.settings.ELEVENLABS_API_KEY.get_secret_value(),
                 ),
                 timeout=35,
             )
@@ -156,7 +160,7 @@ class SpeechService:
             async with self._lock:
                 self._active -= 1
 
-    async def _request(self, text: str, voice: str, language: str, key: str) -> bytes:
+    async def _request(self, text: str, voice: str, language: str, model: str, key: str) -> bytes:
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
         try:
             async with self._client.stream(
@@ -164,7 +168,7 @@ class SpeechService:
                 url,
                 params={"output_format": "mp3_44100_128"},
                 headers={"xi-api-key": key, "accept": "audio/mpeg"},
-                json={"text": text, "model_id": "eleven_v3", "language_code": language},
+                json={"text": text, "model_id": model, "language_code": language},
             ) as response:
                 if response.status_code != 200:
                     raise SpeechError("provider")
