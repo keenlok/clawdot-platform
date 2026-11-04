@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [Google output follow-ups and access levels](2026-11-04-google-output-followups-and-access.md) | Planned | Proposed owner review: journal-bound own-output authority, strict bounded read-back verification, explicit link-editor option; default choice pending |
 | [New output Doc link viewers](2026-11-04-google-output-link-viewers.md) | Live limited | [PR #15](https://github.com/keenlok/clawdot-platform/pull/15): v0.4.0 release delivers preview-frozen access for new output Docs; framework default stays private; source/Sheet/browser policies unchanged; downstream rollout tracked on PR |
 
 Every plan, design and review record in the repository, with its current status. The
