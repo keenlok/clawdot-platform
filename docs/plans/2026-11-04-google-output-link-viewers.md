@@ -102,3 +102,6 @@ Candidate first-party wheels are tested against the private app before release. 
 Google file was created or shared for these tests; the explicitly authorized existing-output
 grant is recorded privately. The published tag, downstream exact pin, additive migration and
 health-gated rollout will be recorded on the linked delivery PRs.
+
+PR CI caught the stale generated Google wiki mirror. Regeneration changed only that mirror;
+the exact CI generator check then passed. Runtime source and reviewed wheel bytes are unchanged.
