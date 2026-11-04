@@ -15,7 +15,13 @@ effective access permits. Qualified copy fallback and DOCX-to-new-native-Doc edi
 the source and require preview/confirmation before creation. `GOOGLE_COPY_QUALIFIED` defaults
 false pending live owner-grant checks. Every DOCX edit imports the original package bytes;
 there is no Word write-back. Service-account impersonation, arbitrary updates, row deletion,
-uploaded DOCX and Excel extraction are not implemented. API editing does not share files.
+uploaded DOCX and Excel extraction are not implemented. Newly created/copied Docs can be private,
+non-discoverable link-viewer, or non-discoverable link-editor outputs when the confirmed preview
+says so; originals retain their existing ACLs. `GOOGLE_NEW_DOCS_LINK_ACCESS` selects the framework
+default (`private`, `viewer`, or `editor`; private by default). The legacy
+`GOOGLE_NEW_DOCS_LINK_VIEWER` setting remains supported for compatibility. A frozen preview is
+not changed by a later default change. Journaled outputs can be reused as document sources only
+in the same chat/topic and while the owner identity and current Google permissions still match.
 Drive DOCX needs an explicitly renewed `drive.readonly` grant; existing
 native Docs/Sheets profiles remain compatible. Main-body text/tables are extracted with bounded
 ZIP handling and `defusedxml`; images and exact visual layout are not read.

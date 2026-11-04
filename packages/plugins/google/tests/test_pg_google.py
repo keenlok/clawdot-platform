@@ -30,7 +30,13 @@ async def google_db():
             DSN, min_size=1, max_size=4, server_settings={"search_path": schema}
         )
         db = PgDatabase(pool)
-        await migrations.apply(db, [("google", resources.files("chatcore_google.migrations"))])
+        await migrations.apply(
+            db,
+            [
+                ("core", resources.files("chatcore.migrations")),
+                ("google", resources.files("chatcore_google.migrations")),
+            ],
+        )
         yield db
     finally:
         if pool:
@@ -227,7 +233,6 @@ async def test_destination_creation_claim_is_durable_and_one_time(google_db):
             source_id="source-id",
             revision=0,
         )
-
     await repo.configure("fake:claim", True, 0)
     with pytest.raises(ValueError, match="settings"):
         await GoogleRepository(google_db).claim_destination_creation(
@@ -236,6 +241,164 @@ async def test_destination_creation_claim_is_durable_and_one_time(google_db):
             kind="browser_edit_doc",
             source_id="source-id",
             revision=0,
+        )
+
+
+async def test_create_doc_reservation_allows_null_source_but_existing_edit_kinds_do_not(google_db):
+    repo = GoogleRepository(google_db)
+    await repo.reserve_edit(
+        "fake:create",
+        "create-action",
+        "fake:alice",
+        0,
+        10,
+        0,
+        kind="create_doc",
+        source_id=None,
+    )
+    result = await repo.edit_result("fake:create", "create-action")
+    assert result["kind"] == "create_doc" and result["source_id"] is None
+    assert await repo.claim_destination_creation(
+        "fake:create",
+        "create-action",
+        kind="create_doc",
+        source_id=None,
+        revision=0,
+    )
+    with pytest.raises(ValueError, match="already|claimed"):
+        await repo.claim_destination_creation(
+            "fake:create",
+            "create-action",
+            kind="create_doc",
+            source_id=None,
+            revision=0,
+        )
+    await repo.reserve("fake:create", "bad-edit-action", "fake:alice", 0, 10, 0)
+    with pytest.raises(asyncpg.CheckViolationError):
+        await google_db.execute(
+            "INSERT INTO google_edit_results(chat_key,action_id,kind,phase,source_id) "
+            "VALUES('fake:create','bad-edit-action','edit_doc','reserved',NULL)"
+        )
+    with pytest.raises(ValueError, match="source"):
+        await repo.reserve_edit(
+            "fake:create",
+            "edit-action",
+            "fake:alice",
+            0,
+            10,
+            0,
+            kind="edit_doc",
+            source_id=None,
+        )
+
+
+async def test_output_authority_survives_repository_restart_and_requires_exact_topic(google_db):
+    repo = GoogleRepository(google_db)
+    binding = {
+        "owner_id": "owner-permission-id",
+        "owner_email": "owner@example.com",
+        "thread_id": None,
+        "mode": "docx_import",
+    }
+    await repo.reserve_edit(
+        "fake:output",
+        "action-output",
+        "fake:alice",
+        0,
+        10,
+        0,
+        kind="edit_doc",
+        source_id="original-id",
+        output_binding=binding,
+    )
+    await repo.update_edit_result(
+        "fake:output",
+        "action-output",
+        phase="destination_created",
+        destination_id="known-output-id",
+    )
+    await repo.update_edit_result("fake:output", "action-output", phase="applying")
+    await repo.update_edit_result(
+        "fake:output",
+        "action-output",
+        phase="uncertain",
+        failed_stage="verification",
+        error_category="text_mismatch",
+    )
+    now = datetime.now(UTC)
+    await google_db.execute(
+        "INSERT INTO pending_actions(id,chat_key,thread_id,requester_key,plugin,kind,payload,"
+        "summary,reply_code,created_at,expires_at,used_at) "
+        "VALUES($1,$2,NULL,'fake:alice','google','edit_doc','{}','summary','0000',$3,$4,$3)",
+        "action-output",
+        "fake:output",
+        now,
+        now + timedelta(hours=1),
+    )
+    await google_db.execute("DELETE FROM pending_actions WHERE id='action-output'")
+
+    restarted = GoogleRepository(google_db)
+    output = await restarted.output_destination("fake:output", None, "known-output-id")
+    assert output["output_owner_id"] == binding["owner_id"]
+    assert output["output_owner_email"] == binding["owner_email"]
+    assert output["output_thread_id"] is None
+    assert output["output_mode"] == "docx_import"
+    assert output["phase"] == "uncertain"
+    assert await google_db.fetchval("SELECT count(*) FROM pending_actions") == 0
+    assert await restarted.output_destination("fake:output", "topic-a", "known-output-id") is None
+    assert await restarted.output_destination("fake:other", None, "known-output-id") is None
+
+    for topic, action, destination in (
+        ("", "empty-topic", "empty-topic-id"),
+        ("topic-a", "named-topic", "named-topic-id"),
+    ):
+        await restarted.reserve_edit(
+            "fake:output",
+            action,
+            "fake:alice",
+            0,
+            10,
+            0,
+            kind="create_doc",
+            source_id=None,
+            output_binding={**binding, "thread_id": topic, "mode": "create"},
+        )
+        await restarted.update_edit_result(
+            "fake:output", action, phase="destination_created", destination_id=destination
+        )
+    assert await restarted.output_destination("fake:output", None, "empty-topic-id") is None
+    assert await restarted.output_destination("fake:output", "", "empty-topic-id") is not None
+    assert (
+        await restarted.output_destination("fake:output", "topic-a", "named-topic-id") is not None
+    )
+    assert await restarted.output_destination("fake:output", "", "named-topic-id") is None
+    await restarted.purge("fake:output")
+    assert await restarted.output_destination("fake:output", None, "known-output-id") is None
+
+
+async def test_output_authority_denies_legacy_and_partial_bindings(google_db):
+    repo = GoogleRepository(google_db)
+    await repo.reserve_edit(
+        "fake:binding",
+        "legacy",
+        "fake:alice",
+        0,
+        10,
+        0,
+        kind="edit_doc",
+        source_id="source-id",
+    )
+    await repo.update_edit_result(
+        "fake:binding", "legacy", phase="destination_created", destination_id="legacy-id"
+    )
+    await repo.update_edit_result("fake:binding", "legacy", phase="applying")
+    await repo.update_edit_result("fake:binding", "legacy", phase="verified")
+    assert await repo.output_destination("fake:binding", None, "legacy-id") is None
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await google_db.execute(
+            "UPDATE google_edit_results SET output_owner_id='partial' "
+            "WHERE chat_key='fake:binding' AND action_id='legacy'"
         )
 
 

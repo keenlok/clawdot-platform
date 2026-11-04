@@ -1,5 +1,11 @@
 # Plans index
 
+| Plan | Status | Notes |
+| --- | --- | --- |
+| [Google output follow-ups execution](2026-11-04-google-output-followups-execution.md) | Live limited | [PR #16](https://github.com/keenlok/clawdot-platform/pull/16): v0.5.0 implementation, Luna execution/Sol review; release and downstream installed receipts on PR |
+| [Google output follow-ups and access levels](2026-11-04-google-output-followups-and-access.md) | Live limited | [PR #16](https://github.com/keenlok/clawdot-platform/pull/16): v0.5.0 delivers owner-approved viewer default/editor on request, durable own-output authority and strict bounded read-backs; actual receipt on PR |
+| [New output Doc link viewers](2026-11-04-google-output-link-viewers.md) | Live limited | [PR #15](https://github.com/keenlok/clawdot-platform/pull/15): v0.4.0 release delivers preview-frozen access for new output Docs; framework default stays private; source/Sheet/browser policies unchanged; downstream rollout tracked on PR |
+
 Every plan, design and review record in the repository, with its current status. The
 architecture spec is [`ARCHITECTURE.md`](../../ARCHITECTURE.md); the rules for changing the repo are
 in [`AGENTS.md`](../../AGENTS.md). **A PR that adds a plan or changes what a plan has delivered
@@ -101,7 +107,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 
 | Plan | Status | PR | Notes |
 | --- | --- | --- | --- |
-| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Shipped inactive | [#13](https://github.com/keenlok/clawdot-platform/pull/13) | v0.3.0 released; default-disabled direct Telegram pronunciation and explicit local slowdown. Live qualification exposed v3 Cantonese incompatibility; fixed model route and native-voice/linguistic qualification remain pending |
+| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Shipped inactive | [#13](https://github.com/keenlok/clawdot-platform/pull/13), [#14](https://github.com/keenlok/clawdot-platform/pull/14) | Default-disabled pronunciation shipped in v0.3.0. Owner accepted a native Cantonese normal sample; v0.5.1 route correction is in review. Publication and downstream activation remain pending; other language/pace qualification is separate |
 | [skill-layer.md](skill-layer.md) | Live, limited | history #14 | Design. `SKILLS_MODE=on` only for the owner's test chats; other chats use the legacy prompt |
 | [skill-layer-astra-review.md](skill-layer-astra-review.md) | Record | history #14 | Independent design review |
 | [tool-descriptions.md](tool-descriptions.md) | Live | history #17 | Stage 0a |

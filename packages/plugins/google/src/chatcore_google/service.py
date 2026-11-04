@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 from dataclasses import replace
 
 from chatcore.files import FilePlatform
 from chatcore.pending import PendingAction
 
+from chatcore_google.doc_verification import verify_doc_readback
 from chatcore_google.docx import docx_text
+from chatcore_google.link_sharing import (
+    payload_link_access,
+    publish_doc_link_access,
+    record_result,
+    resolve_link_access,
+    web_url,
+    write_outcome_uncertain,
+)
 from chatcore_google.permissions import authorize
-from chatcore_google.refs import approved_ref, approved_source_ref
+from chatcore_google.refs import approved_ref, approved_source_ref, parse_google_ref
 from chatcore_google.render import doc_text, literal_rows
 
 DOC = "application/vnd.google-apps.document"
 SHEET = "application/vnd.google-apps.spreadsheet"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_logger = logging.getLogger("chatcore_google")
 
 
 def column_name(number):
@@ -33,6 +44,25 @@ def column_number(value):
     for char in value:
         result = result * 26 + ord(char) - 64
     return result
+
+
+def _same_output_binding(left, right):
+    fields = (
+        "chat_key",
+        "action_id",
+        "kind",
+        "source_id",
+        "destination_id",
+        "output_owner_id",
+        "output_owner_email",
+        "output_thread_id",
+        "output_mode",
+    )
+    return (
+        left is not None
+        and right is not None
+        and all(left.get(field) == right.get(field) for field in fields)
+    )
 
 
 def select_tab(sheet, ref, tab=None):
@@ -90,6 +120,118 @@ class GoogleService:
         self.check_metadata(ref.file_id, metadata)
         return ref, metadata, owner
 
+    async def doc_source(self, ctx, url, *, source_message_ref=None, write=False):
+        """Resolve a human-posted Doc or a retained same-chat bot-created Doc output."""
+        ref = parse_google_ref(url)
+        await self.authorize(ctx, write=write)
+        output = await self.repo.output_destination(ctx.chat.key, ctx.thread_id, ref.file_id)
+        if output is not None:
+            try:
+                owner = await self.client.identity()
+                if (
+                    not isinstance(output.get("output_owner_id"), str)
+                    or not isinstance(output.get("output_owner_email"), str)
+                    or output["output_owner_id"] != owner
+                    or output["output_owner_email"].casefold()
+                    != self.settings.owner_email.casefold()
+                ):
+                    raise ValueError("The retained output belongs to a different Google owner.")
+                metadata = await self.client.metadata(ref.file_id)
+                self._check_output_doc(ref.file_id, metadata, owner, write=write)
+                latest = await self.repo.output_destination(
+                    ctx.chat.key, ctx.thread_id, ref.file_id
+                )
+                if not _same_output_binding(latest, output):
+                    raise ValueError("The retained output binding changed during the read.")
+                return (
+                    ref,
+                    metadata,
+                    owner,
+                    {
+                        "kind": "output",
+                        "action_id": output["action_id"],
+                        "file_id": ref.file_id,
+                        "owner_id": output["output_owner_id"],
+                        "owner_email": output["output_owner_email"],
+                        "thread_id": output["output_thread_id"],
+                        "mode": output["output_mode"],
+                    },
+                )
+            except (ValueError, PermissionError) as output_error:
+                if source_message_ref is None:
+                    try:
+                        approved_ref(url, ctx.turn.human_urls)
+                    except ValueError:
+                        raise output_error from None
+        if source_message_ref is None:
+            ref = approved_ref(url, ctx.turn.human_urls)
+            proof = None
+        else:
+            ref = await approved_source_ref(url, ctx, source_message_ref)
+            proof = {"kind": "human_message", "message_id": source_message_ref}
+        owner = await self.client.identity()
+        metadata = await self.client.metadata(ref.file_id)
+        self.check_metadata(ref.file_id, metadata)
+        self.check_type(metadata, DOC, allow_docx=True)
+        return ref, metadata, owner, proof
+
+    def _check_output_doc(self, file_id, metadata, owner, *, write=False):
+        self.check_metadata(file_id, metadata)
+        owners = metadata.get("owners") or []
+        if (
+            not isinstance(owners, list)
+            or metadata.get("id", file_id) != file_id
+            or metadata.get("mimeType") != DOC
+            or metadata.get("isAppAuthorized") is not True
+            or metadata.get("ownedByMe") is not True
+            or not any(
+                str(item.get("emailAddress", "")).casefold() == self.settings.owner_email.casefold()
+                and item.get("permissionId") == owner
+                for item in owners
+                if isinstance(item, dict)
+            )
+        ):
+            raise ValueError(
+                "The retained output is not an app-authorized Doc owned by this account."
+            )
+        caps = metadata.get("capabilities") or {}
+        if write and (caps.get("canEdit") is not True or caps.get("canModifyContent") is not True):
+            raise ValueError("The retained output is no longer editable by the configured owner.")
+
+    async def recheck_doc_source(self, ctx, file_id, proof, *, write=False):
+        """Recheck frozen output or retained-message provenance after remote Doc reads."""
+        if not proof:
+            return
+        if proof.get("kind") == "human_message":
+            await approved_source_ref(
+                f"https://docs.google.com/document/d/{file_id}/edit",
+                ctx,
+                proof.get("message_id"),
+            )
+            return
+        if proof.get("kind") != "output":
+            raise ValueError("The frozen Doc source authority is invalid.")
+        latest = await self.repo.output_destination(ctx.chat.key, ctx.thread_id, file_id)
+        if (
+            latest is None
+            or latest["action_id"] != proof.get("action_id")
+            or latest["output_owner_id"] != proof.get("owner_id")
+            or latest["output_owner_email"] != proof.get("owner_email")
+            or latest["output_thread_id"] != proof.get("thread_id")
+            or latest["output_mode"] != proof.get("mode")
+        ):
+            raise ValueError("The retained output binding was removed or changed.")
+        if proof.get("owner_email", "").casefold() != self.settings.owner_email.casefold():
+            raise ValueError("Google owner configuration changed; request a fresh Doc preview.")
+        owner = await self.client.identity()
+        if owner != proof.get("owner_id"):
+            raise ValueError("Google owner identity changed; request a fresh Doc preview.")
+        metadata = await self.client.metadata(file_id)
+        self._check_output_doc(file_id, metadata, owner, write=write)
+        latest_after_io = await self.repo.output_destination(ctx.chat.key, ctx.thread_id, file_id)
+        if not _same_output_binding(latest_after_io, latest):
+            raise ValueError("The retained output binding was removed or changed during the read.")
+
     @staticmethod
     def check_metadata(file_id, metadata):
         if metadata.get("id", file_id) != file_id or metadata.get("trashed"):
@@ -108,6 +250,16 @@ class GoogleService:
         return ref, metadata, owner
 
     async def read_file(self, ctx, url, *, source_message_ref=None):
+        ref = parse_google_ref(url)
+        if ref.kind in {"document", "drive_file"} and await self.repo.output_destination(
+            ctx.chat.key, ctx.thread_id, ref.file_id
+        ):
+            ref, metadata, _, proof = await self.doc_source(
+                ctx, url, source_message_ref=source_message_ref
+            )
+            content = await self.read_content(ref, metadata)
+            await self.recheck_doc_source(ctx, ref.file_id, proof)
+            return content
         ref, metadata, _ = await self.source_file(ctx, url, source_message_ref=source_message_ref)
         return await self.read_content(ref, metadata)
 
@@ -162,10 +314,12 @@ class GoogleService:
             raise ValueError("The file type does not match this tool; use the Doc or Sheet reader.")
 
     async def read_doc(self, ctx, url, *, source_message_ref=None):
-        ref, metadata, _ = await self.file(
-            ctx, url, DOC, allow_docx=True, source_message_ref=source_message_ref
+        ref, metadata, _, proof = await self.doc_source(
+            ctx, url, source_message_ref=source_message_ref
         )
-        return await self.read_document(ref, metadata)
+        result = await self.read_document(ref, metadata)
+        await self.recheck_doc_source(ctx, ref.file_id, proof)
+        return result
 
     async def read_document(self, ref, metadata):
         if metadata["mimeType"] == DOCX:
@@ -290,10 +444,24 @@ class GoogleService:
             "This applies to Google and itinerary reads/writes.",
         )
 
-    async def propose(self, ctx, kind, *, url=None, title=None, text=None, rows=None, tab=None):
+    async def propose(
+        self,
+        ctx,
+        kind,
+        *,
+        url=None,
+        title=None,
+        text=None,
+        rows=None,
+        tab=None,
+        link_viewer=None,
+        link_access=None,
+    ):
         await self.authorize(ctx, write=True)
         if kind not in ("append", "create_doc", "create_sheet"):
             raise ValueError("Unknown Google write operation.")
+        if kind != "create_doc" and (link_access is not None or link_viewer is not None):
+            raise ValueError("Link access choices apply only to a new Google Doc.")
         payload = {"owner_email": self.settings.owner_email}
         grid_columns = None
         if kind == "append":
@@ -318,6 +486,11 @@ class GoogleService:
             payload["title"] = title
             payload["mime"] = DOC if kind == "create_doc" else SHEET
             name = title
+            if kind == "create_doc":
+                access = resolve_link_access(self.settings, link_access, link_viewer)
+                payload["link_access"] = access
+                if access != "editor":
+                    payload["link_viewer"] = access == "viewer"
         if payload["mime"] == SHEET:
             if text is not None:
                 raise ValueError("Provide rows for a Sheet.")
@@ -331,9 +504,24 @@ class GoogleService:
         _, revision = await self.repo.settings(ctx.chat.key)
         payload.update(owner=owner, revision=revision)
         # Long previews are attached in full by action(); the pending payload stays frozen.
+        link_access = payload_link_access(payload) if kind == "create_doc" else None
+        access_text = {
+            "private": "private; existing access settings are unchanged",
+            "viewer": "anyone with the link can view; search discovery is off",
+            "editor": "anyone with the link can edit; search discovery is off",
+        }
+        link_line = f"Access: {access_text[link_access]}.\n" if kind == "create_doc" else ""
+        target = (
+            f"new Doc ({link_access} link access)"
+            if kind == "create_doc"
+            else "new private file"
+            if kind == "create_sheet"
+            else url
+        )
         summary = (
             f"{kind.replace('_', ' ').title()}: {name}\n"
-            f"Owner: {self.settings.owner_email}\nTarget: {url or 'new private file'}\n\n{preview}"
+            + link_line
+            + f"Owner: {self.settings.owner_email}\nTarget: {target}\n\n{preview}"
         )
         return await self.action(ctx, kind, payload, summary)
 
@@ -419,14 +607,9 @@ class GoogleService:
             rows = self.rows(payload["rows"])
         elif not 0 < len(payload["text"]) <= self.settings.max_chars:
             raise ValueError("Document text exceeds the current character limit; request again.")
-        await self.reserve(action, ctx)
         if action.kind == "create_doc":
-            result = await self.client.request(
-                "POST", "docs.googleapis.com", "/v1/documents", json={"title": payload["title"]}
-            )
-            file_id = result["documentId"]
-            await self.append_doc(file_id, payload["text"])
-            return f"Created https://docs.google.com/document/d/{file_id}/edit (sharing unchanged)."
+            return await self._create_output_doc(action, ctx, payload)
+        await self.reserve(action, ctx)
         result = await self.client.request(
             "POST",
             "sheets.googleapis.com",
@@ -461,6 +644,205 @@ class GoogleService:
             ],
         )
         return f"Created https://docs.google.com/spreadsheets/d/{file_id}/edit (sharing unchanged)."
+
+    async def _create_output_doc(self, action, ctx, payload):
+        """Create, journal, verify and optionally share a confirmed native Doc output."""
+        await self.repo.reserve_edit(
+            ctx.chat.key,
+            action.id,
+            ctx.user.ref.key,
+            0,
+            self.settings.suggestion_rows_per_day,
+            payload["revision"],
+            kind="create_doc",
+            source_id=None,
+            output_binding={
+                "owner_id": payload["owner"],
+                "owner_email": payload["owner_email"],
+                "thread_id": action.thread_id,
+                "mode": "create",
+            },
+        )
+        await self.repo.claim_destination_creation(
+            ctx.chat.key,
+            action.id,
+            kind="create_doc",
+            source_id=None,
+            revision=payload["revision"],
+        )
+        try:
+            result = await self.client.request(
+                "POST", "docs.googleapis.com", "/v1/documents", json={"title": payload["title"]}
+            )
+        except Exception as exc:
+            uncertain = write_outcome_uncertain(exc)
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain" if uncertain else "conflict",
+                failed_stage="destination",
+                error_category="remote_unknown" if uncertain else "refused",
+            )
+            return (
+                "Uncertain: Google may have created the Doc without returning its ID; "
+                "inspect Drive before retrying."
+                if uncertain
+                else "Google refused to create the Doc; no content was written."
+            )
+        destination_id = result.get("documentId") if isinstance(result, dict) else None
+        if not isinstance(destination_id, str) or not 1 <= len(destination_id) <= 200:
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain",
+                failed_stage="destination",
+                error_category="missing_id",
+            )
+            return (
+                "Uncertain: Google may have created the Doc without returning a valid ID; "
+                "inspect Drive."
+            )
+        safe_url = (
+            web_url(destination_id)
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id)
+            else None
+        )
+        result_record = await record_result(
+            self,
+            action,
+            ctx,
+            phase="destination_created",
+            destination_id=destination_id,
+        )
+        if isinstance(result_record, Exception):
+            location = f"{safe_url}" if safe_url else "the returned destination ID"
+            return (
+                f"Partial: Google created {location}, but its ID could not be durably journaled; "
+                "no content or sharing change was attempted. Inspect Drive before retrying."
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id):
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="partial",
+                destination_id=destination_id,
+                failed_stage="destination_validation",
+                error_category="invalid_remote_id",
+            )
+            return (
+                "Partial: Google returned a destination ID that cannot be opened safely; "
+                "inspect Drive."
+            )
+        url = web_url(destination_id)
+        try:
+            metadata = await self.client.metadata(destination_id)
+            self.check_metadata(destination_id, metadata)
+            if metadata.get("mimeType") != DOC:
+                raise ValueError("Google created an unexpected destination type.")
+        except Exception:
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="partial",
+                destination_id=destination_id,
+                failed_stage="destination_validation",
+                error_category="inaccessible_or_wrong_type",
+            )
+            return (
+                f"Partial: the Doc is at {url}; its destination could not be validated, "
+                "so no content was written."
+            )
+        applying = await record_result(
+            self,
+            action,
+            ctx,
+            phase="applying",
+            destination_id=destination_id,
+            failed_stage="content_attempt",
+        )
+        if isinstance(applying, Exception):
+            return (
+                f"Partial: the Doc is at {url}; the content attempt could not be durably recorded, "
+                "so no content was written."
+            )
+        append_error = None
+        try:
+            await self.append_doc(destination_id, payload["text"])
+        except Exception as exc:
+            append_error = exc
+        verification = await verify_doc_readback(
+            self.client,
+            destination_id,
+            payload["text"] + "\n",
+            max_chars=self.settings.max_chars + 1,
+            require_complete=True,
+        )
+        if not verification.verified:
+            _logger.info(
+                "Google Doc read-back verification failed category=%s attempts=%d",
+                verification.category,
+                verification.attempts,
+            )
+            uncertain = append_error is None or write_outcome_uncertain(append_error)
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="uncertain" if uncertain else "partial",
+                destination_id=destination_id,
+                failed_stage="content_verification",
+                error_category=verification.category,
+            )
+            return (
+                f"{'Uncertain' if uncertain else 'Partial'}: the Doc is at {url}; content "
+                f"verification failed ({verification.category}), so no link-access change "
+                "was attempted. Inspect before retrying."
+            )
+
+        access = payload_link_access(payload)
+        if access in {"viewer", "editor"}:
+            try:
+                shared, message = await publish_doc_link_access(
+                    self, action, ctx, payload, destination_id
+                )
+            except Exception:
+                await record_result(
+                    self,
+                    action,
+                    ctx,
+                    phase="uncertain",
+                    destination_id=destination_id,
+                    failed_stage="sharing_result",
+                    error_category="journal_or_preflight_failure",
+                )
+                return (
+                    f"Uncertain: the Doc is at {url}; its link-access result could not be "
+                    "safely finalized. Inspect access before retrying."
+                )
+            if not shared:
+                return message
+        finalized = await record_result(
+            self,
+            action,
+            ctx,
+            phase="verified",
+            destination_id=destination_id,
+        )
+        if isinstance(finalized, Exception):
+            return (
+                f"Uncertain: the Doc is at {url}; its content and link-viewer access were "
+                "read-back verified, but final journal completion failed. Inspect before retrying."
+            )
+        suffix = {
+            "private": "sharing unchanged",
+            "viewer": "anyone with the link can view",
+            "editor": "anyone with the link can edit",
+        }[access]
+        return f"Created and verified {url}; {suffix}."
 
     async def append_doc(self, file_id, text, tab_id=None):
         location = {"tabId": tab_id} if tab_id else {}

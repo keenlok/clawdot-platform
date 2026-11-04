@@ -26,6 +26,20 @@ async def test_edit_tools_are_gated_writes_in_google_workspace_skill(google_serv
     assert "google_edit_sheet" in plugin.skills()[0].tools
     assert tools["google_edit_doc"].parameters["additionalProperties"] is False
     assert tools["google_edit_sheet"].parameters["additionalProperties"] is False
+    assert tools["google_create_doc"].parameters["properties"]["link_viewer"]["type"] == "boolean"
+    assert tools["google_edit_doc"].parameters["properties"]["link_viewer"]["type"] == "boolean"
+    assert tools["google_create_doc"].parameters["properties"]["link_access"]["enum"] == [
+        "private",
+        "viewer",
+        "editor",
+    ]
+    assert tools["google_edit_doc"].parameters["properties"]["link_access"]["enum"] == [
+        "private",
+        "viewer",
+        "editor",
+    ]
+    assert "source_message_ref" in tools["google_edit_doc"].parameters["properties"]
+    assert "link_viewer" not in tools["google_edit_sheet"].parameters["properties"]
     assert len(GOOGLE_INSTRUCTIONS) <= 800
     gates = plugin.tool_gates()
     assert (await gates["google_edit_doc"].scope(GROUP, False)).state == GateState.AVAILABLE
