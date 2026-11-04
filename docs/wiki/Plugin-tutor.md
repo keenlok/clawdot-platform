@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Language tutor preferences
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/tutor/src/chatcore_tutor/EXPLAIN.md) · sha256:5c7a3d480d8b56f234d4eddc17a4de9ab05ba32694bd9874062771d535645b6c
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/tutor/src/chatcore_tutor/EXPLAIN.md) · sha256:1298f350300e6f43ffae038c627afe6997b03b5a43ea7e1845ededf4789b7905
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -26,6 +26,12 @@ complete verified learning record or a deterministic quiz score history merely b
 The tool reads the requester's own profile. Group/topic changes require the applicable native role
 checks; profile reads do not grant permission to change group settings. Auto-reply behavior depends
 on the app's addressing policy and explicit topic configuration, not a passing language mention.
+
+**Optional pronunciation.** When explicitly enabled and a supported voice is configured, the skill
+can send one requested Cantonese, Mandarin Chinese or Japanese voice clip through the current
+voice-capable platform. Generation is disabled by default. The target phrase is sent to ElevenLabs;
+caption pronunciation annotations stay local. Slow playback requires FFmpeg and runs only on
+explicit request. Live provider, account and listener qualification remains an activation gate.
 
 ## Limitations
 Grammar judgments, romanisation and translations are model-generated and can be incorrect.

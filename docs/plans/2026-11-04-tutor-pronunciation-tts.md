@@ -173,3 +173,14 @@ container codec/filter behavior, not linguistic quality. Live provider, native-l
 privacy/spending qualification remains pending before activation. Implementation is in review in
 [PR #13](https://github.com/keenlok/clawdot-platform/pull/13); private integration is
 [PR #10](https://github.com/keenlok/clawdot-deployments/pull/10).
+
+
+### Activation authorization and release preparation
+
+The owner requested “enable” after implementation review on 2026-11-04. This authorizes the
+reviewed release, downstream pin/configuration and deployment work, without another activation
+permission prompt. Credentials and selected voices must still be supplied and linguistic/account
+qualification remains unperformed. Prepare v0.3.0 through the existing CI-gated immutable-tag job;
+do not enable a nonfunctional tool or invent a released pin. The failed PR CI check was reproduced:
+the tutor's generated wiki page was stale. Regenerating the maintained page fixes the exact
+`generate_explainers.py --check` failure without changing runtime code.
