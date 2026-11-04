@@ -1,5 +1,7 @@
 """Optional Google owner identity and bounded data limits."""
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +23,7 @@ class GoogleSettings(BaseSettings):
     edit_unresolved_retention_days: int = Field(default=90, ge=90, le=3650)
     copy_qualified: bool = False
     new_docs_link_viewer: bool = False
+    new_docs_link_access: Literal["private", "viewer", "editor"] | None = None
     browser_enabled: bool = False
     browser_url: str = ""
     browser_token_file: str = ""

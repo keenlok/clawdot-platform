@@ -338,12 +338,15 @@ class GoogleClient:
             json={"type": "user", "role": "writer", "emailAddress": email},
         )
 
-    async def grant_link_viewer(self, file_id):
-        """Grant exactly non-discoverable anyone/reader access to a confirmed new Doc."""
+    async def grant_link_access(self, file_id, access):
+        """Grant a fixed non-discoverable anyone role to a confirmed new Doc."""
         from urllib.parse import quote
 
         if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
             raise GoogleError("A valid Google destination ID is required for sharing.")
+        roles = {"viewer": "reader", "editor": "writer"}
+        if access not in roles:
+            raise GoogleError("Choose viewer or editor for link access.")
         return await self.request(
             "POST",
             "www.googleapis.com",
@@ -353,8 +356,16 @@ class GoogleClient:
                 "sendNotificationEmail": "false",
                 "fields": "id,type,role,allowFileDiscovery",
             },
-            json={"type": "anyone", "role": "reader", "allowFileDiscovery": False},
+            json={"type": "anyone", "role": roles[access], "allowFileDiscovery": False},
         )
+
+    async def grant_link_viewer(self, file_id):
+        """Backward-compatible wrapper for a non-discoverable anyone/viewer grant."""
+        return await self.grant_link_access(file_id, "viewer")
+
+    async def grant_link_editor(self, file_id):
+        """Grant a non-discoverable anyone/editor grant to a confirmed new Doc."""
+        return await self.grant_link_access(file_id, "editor")
 
     async def list_permissions(self, file_id):
         """Read per-user role state for an action-created destination."""

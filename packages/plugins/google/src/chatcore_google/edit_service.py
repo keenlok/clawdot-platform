@@ -4,22 +4,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 
 from chatcore_google.client import GoogleError
 from chatcore_google.destinations import copy_or_import
+from chatcore_google.doc_verification import verify_doc_readback
 from chatcore_google.docx import docx_text
 from chatcore_google.edit_models import DOC, DOCX, SHEET, EditDestination, choose_destination
 from chatcore_google.edit_snapshot import (
     _occurrences,
     build_sheet_edit,
-    doc_style_for_range,
     find_doc_match,
     flatten_doc_snapshot,
     sheet_range_shape,
     validate_sheet_values,
 )
-from chatcore_google.link_sharing import publish_doc_link_viewer, record_result
+from chatcore_google.link_sharing import (
+    payload_link_access,
+    publish_doc_link_access,
+    record_result,
+    resolve_link_access,
+)
 from chatcore_google.refs import approved_ref
 from chatcore_google.service import select_tab
 
@@ -50,6 +56,19 @@ def _copy_title(name, requested):
             raise ValueError("Copy title must contain 1–200 characters.")
         return requested
     return str(name or "Google file")[:190].rstrip() + " — edited"
+
+
+def _access_summary(access, mode):
+    if mode == "original":
+        return "original file permissions stay unchanged."
+    return {
+        "private": "private; existing access settings are unchanged.",
+        "viewer": "anyone with the link can view; search discovery is off.",
+        "editor": "anyone with the link can edit; search discovery is off.",
+    }[access]
+
+
+_logger = logging.getLogger("chatcore_google")
 
 
 def _read_only(metadata):
@@ -134,6 +153,8 @@ class GoogleEditService:
         destination="auto",
         copy_title=None,
         link_viewer=None,
+        link_access=None,
+        source_message_ref=None,
     ):
         if not isinstance(find, str) or not find or "\n" in find or "\r" in find:
             raise ValueError("Find text must be nonempty and stay within one paragraph.")
@@ -141,29 +162,33 @@ class GoogleEditService:
             raise ValueError("Replacement text must stay within one paragraph.")
         if max(len(find), len(replacement)) > self.settings.max_cell_chars:
             raise ValueError("The Doc edit exceeds the configured character limit.")
-        ref, metadata, owner = await self._source(ctx, url, expected=DOC, allow_docx=True)
+        ref, metadata, owner, source_proof = await self.google.doc_source(
+            ctx,
+            url,
+            source_message_ref=source_message_ref,
+            write=True,
+        )
         if ref.doc_tab and tab_id and ref.doc_tab != tab_id:
             raise ValueError("The supplied Docs tab ID disagrees with the tab selected by the URL.")
         mime = metadata["mimeType"]
         chosen = self._destination(metadata, destination)
-        if link_viewer is not None and type(link_viewer) is not bool:
-            raise ValueError("Specify whether anyone with the link may view a new Doc copy.")
-        if chosen.mode == "original" and link_viewer is True:
+        explicit_access = link_access is not None or link_viewer is not None
+        selected_access = resolve_link_access(self.settings, link_access, link_viewer)
+        if chosen.mode == "original" and explicit_access and selected_access != "private":
             raise ValueError(
-                "Original Docs stay private; choose destination=copy for a separate output."
+                "Original Docs stay unchanged; choose destination=copy for link access."
             )
-        frozen_link_viewer = (
-            self.settings.new_docs_link_viewer
-            if link_viewer is None and chosen.mode != "original"
-            else bool(link_viewer)
-        )
+        frozen_access = selected_access if chosen.mode != "original" else "private"
         name = str(metadata.get("name", "Document"))[:300]
         title = _copy_title(name, copy_title) if chosen.mode != "original" else None
         source = {
             "file_id": ref.file_id,
             "mime": mime,
             "content_revision": metadata.get("headRevisionId"),
+            "url": url,
         }
+        if source_proof is not None:
+            source["authority"] = source_proof
         if mime == DOCX:
             if metadata.get("capabilities", {}).get("canDownload") is not True:
                 raise ValueError(
@@ -201,6 +226,7 @@ class GoogleEditService:
                 "coverage_complete": snapshot.complete,
             }
         _, revision = await self.repo.settings(ctx.chat.key)
+        await self.google.recheck_doc_source(ctx, ref.file_id, source_proof, write=True)
         payload = {
             "owner_email": self.settings.owner_email,
             "owner": owner,
@@ -210,8 +236,10 @@ class GoogleEditService:
             "precondition": precondition,
             "snapshot": {"text": before_text, "tab_title": tab_title},
             "edit": {"find": find, "replacement": replacement},
-            "link_viewer": frozen_link_viewer,
+            "link_access": frozen_access,
         }
+        if frozen_access != "editor":
+            payload["link_viewer"] = frozen_access == "viewer"
         where = (
             "the original file"
             if chosen.mode == "original"
@@ -219,13 +247,7 @@ class GoogleEditService:
         )
         summary = (
             f"Edit Google Doc: {name}\nSource: {url}\nDestination: {where}\n"
-            + (
-                "Access: anyone with the link can view (not discoverable).\n"
-                if frozen_link_viewer
-                else "Access: private; existing access settings are unchanged.\n"
-                if chosen.mode != "original"
-                else "Access: original file permissions stay unchanged.\n"
-            )
+            + f"Access: {_access_summary(frozen_access, chosen.mode)}\n"
             + f"Tab: {tab_title or 'Main body'}\n\n"
             f"Before: {find!r}\nAfter: {replacement!r}\n"
             "Scope: one exact main-body paragraph or table-cell match; "
@@ -450,15 +472,26 @@ class GoogleEditService:
         return snapshot, snapshot.before == before
 
     async def _reserve(self, action, ctx):
+        payload = action.payload
+        destination = payload.get("destination") or {}
+        output_binding = None
+        if action.kind == "edit_doc" and destination.get("mode") in {"copy", "docx_import"}:
+            output_binding = {
+                "owner_id": payload["owner"],
+                "owner_email": payload["owner_email"],
+                "thread_id": action.thread_id,
+                "mode": destination["mode"],
+            }
         await self.repo.reserve_edit(
             ctx.chat.key,
             action.id,
             ctx.user.ref.key,
             0,
             self.settings.suggestion_rows_per_day,
-            action.payload["revision"],
+            payload["revision"],
             kind=action.kind,
-            source_id=action.payload["source"]["file_id"],
+            source_id=payload["source"]["file_id"],
+            output_binding=output_binding,
         )
 
     async def reserve_confirmed_action(self, action, ctx):
@@ -630,23 +663,30 @@ class GoogleEditService:
             )
         return requests
 
-    def _doc_verified(self, snapshot, expected_text, match, replacement):
-        if snapshot.text != expected_text:
-            return False
-        if not replacement:
-            return True
-        end = match.start_index + len(replacement.encode("utf-16-le")) // 2
-        try:
-            style = doc_style_for_range(snapshot, match.start_index, end)
-        except ValueError:
-            return False
-        return style == match.uniform_style
+    async def _verify_doc_after_write(self, file_id, expected_text, match, replacement, tab_id):
+        result = await verify_doc_readback(
+            self.client,
+            file_id,
+            expected_text,
+            max_chars=self.settings.max_chars,
+            tab_id=tab_id,
+            match=match,
+            replacement=replacement,
+        )
+        if not result.verified:
+            _logger.info(
+                "Google Doc read-back verification failed category=%s attempts=%d",
+                result.category,
+                result.attempts,
+            )
+        return result
 
     async def _finish_doc_success(self, action, ctx, payload, destination_id):
         """Finalize verified edit content, sharing only an explicitly frozen new output."""
-        if payload.get("link_viewer") is True:
+        access = payload_link_access(payload)
+        if access in {"viewer", "editor"}:
             try:
-                shared, message = await publish_doc_link_viewer(
+                shared, message = await publish_doc_link_access(
                     self.google, action, ctx, payload, destination_id
                 )
             except Exception:
@@ -660,7 +700,7 @@ class GoogleEditService:
                     error_category="journal_or_preflight_failure",
                 )
                 return (
-                    f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; its link-viewer "
+                    f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; its link-access "
                     "sharing result could not be safely finalized. Inspect access before retrying."
                 )
             if not shared:
@@ -677,7 +717,11 @@ class GoogleEditService:
                 f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; content and access "
                 "were verified, but final journal completion failed. Inspect before retrying."
             )
-        suffix = "; anyone with the link can view" if payload.get("link_viewer") is True else ""
+        suffix = {
+            "private": "",
+            "viewer": "; anyone with the link can view",
+            "editor": "; anyone with the link can edit",
+        }[access]
         return f"Verified: {_web_url(destination_id, DOC)}{suffix}"
 
     async def _copy_doc_tab(self, payload, file_id):
@@ -710,9 +754,9 @@ class GoogleEditService:
         payload = await self._verify_pending(action, ctx)
         if action.kind not in {"edit_doc", "edit_sheet"}:
             raise ValueError("Unknown Google edit action.")
-        if action.kind == "edit_doc" and payload.get("link_viewer") is True:
+        if action.kind == "edit_doc" and payload_link_access(payload) != "private":
             if payload.get("destination", {}).get("mode") == "original":
-                raise ValueError("Original Docs stay private; request a separate copy.")
+                raise ValueError("Original Docs stay unchanged; request a separate copy.")
         confirmed_values = (
             self._confirmed_sheet_values(payload) if action.kind == "edit_sheet" else None
         )
@@ -742,6 +786,14 @@ class GoogleEditService:
                     action, ctx, "conflict", stage="precondition", category="content_changed"
                 )
                 return "Conflict: the selected cells or tab changed. Request a fresh preview."
+
+        if action.kind == "edit_doc":
+            await self.google.recheck_doc_source(
+                ctx,
+                payload["source"]["file_id"],
+                payload["source"].get("authority"),
+                write=True,
+            )
 
         await self._reserve(action, ctx)
         dest, source = payload["destination"], payload["source"]
@@ -872,20 +924,14 @@ class GoogleEditService:
                     target_snapshot.revision_id,
                 )
             except Exception as exc:
-                try:
-                    after = await self.client.document_for_edit(destination_id)
-                    after_snapshot = flatten_doc_snapshot(
-                        after,
-                        tab_id=tab_id,
-                        max_chars=self.settings.max_chars,
-                        file_id=destination_id,
-                    )
-                    verified = self._doc_verified(
-                        after_snapshot, expected, target_match, payload["edit"]["replacement"]
-                    )
-                except Exception:
-                    verified = False
-                if verified:
+                verification = await self._verify_doc_after_write(
+                    destination_id,
+                    expected,
+                    target_match,
+                    payload["edit"]["replacement"],
+                    tab_id,
+                )
+                if verification.verified:
                     return await self._finish_doc_success(action, ctx, payload, destination_id)
                 stale = "HTTP 400" in str(exc)
                 phase = (
@@ -900,42 +946,42 @@ class GoogleEditService:
                     ctx,
                     phase,
                     destination_id=destination_id,
-                    stage="doc_edit",
-                    category="stale_revision" if stale else "remote_unknown",
+                    stage="doc_edit" if stale else "verification",
+                    category="stale_revision" if stale else verification.category,
                 )
                 if stale and dest["mode"] != "original":
                     return (
                         f"Partial: the copy remains at {_web_url(destination_id, DOC)}; "
-                        "the edit was refused."
+                        "the edit was refused and no link-access change was attempted."
                     )
                 return (
                     "Conflict: the Doc revision changed before the edit. Request a fresh preview."
                     if stale
-                    else f"Uncertain: inspect {_web_url(destination_id, DOC)} before retrying."
+                    else f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; "
+                    f"the edit could not be verified ({verification.category}), so no "
+                    "link-access change was attempted. Inspect before retrying."
                 )
-            try:
-                after = await self.client.document_for_edit(destination_id)
-                after_snapshot = flatten_doc_snapshot(
-                    after,
-                    tab_id=tab_id,
-                    max_chars=self.settings.max_chars,
-                    file_id=destination_id,
-                )
-                verified = self._doc_verified(
-                    after_snapshot, expected, target_match, payload["edit"]["replacement"]
-                )
-            except Exception:
-                verified = False
-            if not verified:
+            verification = await self._verify_doc_after_write(
+                destination_id,
+                expected,
+                target_match,
+                payload["edit"]["replacement"],
+                tab_id,
+            )
+            if not verification.verified:
                 await self._phase(
                     action,
                     ctx,
                     "uncertain",
                     destination_id=destination_id,
                     stage="verification",
-                    category="readback_mismatch",
+                    category=verification.category,
                 )
-                return f"Uncertain: inspect {_web_url(destination_id, DOC)} before retrying."
+                return (
+                    f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; content "
+                    f"verification failed ({verification.category}), so no link-access change "
+                    "was attempted. Inspect before retrying."
+                )
             return await self._finish_doc_success(action, ctx, payload, destination_id)
 
         pre = payload["precondition"]

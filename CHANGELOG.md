@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-04
+
+### Added
+
+- Journaled native Google Doc outputs can be reused in their exact originating chat/topic after
+  current owner and permission checks; legacy, purged, ambiguous and mismatched outputs do not
+  confer authority. Bounded read-back verification gates both viewer and editor sharing.
+- Preview-frozen private/viewer/editor access choices for new Docs, with framework default private
+  and compatibility for the prior viewer boolean. Additive migration `0005_output_authority.sql`
+  stores the owner/chat/topic binding, including private outputs.
+
+### Fixed
+
+- Post-edit verification retries only bounded reads, keeps exact text and target-style checks,
+  and reports the failed stage without replaying mutations or claiming an unverified edit saved.
+- Native Doc edits accept a retained human source-message reference, while recorded output
+  authority survives confirmation cleanup and stays scoped to the original owner/chat/topic.
+
 ## [0.4.0] - 2026-11-04
 
 ### Added
@@ -94,7 +112,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/keenlok/clawdot-platform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/keenlok/clawdot-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/keenlok/clawdot-platform/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/keenlok/clawdot-platform/compare/v0.1.3...v0.2.0

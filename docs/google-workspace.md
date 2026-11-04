@@ -54,12 +54,14 @@ bot admins. Bot admins can write; `GOOGLE_WRITE_USER_IDS` can add explicit names
 This implements one owner OAuth account. Domain-wide service-account delegation and separate
 accounts per chat member are not implemented. New files belong to the owner. Native Doc creation
 and copy previews state whether the output will remain private or become a non-discoverable
-anyone-with-the-link viewer file. `GOOGLE_NEW_DOCS_LINK_VIEWER` defaults to `false`; an explicit
-tool choice is frozen into the confirmation, so a later default change does not alter a pending
-write. Sharing runs only after content read-back and the result journal records the destination
-and partial or uncertain outcomes. Posting a private created URL does not grant access. The owner's
-Google permissions apply to file access: a human-posted link in an enabled allowed chat can
-request a read of a file accessible to that account.
+anyone-with-the-link viewer or editor file. `GOOGLE_NEW_DOCS_LINK_ACCESS` selects the framework
+default (`private`, `viewer`, or `editor`; private by default). The legacy
+`GOOGLE_NEW_DOCS_LINK_VIEWER` setting remains supported. An explicit tool choice is frozen into
+the confirmation, so a later default change does not alter a pending write. Sharing runs only
+after content read-back and the result journal records the destination and partial or uncertain
+outcomes. Posting a private created URL does not grant access. The owner's Google permissions
+apply to external file access: a human-posted link in an enabled allowed chat can request a read
+of a file accessible to that account.
 
 New authorization requests include `drive.readonly` for Drive-hosted DOCX content, alongside
 Docs, Sheets, `drive.file` and `drive.metadata.readonly`. This grants broad read/download access
@@ -92,9 +94,13 @@ An arbitrary URL in ambient history, search/research results or document content
 not authorize access: the actual human source message must be verified. This does not change
 write authority: current-human-link checks, confirmed saved-trip authority, writer permissions
 and requester confirmation still apply to the operations that require them. A historical read
-does not add that link to the turn's write authority. A newly created file
-needs its link posted by a human before reuse. Google links are matched by validated file ID,
-so normal Docs/Sheets/Drive URL variants for the same posted file work.
+  does not add that link to the turn's write authority. A retained, journaled native Doc output is
+  a separate continuation case: it can be read or edited only in its exact originating chat/topic,
+  with a complete owner binding and current owner/access checks. Missing, purged, legacy-unbound,
+  ambiguous or mismatched records deny that authority; the system does not infer a binding from bot
+  text or backfill old records. `google_edit_doc` accepts `source_message_ref` to identify the human
+  post for an external source. Google links are matched by validated file ID, so normal Docs/Sheets/
+  Drive URL variants for the same posted file work.
 
 `read_chat_history` search results carry excerpt/continuation metadata. For a clipped stored
 message, call it with `message_id` and `offset=next_offset`, omitting search filters; bot messages
@@ -127,8 +133,11 @@ cell text and imported/researched material remain untrusted. Creation/appends re
 formula-prefix neutralization. Content edits write the exact previewed literal with typed
 `stringValue`, without adding an apostrophe. Commits re-check current chat access, writer permissions,
 opt-out revision, owner identity and target tabs. The plugin has no arbitrary batch-update,
-file search, deletion or booking tool. Its only general sharing path is a fixed link-viewer grant
-on a confirmed new native Doc output; it never grants writer access or changes source permissions.
+file search, deletion or booking tool. Sharing is limited to a confirmed new native Doc output:
+private, anyone/reader, or anyone/writer, always with `allowFileDiscovery=false`. It never changes
+source permissions. Any requested grant follows content verification; read-back is bounded and
+does not retry a mutation. Partial or uncertain outcomes retain a known safe destination URL when
+available.
 
 Remote mutations are reserved durably before the first write. A timeout or process failure
 can leave a created file or a completed append with an uncertain result. Inspect the owner's
@@ -180,22 +189,25 @@ The imported first-tab mapping is stated in the preview. If conversion changes t
 match, the unedited copy is retained and reported as partial. Native copies explicitly target
 the owner's My Drive root and do not reproduce source-folder sharing. Requests use
 `ignoreDefaultVisibility=true`; organization policy can still affect effective visibility.
-API edit copies remain private unless the preview explicitly freezes link-viewer access. The
-original source and its ACL never change, and an explicit request to share an original is refused.
-The grant is exactly anyone/reader with `allowFileDiscovery=false`; existing ACLs are preserved,
-and broader existing public access is refused without rewriting it. Google account or domain
-policy can refuse the grant, which is reported with the known destination URL.
+API edit copies remain private unless the preview explicitly freezes viewer or editor link access.
+The original source and its ACL never change, and an explicit request to share an original is
+refused. Viewer is exactly anyone/reader and editor is anyone/writer, both with
+`allowFileDiscovery=false`; existing ACLs are preserved, and an unexpected broader public ACL is
+refused without rewriting it. Google account or domain policy can refuse the grant, which is
+reported with the known destination URL.
 
 The preview freezes the owner, source, destination mode/title, tab/range and exact changes.
 Confirmation rechecks writer/chat/requester/topic binding, opt-out revision and content-specific
 preconditions. Drive `version` is not a blanket conflict condition: harmless metadata changes
 do not substitute for content checks. A created copy does not replace or attach a trip itinerary.
-Action-bound internal reads of the new destination do not grant general link authority;
-later unrelated edits still need a human-posted link.
+The journaled output binding permits continuation in the same chat/topic while retained; it does
+not authorize other chats/topics or unrelated browser/Sheet actions.
 
 Google migration `0003_edit_results.sql` adds a result row tied to the durable action reservation;
-additive `0004_create_doc_results.sql` also journals new link-viewer Doc creation with a null
-source ID while preserving required source IDs for every existing edit kind.
+`0004_create_doc_results.sql` journals newly created Docs, and additive
+`0005_output_authority.sql` binds native output provenance to owner identity, exact chat/topic and
+creation/edit mode. Existing result kinds continue to require source IDs. Private creation is also
+journaled so only retained, proven outputs can be reused.
 Reservation and initial result are transactional; an action cannot execute twice while retained.
 Known destination IDs are stored immediately. Outcomes distinguish verified coverage, conflict
 requiring a fresh preview, partial copies and uncertain application. Uncertain creation can have

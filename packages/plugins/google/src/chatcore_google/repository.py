@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -117,7 +118,17 @@ class GoogleRepository:
                 self._actions[key] = (now, rows, requester)
 
     async def reserve_edit(
-        self, chat, action_id, requester, rows, daily_limit, revision, *, kind, source_id
+        self,
+        chat,
+        action_id,
+        requester,
+        rows,
+        daily_limit,
+        revision,
+        *,
+        kind,
+        source_id,
+        output_binding=None,
     ):
         """Atomically reserve replay protection and the edit result journal."""
         if kind not in {"edit_doc", "edit_sheet", "browser_edit_doc", "create_doc"}:
@@ -127,6 +138,29 @@ class GoogleRepository:
                 raise ValueError("A new Doc reservation cannot have a source ID.")
         elif not isinstance(source_id, str) or not 1 <= len(source_id) <= 200:
             raise ValueError("A valid Google source ID is required.")
+        if output_binding is not None:
+            if not isinstance(output_binding, dict):
+                raise ValueError("Output authority binding is invalid.")
+            owner_id = output_binding.get("owner_id")
+            owner_email = output_binding.get("owner_email")
+            thread_id = output_binding.get("thread_id")
+            output_mode = output_binding.get("mode")
+            valid_common = (
+                isinstance(owner_id, str)
+                and 1 <= len(owner_id) <= 200
+                and isinstance(owner_email, str)
+                and 1 <= len(owner_email) <= 320
+                and (thread_id is None or isinstance(thread_id, str))
+            )
+            valid_mode = (
+                kind == "create_doc" and source_id is None and output_mode == "create"
+            ) or (
+                kind == "edit_doc"
+                and source_id is not None
+                and output_mode in {"copy", "docx_import"}
+            )
+            if not valid_common or not valid_mode:
+                raise ValueError("Output authority binding does not match this new Doc action.")
         now = datetime.now(UTC)
         if self.db is not None:
             async with self.db.transaction() as tx:
@@ -166,12 +200,17 @@ class GoogleRepository:
                     now,
                 )
                 await tx.execute(
-                    "INSERT INTO google_edit_results(chat_key,action_id,kind,phase,source_id) "
-                    "VALUES($1,$2,$3,'reserved',$4)",
+                    "INSERT INTO google_edit_results(chat_key,action_id,kind,phase,source_id,"
+                    "output_owner_id,output_owner_email,output_thread_id,output_mode) "
+                    "VALUES($1,$2,$3,'reserved',$4,$5,$6,$7,$8)",
                     chat,
                     action_id,
                     kind,
                     source_id,
+                    output_binding.get("owner_id") if output_binding else None,
+                    output_binding.get("owner_email") if output_binding else None,
+                    output_binding.get("thread_id") if output_binding else None,
+                    output_binding.get("mode") if output_binding else None,
                 )
             return
         async with self._lock:
@@ -199,6 +238,10 @@ class GoogleRepository:
                 "source_id": source_id,
                 "destination_id": None,
                 "destination_creation_claimed": False,
+                "output_owner_id": output_binding.get("owner_id") if output_binding else None,
+                "output_owner_email": output_binding.get("owner_email") if output_binding else None,
+                "output_thread_id": output_binding.get("thread_id") if output_binding else None,
+                "output_mode": output_binding.get("mode") if output_binding else None,
                 "failed_stage": None,
                 "error_category": None,
                 "created_at": now,
@@ -256,7 +299,8 @@ class GoogleRepository:
         if self.db is not None:
             row = await self.db.fetchrow(
                 "SELECT chat_key,action_id,kind,phase,source_id,destination_id,failed_stage,"
-                "destination_creation_claimed,error_category,created_at,updated_at "
+                "destination_creation_claimed,error_category,created_at,updated_at,"
+                "output_owner_id,output_owner_email,output_thread_id,output_mode "
                 "FROM google_edit_results "
                 "WHERE chat_key=$1 AND action_id=$2",
                 chat,
@@ -265,6 +309,54 @@ class GoogleRepository:
             return dict(row) if row else None
         result = self._edit_results.get((chat, action_id))
         return dict(result) if result else None
+
+    async def output_destination(self, chat, thread_id, destination_id):
+        """Find one retained, exact-topic binding for a known newly-created Doc destination."""
+        if (
+            not isinstance(destination_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id)
+            or (thread_id is not None and not isinstance(thread_id, str))
+        ):
+            return None
+        if self.db is not None:
+            rows = await self.db.fetch(
+                "SELECT e.chat_key,e.action_id,e.kind,e.phase,e.source_id,e.destination_id,"
+                "e.output_owner_id,e.output_owner_email,e.output_thread_id,e.output_mode "
+                "FROM google_edit_results e WHERE e.chat_key=$1 "
+                "AND e.output_thread_id IS NOT DISTINCT FROM $2 AND e.destination_id=$3 "
+                "AND e.phase IN ('destination_created','applying','shared','verified','partial',"
+                "'uncertain') AND e.output_owner_id IS NOT NULL "
+                "AND e.output_owner_email IS NOT NULL AND e.output_mode IS NOT NULL "
+                "AND ((e.kind='create_doc' AND e.source_id IS NULL AND e.output_mode='create') "
+                "OR (e.kind='edit_doc' AND e.source_id IS NOT NULL "
+                "AND e.source_id<>e.destination_id AND e.output_mode IN ('copy','docx_import'))) "
+                "LIMIT 2",
+                chat,
+                thread_id,
+                destination_id,
+            )
+            return dict(rows[0]) if len(rows) == 1 else None
+        rows = [
+            result
+            for (scope, _), result in self._edit_results.items()
+            if scope == chat
+            and result.get("output_thread_id") == thread_id
+            and result.get("destination_id") == destination_id
+            and result.get("phase")
+            in {"destination_created", "applying", "shared", "verified", "partial", "uncertain"}
+            and result.get("output_owner_id")
+            and result.get("output_owner_email")
+            and (
+                result.get("kind") == "create_doc"
+                and result.get("source_id") is None
+                and result.get("output_mode") == "create"
+                or result.get("kind") == "edit_doc"
+                and result.get("source_id")
+                and result.get("source_id") != destination_id
+                and result.get("output_mode") in {"copy", "docx_import"}
+            )
+        ]
+        return dict(rows[0]) if len(rows) == 1 else None
 
     async def browser_edit_results(self, chat, requester=None):
         """List browser-edit results scoped to a chat and, optionally, requester key."""
