@@ -197,3 +197,5 @@ read-only/network-disabled console smoke passed. All 34 Google code/SQL/explaine
 in the candidate wheel match the reviewed source. No extra Google file or permission mutation
 was used for qualification. Released tag identity, final downstream app checks and actual
 health-gated deployment evidence will be recorded on the implementation/delivery PRs.
+
+Implementation and release: [PR #16](https://github.com/keenlok/clawdot-platform/pull/16).

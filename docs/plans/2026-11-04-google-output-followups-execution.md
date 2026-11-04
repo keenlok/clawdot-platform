@@ -205,3 +205,5 @@ CREATE INDEX google_output_destination_idx
   Inspect existing output only read-only if needed; do not create Google fixtures or change ACLs.
 - [ ] Record actual test/CI/tag/runtime evidence on PRs. Update plan status in the implementation
   PR before release and attach final installed receipt without another docs-only deployment.
+
+Implementation and release: [PR #16](https://github.com/keenlok/clawdot-platform/pull/16).
