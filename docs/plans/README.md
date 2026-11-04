@@ -1,5 +1,9 @@
 # Plans index
 
+| Plan | Status | Notes |
+| --- | --- | --- |
+| [New output Doc link viewers](2026-11-04-google-output-link-viewers.md) | Planned | Explicit confirmed link-viewer sharing for new output Docs; source, Sheet and browser policies unchanged |
+
 Every plan, design and review record in the repository, with its current status. The
 architecture spec is [`ARCHITECTURE.md`](../../ARCHITECTURE.md); the rules for changing the repo are
 in [`AGENTS.md`](../../AGENTS.md). **A PR that adds a plan or changes what a plan has delivered
