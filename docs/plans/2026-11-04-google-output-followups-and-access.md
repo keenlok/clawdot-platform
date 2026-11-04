@@ -1,6 +1,7 @@
 # Google output continuation, verification and access levels
 
-Status: Proposed design; implementation awaits owner review and the default-access choice.
+Status: Approved design, implementation in progress. The owner approved viewer by default
+and editor when explicitly requested on 2026-11-04. Existing files remain unchanged.
 
 ## Goal and observed evidence
 
@@ -116,7 +117,7 @@ permission change. Original-document edits never change ACLs. An explicit sharin
 for an original requests a separate-copy preview instead. Existing manual editor grants,
 source files, Sheets and browser trials keep their policies.
 
-### Default-access alternatives (owner choice)
+### Default-access decision (approved)
 
 1. Recommended: retain link-viewer by default; grant link-editor when explicitly requested.
    This preserves today's default and supports collaborative copies on request.
@@ -124,7 +125,7 @@ source files, Sheets and browser trials keep their policies.
    can modify the file; every new-output preview discloses that choice. Private/viewer choices
    remain available. This applies only to future outputs, not existing files or old previews.
 
-Both alternatives include the two fixes and the three per-document access choices. Keep the
+The owner selected option 1. Both alternatives include the two fixes and the three per-document access choices. Keep the
 current manually edited output and its ACL intact. No email recipients or notifications are added.
 
 ## Validation and delivery
@@ -150,7 +151,8 @@ the PR even if no gates.py or permissions.py edit is required. No new third-part
 Execute in the existing isolated worktree, with a new branch from current public main.
 Claude CLI is installed but its fresh authentication probe reports loggedIn=false; use the
 AGENTS.md unavailable-model fallback: Codex plans, Luna executes, Sol independently reviews.
-The owner reviews this design before implementation. A detailed execution plan follows approval.
+The owner approved this design and option 1 before implementation. The linked execution plan
+records the detailed implementation and review checkpoints.
 
 Run locked sync, whole-tree lint, changed-file formatting, full non-browser/non-sandbox tests
 with disposable Postgres, Gitleaks, scaffold/container and installed-wheel checks. Release a
