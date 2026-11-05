@@ -155,6 +155,7 @@ class GoogleEditService:
         link_viewer=None,
         link_access=None,
         source_message_ref=None,
+        _trip_source=None,
     ):
         if not isinstance(find, str) or not find or "\n" in find or "\r" in find:
             raise ValueError("Find text must be nonempty and stay within one paragraph.")
@@ -162,16 +163,38 @@ class GoogleEditService:
             raise ValueError("Replacement text must stay within one paragraph.")
         if max(len(find), len(replacement)) > self.settings.max_cell_chars:
             raise ValueError("The Doc edit exceeds the configured character limit.")
-        ref, metadata, owner, source_proof = await self.google.doc_source(
-            ctx,
-            url,
-            source_message_ref=source_message_ref,
-            write=True,
-        )
+        target_proof = None
+        if _trip_source is None:
+            trip_files = getattr(self.google, "trip_files", None)
+            if trip_files is not None:
+                target_proof = await trip_files.guard_doc_target(ctx, url)
+            ref, metadata, owner, source_proof = await self.google.doc_source(
+                ctx,
+                url,
+                source_message_ref=source_message_ref,
+                write=True,
+            )
+        else:
+            _, row, ref, metadata, owner = await self.google.trip_files.verify_edit_source(
+                ctx, _trip_source
+            )
+            url = row["url"]
+            source_proof = {"kind": "trip_file", "trip_id": _trip_source["trip_id"]}
         if ref.doc_tab and tab_id and ref.doc_tab != tab_id:
             raise ValueError("The supplied Docs tab ID disagrees with the tab selected by the URL.")
         mime = metadata["mimeType"]
         chosen = self._destination(metadata, destination)
+        if _trip_source is not None and _trip_source.get("make_current") is None:
+            _trip_source = dict(
+                _trip_source,
+                make_current=destination == "auto" and chosen.mode != "original",
+            )
+        if (
+            _trip_source is not None
+            and _trip_source.get("make_current")
+            and chosen.mode == "original"
+        ):
+            raise ValueError("make_current applies only when the edit creates a separate copy.")
         explicit_access = link_access is not None or link_viewer is not None
         selected_access = resolve_link_access(self.settings, link_access, link_viewer)
         if chosen.mode == "original" and explicit_access and selected_access != "private":
@@ -226,7 +249,10 @@ class GoogleEditService:
                 "coverage_complete": snapshot.complete,
             }
         _, revision = await self.repo.settings(ctx.chat.key)
-        await self.google.recheck_doc_source(ctx, ref.file_id, source_proof, write=True)
+        if _trip_source is None:
+            await self.google.recheck_doc_source(ctx, ref.file_id, source_proof, write=True)
+        else:
+            await self.google.trip_files.verify_edit_source(ctx, _trip_source)
         payload = {
             "owner_email": self.settings.owner_email,
             "owner": owner,
@@ -238,6 +264,10 @@ class GoogleEditService:
             "edit": {"find": find, "replacement": replacement},
             "link_access": frozen_access,
         }
+        if _trip_source is not None:
+            payload["trip_source"] = _trip_source
+        if target_proof is not None:
+            payload["trip_target"] = target_proof
         if frozen_access != "editor":
             payload["link_viewer"] = frozen_access == "viewer"
         where = (
@@ -253,7 +283,38 @@ class GoogleEditService:
             "Scope: one exact main-body paragraph or table-cell match; "
             "headers and footers are excluded."
         )
+        if _trip_source is not None:
+            summary += f"\nTrip: {_trip_source['trip_name']}\n"
+            if chosen.mode == "original":
+                summary += "Current itinerary: edit this saved primary in place."
+            elif _trip_source.get("make_current"):
+                summary += "Current itinerary: advance to this copy only after verified edit."
+            else:
+                summary += "Current itinerary: remains the saved source; this copy is standalone."
         return await self.google.action(ctx, "edit_doc", payload, summary)
+
+    async def propose_trip_doc(
+        self,
+        ctx,
+        proof,
+        find,
+        replacement,
+        *,
+        destination="auto",
+        copy_title=None,
+        link_access=None,
+    ):
+        _, row, _, _, _ = await self.google.trip_files.verify_edit_source(ctx, proof)
+        return await self.propose_doc(
+            ctx,
+            row["url"],
+            find,
+            replacement,
+            destination=destination,
+            copy_title=copy_title,
+            link_access=link_access,
+            _trip_source=proof,
+        )
 
     async def propose_sheet(
         self, ctx, url, tab, cell_range, values, destination="auto", copy_title=None
@@ -681,11 +742,13 @@ class GoogleEditService:
             )
         return result
 
-    async def _finish_doc_success(self, action, ctx, payload, destination_id):
+    async def _finish_doc_success(self, action, ctx, payload, destination_id, tab_id=None):
         """Finalize verified edit content, sharing only an explicitly frozen new output."""
         access = payload_link_access(payload)
         if access in {"viewer", "editor"}:
             try:
+                if payload.get("trip_source"):
+                    await self.google.trip_files.verify_edit_source(ctx, payload["trip_source"])
                 shared, message = await publish_doc_link_access(
                     self.google, action, ctx, payload, destination_id
                 )
@@ -717,6 +780,33 @@ class GoogleEditService:
                 f"Uncertain: the Doc is at {_web_url(destination_id, DOC)}; content and access "
                 "were verified, but final journal completion failed. Inspect before retrying."
             )
+        trip_source = payload.get("trip_source")
+        if trip_source and trip_source.get("make_current"):
+            try:
+                await self.google.trip_files.verify_edit_source(ctx, trip_source)
+                data = {
+                    "url": _web_url(destination_id, DOC) + (f"?tab={tab_id}" if tab_id else ""),
+                    "name": payload["destination"]["title"],
+                    "mime": DOC,
+                    "role": "itinerary",
+                    "owner": trip_source["row"]["owner"],
+                    "requester": ctx.user.ref.key,
+                }
+                await self.repo.apply_file(
+                    trip_source["chat_key"],
+                    trip_source["trip_id"],
+                    destination_id,
+                    data,
+                    trip_source["expected"],
+                    revision=trip_source["group_revision"],
+                )
+            except Exception:
+                return (
+                    f"Verified edit: {_web_url(destination_id, DOC)}. "
+                    "The document edit succeeded, but the trip's current itinerary "
+                    "association could not be verified or advanced; inspect trip files "
+                    "before requesting another change."
+                )
         suffix = {
             "private": "",
             "viewer": "; anyone with the link can view",
@@ -760,7 +850,13 @@ class GoogleEditService:
         confirmed_values = (
             self._confirmed_sheet_values(payload) if action.kind == "edit_sheet" else None
         )
+        if payload.get("trip_source"):
+            await self.google.trip_files.verify_edit_source(ctx, payload["trip_source"])
+        elif payload.get("trip_target") and getattr(self.google, "trip_files", None):
+            await self.google.trip_files.verify_doc_target(ctx, payload["trip_target"])
         await self._current_source(payload)
+        if payload.get("trip_source"):
+            await self.google.trip_files.verify_edit_source(ctx, payload["trip_source"])
         docx_bytes = (
             await self._source_bytes(payload) if payload["source"]["mime"] == DOCX else None
         )
@@ -788,17 +884,26 @@ class GoogleEditService:
                 return "Conflict: the selected cells or tab changed. Request a fresh preview."
 
         if action.kind == "edit_doc":
-            await self.google.recheck_doc_source(
-                ctx,
-                payload["source"]["file_id"],
-                payload["source"].get("authority"),
-                write=True,
-            )
+            if payload.get("trip_source"):
+                await self.google.trip_files.verify_edit_source(ctx, payload["trip_source"])
+            else:
+                await self.google.recheck_doc_source(
+                    ctx,
+                    payload["source"]["file_id"],
+                    payload["source"].get("authority"),
+                    write=True,
+                )
+                if payload.get("trip_target") and getattr(self.google, "trip_files", None):
+                    await self.google.trip_files.verify_doc_target(ctx, payload["trip_target"])
 
         await self._reserve(action, ctx)
         dest, source = payload["destination"], payload["source"]
         destination_id = source["file_id"] if dest["mode"] == "original" else None
         if dest["mode"] != "original":
+            if payload.get("trip_source"):
+                await self.google.trip_files.verify_edit_source(ctx, payload["trip_source"])
+            elif payload.get("trip_target") and getattr(self.google, "trip_files", None):
+                await self.google.trip_files.verify_doc_target(ctx, payload["trip_target"])
             try:
                 created = await self._create_destination(payload, source_bytes=docx_bytes)
             except Exception as exc:
@@ -918,6 +1023,10 @@ class GoogleEditService:
                 payload["edit"]["find"], payload["edit"]["replacement"], 1
             )
             try:
+                if payload.get("trip_source"):
+                    await self.google.trip_files.verify_edit_source(ctx, payload["trip_source"])
+                elif payload.get("trip_target") and getattr(self.google, "trip_files", None):
+                    await self.google.trip_files.verify_doc_target(ctx, payload["trip_target"])
                 await self.client.edit_document(
                     destination_id,
                     self._doc_requests(pre, payload["edit"], tab_id),
@@ -932,7 +1041,9 @@ class GoogleEditService:
                     tab_id,
                 )
                 if verification.verified:
-                    return await self._finish_doc_success(action, ctx, payload, destination_id)
+                    return await self._finish_doc_success(
+                        action, ctx, payload, destination_id, target_snapshot.tab_id
+                    )
                 stale = "HTTP 400" in str(exc)
                 phase = (
                     "partial"
@@ -982,7 +1093,9 @@ class GoogleEditService:
                     f"verification failed ({verification.category}), so no link-access change "
                     "was attempted. Inspect before retrying."
                 )
-            return await self._finish_doc_success(action, ctx, payload, destination_id)
+            return await self._finish_doc_success(
+                action, ctx, payload, destination_id, target_snapshot.tab_id
+            )
 
         pre = payload["precondition"]
         if dest["mode"] == "original":

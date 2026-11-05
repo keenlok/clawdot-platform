@@ -134,6 +134,34 @@ async def test_concurrent_cas_has_one_winner_and_stale_removal_does_not_change_r
     assert await repo.trip_files("fake:a", "trip-a") == rows
 
 
+async def test_make_current_cas_preserves_a_concurrent_primary_selection(trip_file_db):
+    await migrate(trip_file_db)
+    repo = GoogleRepository(trip_file_db)
+    await put(repo, "original", role="itinerary", mime="application/vnd.google-apps.document")
+    preview_rows = await repo.trip_files("fake:a", "trip-a")
+    frozen = repo.file_state(preview_rows)
+    # A separate confirmed selection wins while the Google edit is running.
+    await put(repo, "newer-choice", role="itinerary", mime="application/vnd.google-apps.document")
+    with pytest.raises(ValueError, match="changed"):
+        await repo.apply_file(
+            "fake:a",
+            "trip-a",
+            "verified-copy",
+            data(
+                "verified-copy",
+                role="itinerary",
+                mime="application/vnd.google-apps.document",
+            ),
+            frozen,
+        )
+    rows = await repo.trip_files("fake:a", "trip-a")
+    assert {row["file_id"]: row["role"] for row in rows} == {
+        "original": "reference",
+        "newer-choice": "itinerary",
+    }
+    assert await repo.trip_file("fake:a", "verified-copy") is None
+
+
 async def test_legacy_link_insert_failure_rolls_back_primary_demotion_and_new_association(
     trip_file_db,
 ):

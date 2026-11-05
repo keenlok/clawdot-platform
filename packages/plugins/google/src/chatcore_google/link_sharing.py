@@ -214,6 +214,8 @@ async def publish_doc_link_access(google, action, ctx, payload, destination_id):
         )
     if not existing:
         try:
+            if payload.get("trip_source") and getattr(google, "trip_files", None):
+                await google.trip_files.verify_edit_source(ctx, payload["trip_source"])
             if access == "viewer":
                 await client.grant_link_viewer(destination_id)
             else:

@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Google files and bounded edits
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:666c19b1ea5978dae29f49008f6ccf859c7f5d091927b98295e5dadcdff104b2
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:57159163f45206cc7a86b2c024f11423a1e48695438b41ef54cc935531c8f425
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -26,6 +26,15 @@ freezes that choice. The framework default is private; an explicit tool choice o
 that action. Original Docs retain their permissions; Sheets and browser trials use their existing
 policies.
 
+When the trip resolver is wired, `trip_edit_doc(trip, find, replacement)` resolves only the saved
+primary itinerary and accepts no source URL. Native Docs are edited in place after requester
+confirmation. Auto conversion/fallback copies become primary only after verified read-back; an
+explicit `destination=copy` stays standalone unless `make_current=true`. The preview freezes and
+names the association decision. `trip_attach_file` may use `source_message_ref` to identify a
+retained human message containing the selected file link. Generic Doc edits block an implicitly
+selected saved reference when another primary exists; an older file can be edited when the current
+request itself names it. Historical source-message provenance alone never bypasses this check.
+
 ## Storage
 Original file contents and saved changes live in Google services, not chat memory. The plugin stores
 trip-file associations and edit-result journal records in its configured repository. Frozen action
@@ -41,6 +50,12 @@ applies only to a new Doc output: viewer uses anyone/reader and editor uses anyo
 with search discovery disabled. Existing source permissions stay unchanged. Browser copy access is
 separately disclosed and constrained. File contents are untrusted data and cannot authorize a
 different write.
+
+Saved-primary edit proofs bind the trip, exact association version, requester settings, configured
+owner and file identity. They are rechecked before content reads and mutations. A confirmed copy
+becomes current only after verified edit; trip association advancement uses compare-and-swap, so a
+concurrent selection is retained. If the Google edit verifies but association completion cannot be
+confirmed, inspect trip files before retrying.
 
 ## Limitations
 Supported edits are bounded operations, not arbitrary document redesign. Google import/conversion

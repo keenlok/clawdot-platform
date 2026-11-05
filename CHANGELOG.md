@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `trip_edit_doc` resolves a named trip's saved primary Doc, edits native Docs in place, and freezes
+  current-itinerary advancement for verified conversion/fallback copies or explicitly selected copies.
+  Generic edits block implicit writes to saved historical trip references. Confirmed Doc attachments
+  can cite a retained human source message.
+
 ## [0.5.1] - 2026-11-05
 
 ### Fixed
