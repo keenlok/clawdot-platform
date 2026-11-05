@@ -1,6 +1,6 @@
 # Current trip itinerary execution checklist
 
-Status: Planned; executing the owner-approved [design](2026-11-05-current-trip-itinerary.md).
+Status: Implemented and reviewed in [PR #17](https://github.com/keenlok/clawdot-platform/pull/17); release and downstream installed receipts are recorded on that PR. The owner-approved [design](2026-11-05-current-trip-itinerary.md) defines the scope.
 
 Goal: resolve implicit trip updates to the saved current document, edit it in
 place when supported, and advance to a copy only under explicit confirmation.
@@ -21,24 +21,24 @@ place when supported, and advance to a copy only under explicit confirmation.
 - [x] Trace the reported request through stored user turns, tool arguments,
   pending preview and output journal using read-only database transactions.
 - [x] Write, index and obtain owner approval of the design and same-Doc default.
-- [ ] Record the focused prechange baseline and demonstrate a failing regression
+- [x] Record the focused prechange baseline and demonstrate a failing regression
   for the missing `trip_edit_doc` tool and saved-primary follow-up behavior.
-- [ ] Implement saved-primary resolution, internal proof freezing/revalidation,
+- [x] Implement saved-primary resolution, internal proof freezing/revalidation,
   historical attachment references, explicit copy advancement and stale-target
   protection in the Google plugin. Keep mutations bounded and confirmed.
-- [ ] Prove that a previously edited native primary is updated without a create,
+- [x] Prove that a previously edited native primary is updated without a create,
   copy or DOCX-download call. Preserve its earlier edit and selected Docs tab.
-- [ ] Exercise memory and isolated PostgreSQL cases for version conflict,
+- [x] Exercise memory and isolated PostgreSQL cases for version conflict,
   identity/scope/settings revocation, failure and duplicate completion. A Google
   edit that already succeeded must be reported separately from association failure.
-- [ ] Update downstream composite routing and request/catalog fixtures so an
+- [x] Update downstream composite routing and request/catalog fixtures so an
   implicit trip request uses saved files, and a missing primary produces selection
   rather than a stale source edit. Keep unrelated app settings unchanged.
-- [ ] Run Sol review and resolve all material findings with reproducing tests.
+- [x] Run Sol review and resolve all material findings with reproducing tests.
 - [ ] Run locked sync, lint, changed-file format and repository full non-browser,
   non-sandbox-integration suites, with disposable local Postgres. Record baseline
   skips/warnings/unchanged format exceptions explicitly.
-- [ ] Update operator/explainer/generated documentation, architecture decision,
+- [x] Update operator/explainer/generated documentation, architecture decision,
   changelog and plan status/index. Verify package boundaries and skill ownership.
 - [ ] Build anonymous source installs, bot and renderer images, run installed
   wheel/scaffold smoke checks, and compare reviewed packaged Google resources.
@@ -84,3 +84,15 @@ uv run pytest -q -m "not browser and not sandbox_integration"
 
 Never print runtime environment values, access tokens, database DSNs or decrypted
 secrets while collecting receipts. No new source key is passed to builds.
+
+## Review evidence
+
+Luna executed the runtime and app changes; Sol reviewed them independently. The
+final review passed 454 Google/Postgres, package-boundary, plan, catalog, router
+and agent-snapshot checks. The packaged downstream candidate passed 434 tests
+with 23 skips, one deselection and six subtests. All 26 prior migration hashes
+are unchanged. Installed scaffold and container smoke checks passed; changed
+files pass formatting, with 14 unchanged Markdown code-fence exceptions in the
+whole-tree check. Final repository-wide and hosted release results are recorded
+on PR #17, along with the downstream deployment receipt. Existing-trip selection
+still requires its private exact preview confirmation; no Google edit is replayed.
