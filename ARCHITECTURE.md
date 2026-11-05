@@ -46,7 +46,7 @@ earlier history (`clawdot-platform-history`) remains private.
 | `add_expense`, `update_expense`, `delete_expense`, `restore_expense`, `undo_expense_change`, `list_expenses`, `get_balances` | Splitwise-like ledger, scoped per group (§4) | Expense writes apply directly and are echoed with an undo hint; after untrusted content in the turn they need the requester's confirmation button (§6a) |
 | `settle_up`, `set_fx_rate` | Settle-up and FX overrides (§4) | Writes need a confirmation button **pressed by the requesting user** |
 | `start_trip`, `update_trip`, `end_trip`, `activate_trip`, `reopen_trip`, `set_default_trip`, `list_trips`, `get_trip` | Plans, opens, edits, closes or reopens trips with their countries, currencies, settle mode and members (§4) | Writes need a confirmation button pressed by the requesting user |
-| `trip_attach_file`, `trip_list_files`, `trip_read_file`, `trip_remove_file` | A primary itinerary and supporting Drive files on an existing trip (§4) | Attach/remove require confirmation; exact saved-file reads recheck group/owner/access |
+| `trip_attach_file`, `trip_list_files`, `trip_read_file`, `trip_remove_file`, `trip_edit_doc` | A current itinerary and supporting Drive files on an existing trip (§4) | Attach/remove/edit require confirmation; saved-file authority rechecks group/owner/access and association state |
 | `google_read_file` | Bounded native Docs/Sheets, DOCX, text PDF and UTF-8 CSV reads | Human-posted file link; unsupported formats return metadata only |
 | `google_edit_doc`, `google_edit_sheet` | Preview bounded native Doc text or typed Sheet range edits | Requester confirmation, current writer authority, frozen destination and content checks; qualified copies only; DOCX always imports into a new native Doc |
 | `update_trip_members` | Adds or removes trip members, the default split (§4) | Applies directly with an echo, like expense writes |
@@ -403,6 +403,22 @@ Docs, Sheets, DOCX, selectable-text PDF and UTF-8 CSV have bounded readers; othe
 references only. Existing Sheet links are backfilled as references and retain per-currency
 planned-versus-actual comparisons. Old trip IDs, members and ledger data remain unchanged.
 Design and execution: [trip Drive files](docs/plans/2026-11-02-trip-drive-files.md).
+
+**Current itinerary edits:** the saved primary is the working document for implicit
+trip updates. `trip_edit_doc` resolves an explicit trip rather than trusting a
+model-selected historical URL, freezes the saved association and owner/settings
+proof, and rechecks it before content access and mutations. Supported edits to an
+editable native Doc update that same file. A conversion, noneditable source or
+explicit copy request can create a native output; making it current is separately
+disclosed in the edit confirmation and occurs only after full verification, using
+an association compare-and-swap. A concurrent selection is never overwritten; an
+already successful document edit and a failed association update are reported
+separately. Previous primaries remain references, and historical generic edits to
+a reference need an explicit current human target. No primary means selection is
+needed, not an automatic history-based source choice. This extends saved-file
+authority only to confirmed bounded Doc edits; writer restrictions and source,
+Sheet, browser and sharing policies remain in force. See the approved
+[targeting repair](docs/plans/2026-11-05-current-trip-itinerary.md).
 
 **Confirmed Google edits:** the Google plugin owns native content edits and action-scoped
 destination/result primitives. Native Docs/Sheets use effective original write access under
