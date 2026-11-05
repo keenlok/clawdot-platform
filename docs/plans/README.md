@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [Google Doc verification outcomes and inherited styles](2026-11-06-google-doc-verification-outcomes.md) | Planned | Separate verified text from formatting warnings and resolve provable style inheritance; awaiting owner approval |
 | [Current trip itinerary execution](2026-11-05-current-trip-itinerary-execution.md) | Live limited | [PR #17](https://github.com/keenlok/clawdot-platform/pull/17): v0.5.2 runtime and review evidence; downstream rollout receipt tracked on PR |
 | [Current trip itinerary targeting](2026-11-05-current-trip-itinerary.md) | Live limited | [PR #17](https://github.com/keenlok/clawdot-platform/pull/17): owner-approved same-Doc edits and confirmed current-itinerary advancement; requires downstream release pin |
 | [Google output follow-ups execution](2026-11-04-google-output-followups-execution.md) | Live limited | [PR #16](https://github.com/keenlok/clawdot-platform/pull/16): v0.5.0 implementation, Luna execution/Sol review; release and downstream installed receipts on PR |
