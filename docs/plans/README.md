@@ -2,7 +2,8 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
-| [Current trip itinerary targeting](2026-11-05-current-trip-itinerary.md) | Planned | Durable primary selection and confirmed revision advancement; awaiting owner approval |
+| [Current trip itinerary execution](2026-11-05-current-trip-itinerary-execution.md) | Planned | Approved design, TDD, review, release and deployment checklist |
+| [Current trip itinerary targeting](2026-11-05-current-trip-itinerary.md) | Planned | Owner approved; durable primary selection and confirmed revision advancement |
 | [Google output follow-ups execution](2026-11-04-google-output-followups-execution.md) | Live limited | [PR #16](https://github.com/keenlok/clawdot-platform/pull/16): v0.5.0 implementation, Luna execution/Sol review; release and downstream installed receipts on PR |
 | [Google output follow-ups and access levels](2026-11-04-google-output-followups-and-access.md) | Live limited | [PR #16](https://github.com/keenlok/clawdot-platform/pull/16): v0.5.0 delivers owner-approved viewer default/editor on request, durable own-output authority and strict bounded read-backs; actual receipt on PR |
 | [New output Doc link viewers](2026-11-04-google-output-link-viewers.md) | Live limited | [PR #15](https://github.com/keenlok/clawdot-platform/pull/15): v0.4.0 release delivers preview-frozen access for new output Docs; framework default stays private; source/Sheet/browser policies unchanged; downstream rollout tracked on PR |

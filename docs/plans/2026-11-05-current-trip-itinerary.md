@@ -1,6 +1,10 @@
 # Current trip itinerary targeting
 
-Status: Planned; awaiting owner approval before implementation.
+Status: Planned; owner approved on 2026-11-05, implementation in progress.
+
+Owner clarification: subsequent compatible, editable native-Doc revisions update
+the same current document. Copying is reserved for conversion, a noneditable
+source, or an explicit request for another copy.
 
 ## Goal and observed failure
 
