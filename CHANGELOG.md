@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-05
+
+### Added
+
+- `trip_edit_doc` resolves a named trip's saved primary Doc, edits native Docs in place, and freezes
+  current-itinerary advancement for verified conversion/fallback copies or explicitly selected copies.
+  Generic edits block implicit writes to saved historical trip references. Confirmed Doc attachments
+  can cite a retained human source message.
+
 ## [0.5.1] - 2026-11-05
 
 ### Fixed
@@ -119,7 +128,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/keenlok/clawdot-platform/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/keenlok/clawdot-platform/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/keenlok/clawdot-platform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/keenlok/clawdot-platform/compare/v0.3.0...v0.4.0

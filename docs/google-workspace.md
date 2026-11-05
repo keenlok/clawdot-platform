@@ -199,7 +199,8 @@ reported with the known destination URL.
 The preview freezes the owner, source, destination mode/title, tab/range and exact changes.
 Confirmation rechecks writer/chat/requester/topic binding, opt-out revision and content-specific
 preconditions. Drive `version` is not a blanket conflict condition: harmless metadata changes
-do not substitute for content checks. A created copy does not replace or attach a trip itinerary.
+do not substitute for content checks. A generic `google_edit_doc` copy does not replace or attach a
+trip itinerary; the confirmed `trip_edit_doc` flow can advance its saved primary after verification.
 The journaled output binding permits continuation in the same chat/topic while retained; it does
 not authorize other chats/topics or unrelated browser/Sheet actions.
 
@@ -238,8 +239,16 @@ the requester confirms. Attaching does not convert the source, activate a trip, 
 default trip, or record an expense. An already linked file cannot silently move to another
 trip: explicitly remove its old association first.
 
-`trip_attach_file`, `trip_list_files`, `trip_read_file` and `trip_remove_file` implement this
-workflow. `google_read_file` reads a newly posted link. Native Docs, Sheets, Drive DOCX,
+`trip_attach_file` accepts `source_message_ref` for a confirmed link in a retained human message;
+history search results do not establish attachment authority. `trip_edit_doc(trip, find,
+replacement)` edits the saved primary native Doc in place by default and accepts no model-selected
+URL. Its preview names the exact saved source, replacement and destination. A bounded edit still
+requires requester confirmation. If `destination=auto` must convert a DOCX or copy a noneditable
+source, the confirmed copy becomes the primary after content verification. An explicitly requested
+copy stays standalone unless `make_current=true`; the preview states the association choice. If
+advancement fails after a verified Google edit, inspect trip files before asking for another edit.
+`trip_list_files`, `trip_read_file` and `trip_remove_file` retain their existing behavior.
+`google_read_file` reads a newly posted link. Native Docs, Sheets, Drive DOCX,
 text PDFs and UTF-8 CSV are readable. Other ordinary Drive files are attachable as metadata
 references, with an explicit unsupported-reader notice. Folders and shortcuts need the actual
 target file link. Reading PDF/CSV uses the owner's already-granted `drive.readonly` scope;
@@ -253,9 +262,13 @@ File content stays untrusted and is omitted from persistent tool history; genera
 may still quote it. Unknown formats are not downloaded.
 
 A confirmed association authorizes later reads of exactly that saved file within the same
-trip/group. Every read rechecks group membership, Google opt-out, configured owner, current
-Drive access and association state. This does not grant Drive search or access to links found
-inside documents. Removal revokes the saved authority; the Drive file remains unchanged.
+trip/group. Saved-primary edits use an internal proof of that exact itinerary and recheck group
+membership, Google opt-out, owner identity/settings, file type and the association before reading
+content and before mutations. Generic Doc edits cannot implicitly target an older saved reference
+when a different primary exists; name the old file in the current request to edit it directly.
+Historical `source_message_ref` alone does not override this protection. This does not grant Drive
+search or access to links found inside documents. Removal revokes the saved authority; the Drive
+file remains unchanged.
 DM requests resolve the group and honor its settings. Legacy Sheet links become references;
 reconfirm them before using the new saved-source reader because old links did not pin the
 owner identity. Existing posted-link Sheet summaries still work.
