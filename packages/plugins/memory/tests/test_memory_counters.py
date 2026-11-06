@@ -165,7 +165,7 @@ async def test_provider_exception_counts_failure_and_counter_failure_is_swallowe
     await MemoryPlugin(provider=BrokenProvider()).after_turn(msg, msg.text, healthy)
     assert await counter_value(healthy, "extract_failed") == 1
     ctx = context(msg.chat, stores)
-    row, _ = await plugin._save(
+    outcome = await plugin._save(
         msg.chat,
         "A harmless saved fact",
         stores,
@@ -173,7 +173,7 @@ async def test_provider_exception_counts_failure_and_counter_failure_is_swallowe
         pinned=False,
         created_by=ctx.user.ref,
     )
-    assert row["text"] == "A harmless saved fact"
+    assert outcome["row"]["text"] == "A harmless saved fact"
 
 
 async def test_save_index_failure_is_counted_and_never_breaks_save():
@@ -181,7 +181,7 @@ async def test_save_index_failure_is_counted_and_never_breaks_save():
     actor = UserRef("fake", "Alice")
     failing_stores = stores_for_test(search=FailedSearch(), cache=RaisingCache())
     failing_plugin = MemoryPlugin(embedder=FakeEmbedder())
-    row, _ = await failing_plugin._save(
+    outcome = await failing_plugin._save(
         chat,
         "The group keeps a spare lantern",
         failing_stores,
@@ -189,11 +189,11 @@ async def test_save_index_failure_is_counted_and_never_breaks_save():
         pinned=False,
         created_by=actor,
     )
-    assert row["text"] == "The group keeps a spare lantern"
+    assert outcome["row"]["text"] == "The group keeps a spare lantern"
 
     working_stores = stores_for_test(search=FailedSearch())
     working_plugin = MemoryPlugin(embedder=FakeEmbedder())
-    row, _ = await working_plugin._save(
+    outcome = await working_plugin._save(
         chat,
         "The group keeps a spare compass",
         working_stores,
@@ -201,7 +201,7 @@ async def test_save_index_failure_is_counted_and_never_breaks_save():
         pinned=False,
         created_by=actor,
     )
-    assert row["text"] == "The group keeps a spare compass"
+    assert outcome["row"]["text"] == "The group keeps a spare compass"
     assert await counter_value(working_stores, "index_write_failed") == 1
 
 
@@ -210,6 +210,10 @@ async def test_counter_names_and_ttl_are_fixed():
         "extract_attempted",
         "extract_failed",
         "extract_skipped_ineligible",
+        "extract_skipped_synthetic",
+        "fact_dropped_unlinked",
+        "fact_reused",
+        "skipped_near_duplicate",
         "extract_skipped_budget",
         "extract_skipped_max_tokens",
         "extract_skipped_empty",

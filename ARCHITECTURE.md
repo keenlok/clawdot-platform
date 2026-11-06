@@ -298,7 +298,7 @@ Ambient context stays separate from memory: the last ~20 messages in the chat th
 - **Explicitly:** "@example_bot remember that Bob is allergic to peanuts" → `remember(fact)` tool, and the bot confirms what it saved.
 - **Implicitly, kept conservative:** after each turn, a cheap extraction pass proposes at most 1–2 durable facts. They are saved with `source=auto` and shown in `/memory`. Opinions, one-off chatter and anything sensitive (health, money details, passwords) are never auto-saved; those must be explicit.
 - **Extraction reads only what humans wrote** in this chat, never tool output (pages, files, search results). That stops a web page from planting a "fact" that gets re-injected into every later prompt (§6a).
-- Duplicates and contradictions: before saving, the bot searches similar memories. If it finds a near-duplicate, it updates that one instead of adding a new one ("Bob is now vegan" replaces "Bob is vegetarian").
+- Duplicates and contradictions: similar wording never overwrites a saved fact. Exact same-identity facts are reused; explicit corrections pass the target memory ID as `replaces` and are committed atomically.
 
 **Commands (no LLM needed):**
 - `/memory`: list what the bot remembers about this chat, numbered

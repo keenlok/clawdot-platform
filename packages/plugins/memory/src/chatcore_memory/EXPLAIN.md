@@ -14,10 +14,10 @@ compaction, subject to the deployment's storage and deletion policy.
 An explicit remember request is resolved to a chat and optional subject, then stored. Recall searches
 the permitted chat's facts and returns relevant evidence. Configured automatic extraction proposes
 limited durable facts from human messages; it does not turn arbitrary tool/page text into authority.
-Contradictions need deliberate correction rather than assuming every recalled fact is current.
+Facts are rendered with the resolved subject or creator and saved date. Similar wording never overwrites a fact; explicit corrections use `remember` with the old memory ID as `replaces`.
 
 ## Storage
-The plugin's repository stores fact text, provenance and relevant ownership/subject metadata.
+The plugin repository stores fact text and relevant creator/subject metadata. A chat-scoped control row serializes writes; its epoch and erasure marker are reserved for a later reliability phase.
 Persistent apps use Postgres; an optional search index supports similarity recall. Those derived
 documents complement the source facts and can fail or lag independently. Message retention,
 conversation reset and memory deletion are distinct operations.
@@ -35,10 +35,9 @@ that a save occurred. Memory is not the accounting ledger and should not substit
 expense records, settings or source documents.
 
 ## Verification
-Inspect the save echo/reference, list saved memories and recall the specific fact. Use supported
-forget commands to remove it and explicitly save a corrected fact when appropriate. Verify a
+Inspect the save echo/reference, list saved memories and recall the specific fact. To correct a fact, use its ID as `replaces`; the echo includes the old text for undo. Use supported forget commands to remove it. Verify a
 setting through its own tool rather than assuming a remembered preference changed configuration.
 
 Administrators can use `/memorystats` to inspect daily and 14-day extraction counters and the
-current chat's IDs for automatically written rows whose wording was later updated. The audit is
-read-only and does not show memory text.
+current chat's IDs for legacy automatically written rows whose wording was later updated. New
+automatic writes never alter existing facts.

@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Memory facts now show who they are about and when they were saved, in the agent's context, `recall`
+  and `/memory`. The new `MEMORY_CONTEXT_MAX_CHARS` setting (default 5000) bounds the injected section.
+- **Behaviour change:** similar wording no longer overwrites a saved memory. Automatic extraction
+  never changes an existing fact. An explicit save beside a similar fact inserts a new one and names
+  the similar fact, and `remember` takes an optional `replaces` memory ID for atomic corrections.
+- Automatic extraction skips bot-generated prompts, treats message bodies as untrusted data, and
+  drops third-party claims that it can't link to a verified mention.
+- Migration `0002_memory_control.sql` adds the `memory_control` table. No existing rows change.
+
 ### Added
 
 - Memory extraction now records daily counters for attempts, skips, failures and index-write

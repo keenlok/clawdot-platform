@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +17,7 @@ from chatcore.plugin import CommandContext
 from chatcore.store.base import SearchHit, Stores
 from chatcore.store.memory import MemoryCache, MemoryCoreRepo
 from chatcore.testing import FakePlatform, ScriptedProvider, message
-from chatcore.threads import current_conversation
+from chatcore.threads import TurnOrigin, current_conversation, current_turn_origin
 from chatcore.tools.registry import ToolContext
 from chatcore_memory.plugin import MemoryPlugin
 
@@ -81,8 +81,16 @@ def scenario_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _origin_context(turn: dict[str, Any]):
-    # Slice 1 wires this context to core's turn origin.
-    return nullcontext(turn.get("origin", "direct"))
+    @contextmanager
+    def origin_context():
+        origin = TurnOrigin(turn.get("origin", "direct"), turn.get("source_message_id"))
+        token = current_turn_origin.set(origin)
+        try:
+            yield
+        finally:
+            current_turn_origin.reset(token)
+
+    return origin_context()
 
 
 @contextmanager

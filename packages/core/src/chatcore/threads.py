@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from chatcore.events import MessageRef
 
@@ -42,6 +42,15 @@ class MultipartSender(Protocol):
 current_conversation: ContextVar[Conversation | None] = ContextVar(
     "current_conversation", default=None
 )
+
+
+@dataclass(frozen=True, slots=True)
+class TurnOrigin:
+    kind: Literal["direct", "bare_tag", "synthetic"]
+    source_message_id: str | None = None
+
+
+current_turn_origin: ContextVar[TurnOrigin | None] = ContextVar("current_turn_origin", default=None)
 
 
 async def resolve_conversation(

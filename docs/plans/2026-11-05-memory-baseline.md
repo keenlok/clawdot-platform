@@ -80,3 +80,46 @@ retrieval rules, not model extraction quality.
 - Production provider tokens, calls and latency: scripted completions do not measure production usage.
 
 Held-out note: no live quality run was made, so no prompt or threshold was tuned on this set.
+
+## After slice 1
+
+The same 43 scripted scenarios were run after the attributed-read and identity-safe-write changes.
+This remains a synthetic evaluation, not a production quality measurement. All 20 scenarios flipped
+for slice 1 now pass; `expired-01` and `erasure-08` remain the only scenario failures, as expected
+because they belong to phases 3 and 2a respectively.
+
+The request snapshot delta is **0 bytes** because the snapshot does not include the memory plugin.
+
+### Separate deterministic measures
+
+| Measure | After slice 1 |
+| --- | ---: |
+| Wrong-person mutations | 0 |
+| Wrong-person answers | 0 |
+| Stale-current answers | 1 |
+| Erased-fact returns | 0 |
+| Erased-text index documents | 1 |
+
+The remaining erased-text index document is the deliberate `erasure-08` failure: durable retry for
+search deletion belongs to slice 2a. The stale-current result remains `expired-01`, which belongs to
+phase 3.
+
+| Category | Pass | Fail |
+| --- | ---: | ---: |
+| `similar_wording` | 4 | 0 |
+| `ambiguous_subject` | 5 | 0 |
+| `explicit_vs_auto` | 3 | 0 |
+| `new_conversation` | 4 | 0 |
+| `correction` | 4 | 0 |
+| `expired_plan` | 2 | 1 |
+| `multilingual` | 4 | 0 |
+| `injection` | 3 | 0 |
+| `bare_tag_reply` | 5 | 0 |
+| `erasure` | 7 | 1 |
+| **Total** | **41** | **2** |
+
+### Attribution character cost
+
+For the representative rendered fact `#12 prefers tea` (15 characters), attribution produces
+`#12 [about Alice; saved 2026-11-01] prefers tea` (47 characters), a **32-character increase**.
+The context cap accounts for the whole rendered section, including headings and attribution.

@@ -50,8 +50,9 @@ async def test_postgres_migration_round_trip_and_chat_isolation():
     try:
         await connection.execute(f'CREATE SCHEMA "{schema}"')
         await connection.execute(f'SET search_path TO "{schema}"')
-        migration = Path(__file__).parents[1] / "src/chatcore_memory/migrations/0001_memories.sql"
-        await connection.execute(migration.read_text())
+        for filename in ("0001_memories.sql", "0002_memory_control.sql"):
+            migration = Path(__file__).parents[1] / "src/chatcore_memory/migrations" / filename
+            await connection.execute(migration.read_text())
         repo = PostgresMemoryRepo(PgDatabase(connection))
         chat_a, chat_b = ChatRef("test", "a"), ChatRef("test", "b")
         author = UserRef("test", "writer")
@@ -125,3 +126,96 @@ async def test_es_memory_template_index_hybrid_recall_and_cleanup():
         await options.indices.delete(index=f"{prefix}chunks-v1")
         await options.indices.delete_index_template(name=f"{prefix}memories-v1")
         await options.indices.delete_index_template(name=f"{prefix}chunks-v1")
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _pg_available(), reason="Postgres is not reachable")
+async def test_postgres_concurrent_identical_writes_and_replacements_are_serialized():
+    import asyncio
+
+    import asyncpg
+
+    schema = f"memory_race_{uuid4().hex[:12]}"
+    setup = await asyncpg.connect(_pg_dsn())
+    first = second = None
+    try:
+        await setup.execute(f'CREATE SCHEMA "{schema}"')
+        await setup.execute(f'SET search_path TO "{schema}"')
+        for filename in ("0001_memories.sql", "0002_memory_control.sql"):
+            migration = Path(__file__).parents[1] / "src/chatcore_memory/migrations" / filename
+            await setup.execute(migration.read_text())
+        first, second = await asyncio.gather(asyncpg.connect(_pg_dsn()), asyncpg.connect(_pg_dsn()))
+        await first.execute(f'SET search_path TO "{schema}"')
+        await second.execute(f'SET search_path TO "{schema}"')
+        repo_a, repo_b = (
+            PostgresMemoryRepo(PgDatabase(first)),
+            PostgresMemoryRepo(PgDatabase(second)),
+        )
+        chat = ChatRef("test", f"race-{uuid4().hex[:8]}")
+        alice = UserRef("test", "alice")
+        results = await asyncio.gather(
+            repo_a.commit_fact(
+                chat,
+                "The group meets on Fridays",
+                source="auto",
+                pinned=False,
+                created_by=alice,
+                subject_user=None,
+                candidate_ids=set(),
+                dedupe_threshold=0.92,
+            ),
+            repo_b.commit_fact(
+                chat,
+                "The group meets on Fridays",
+                source="auto",
+                pinned=False,
+                created_by=alice,
+                subject_user=None,
+                candidate_ids=set(),
+                dedupe_threshold=0.92,
+            ),
+        )
+        assert {result["status"] for result in results} == {"saved", "exact"}
+        assert len(await repo_a.list(chat)) == 1
+
+        old = await repo_a.list(chat)
+        original = old[0]
+        replacements = await asyncio.gather(
+            repo_a.commit_fact(
+                chat,
+                "The group meets on Saturdays",
+                source="explicit",
+                pinned=False,
+                created_by=alice,
+                subject_user=None,
+                candidate_ids=set(),
+                dedupe_threshold=0.92,
+                replaces=int(original["id"]),
+                expected_updated_at=original["updated_at"],
+            ),
+            repo_b.commit_fact(
+                chat,
+                "The group meets on Sundays",
+                source="explicit",
+                pinned=False,
+                created_by=alice,
+                subject_user=None,
+                candidate_ids=set(),
+                dedupe_threshold=0.92,
+                replaces=int(original["id"]),
+                expected_updated_at=original["updated_at"],
+            ),
+        )
+        assert sorted(result["status"] for result in replacements) == ["replaced", "stale"]
+        assert len(await repo_a.list(chat)) == 1
+        assert (await repo_a.list(chat))[0]["text"] in {
+            "The group meets on Saturdays",
+            "The group meets on Sundays",
+        }
+    finally:
+        if first is not None:
+            await first.close()
+        if second is not None:
+            await second.close()
+        await setup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await setup.close()

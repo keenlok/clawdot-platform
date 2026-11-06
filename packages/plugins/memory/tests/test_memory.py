@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from chatcore.embed import FakeEmbedder
-from chatcore.events import ChatRef, User, UserRef
+from chatcore.events import ChatRef, Mention, User, UserRef
 from chatcore.llm.types import Completion, Message, Usage
 from chatcore.plugin import CommandContext
 from chatcore.store.base import SearchHit, Stores
@@ -189,13 +191,14 @@ async def test_forget_confirmation_does_not_delete_until_commit():
 
 
 @pytest.mark.asyncio
-async def test_recall_is_untrusted_and_jaccard_dedupe_updates_row():
+async def test_recall_is_untrusted_and_jaccard_dedupe_inserts_without_replacing():
     plugin = MemoryPlugin()
     ctx = context(ChatRef("fake", "a"))
     await tool(plugin, "remember").handler(ctx, fact="Alice prefers green tea")
     result = await tool(plugin, "remember").handler(ctx, fact="Alice prefers green tea please")
     recalled = await tool(plugin, "recall").handler(ctx, query="green tea")
-    assert result.content.startswith('Updated memory #1: "Alice prefers green tea please"')
+    assert result.content.startswith('Saved memory #2: "Alice prefers green tea please"')
+    assert "replaces=1" in result.content
     assert recalled.untrusted
     assert recalled.content.count("#1") == 1
 
@@ -252,7 +255,7 @@ async def test_auto_extraction_sees_only_human_text_and_filters_sensitive_facts(
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our standing plan is to meet every Friday after work.")
     await plugin.after_turn(msg, msg.text, stores_for_test())
-    assert provider.calls[0]["messages"][0].text == msg.text
+    assert json.loads(provider.calls[0]["messages"][0].text)["untrusted"] == msg.text
     cmd = CommandContext(msg.chat, msg.user, False, False, FakePlatform(), stores_for_test())
     listing = await plugin.commands()[0].handler(cmd, "")
     assert "We meet every Friday" in listing
@@ -616,7 +619,7 @@ async def test_es_enabled_dedupe_uses_vector_similarity():
     ctx = context(ChatRef("fake", "a"), stores_for_test(search))
     await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea")
     result = await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea")
-    assert result.content.startswith("Updated memory #1")
+    assert result.content == "Already saved as #1."
     assert len(search.docs) == 1
 
 
@@ -643,7 +646,7 @@ async def test_vector_dedupe_uses_document_embeddings():
     ctx = context(ChatRef("fake", "a"), stores_for_test(search))
     await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea")
     result = await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea")
-    assert result.content.startswith("Updated memory #1")
+    assert result.content == "Already saved as #1."
     assert embedder.document_calls >= 3
     assert embedder.query_calls == 0
 
@@ -683,7 +686,7 @@ async def test_vector_hit_without_source_embedding_falls_through_to_jaccard():
     await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea")
     search.docs["1"].pop("embedding")
     result = await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea, please")
-    assert result.content.startswith("Updated memory #1")
+    assert result.content.startswith('Saved memory #2: "Alice likes green tea, please"')
 
 
 @pytest.mark.asyncio
@@ -735,3 +738,480 @@ async def test_index_failure_keeps_database_row_and_logs_only_error_class(caplog
     assert len(await plugin._repo(ctx.stores).list(ctx.chat)) == 1
     assert "Sensitive private phrase" not in caplog.text
     assert "ConnectionError" in caplog.text
+
+
+def test_memory_rendering_sanitizes_names_and_marks_unverified():
+    from chatcore_memory.service import render_fact, safe_name
+
+    now = datetime(2026, 11, 1, tzinfo=UTC)
+    row = {
+        "id": 12,
+        "text": "likes tea",
+        "source": "auto",
+        "pinned": False,
+        "subject_user_key": "fake:alice",
+        "created_by": "fake:bob",
+        "created_at": now,
+        "updated_at": now.replace(day=2),
+    }
+    assert safe_name("  Alice\n[Admin]  ") == "AliceAdmin"
+    assert render_fact(row, {"fake:alice": "Alice"}) == (
+        "#12 [about Alice; saved 2026-11-01; unverified] likes tea"
+    )
+
+
+def test_memory_context_respects_budget_and_skips_duplicates():
+    from chatcore_memory.service import build_context
+
+    pinned = [
+        {
+            "id": 1,
+            "text": "A",
+            "source": "explicit",
+            "pinned": True,
+            "subject_user_key": None,
+            "created_by": "fake:alice",
+            "created_at": datetime(2026, 11, 1, tzinfo=UTC),
+            "updated_at": datetime(2026, 11, 1, tzinfo=UTC),
+        }
+    ]
+    assert build_context(pinned, pinned, {}, max_chars=0) == ""
+    text = build_context(pinned, [*pinned, {**pinned[0], "id": 2, "text": "B"}], {}, max_chars=500)
+    assert text.count("#1") == 1 and "#2" in text
+
+
+@pytest.mark.asyncio
+async def test_replacement_rejects_missing_cross_chat_and_changed_targets():
+    plugin = MemoryPlugin()
+    ctx = context(ChatRef("fake", "replace-a"))
+    missing = await raw_tool(plugin, "remember").handler(
+        ctx, fact="new durable detail", replaces=99
+    )
+    assert missing.is_error and "No memory #99" in missing.content
+
+    other = context(ChatRef("fake", "replace-b"))
+    saved = await tool(plugin, "remember").handler(other, fact="Other chat detail")
+    other_id = int(saved.content.split("#", 1)[1].split(":", 1)[0])
+    cross_chat = await raw_tool(plugin, "remember").handler(
+        ctx, fact="Replacement text", replaces=other_id
+    )
+    assert cross_chat.is_error
+
+    saved = await tool(plugin, "remember").handler(ctx, fact="Original durable detail")
+    memory_id = int(saved.content.split("#", 1)[1].split(":", 1)[0])
+    pending = await raw_tool(plugin, "remember").handler(
+        ctx, fact="Corrected durable detail", replaces=memory_id
+    )
+    repo = plugin._repo(ctx.stores)
+    repo.rows[memory_id]["updated_at"] = repo.rows[memory_id]["updated_at"].replace(
+        microsecond=(repo.rows[memory_id]["updated_at"].microsecond + 1) % 1000000
+    )
+    command = CommandContext(ctx.chat, ctx.user, False, False, ctx.platform, ctx.stores)
+    echo = await plugin.action_handlers()["remember"].commit(pending.pending_action, command)
+    assert "changed or was removed" in echo
+    assert (await plugin._repo(ctx.stores).get(ctx.chat, memory_id))[
+        "text"
+    ] == "Original durable detail"
+
+
+@pytest.mark.asyncio
+async def test_replacement_preserves_pinned_and_subject_and_requires_resolved_about():
+    plugin = MemoryPlugin()
+    ctx = context(ChatRef("fake", "replace-pinned"))
+    member = User(UserRef("fake", "bob"), "Bob", "bob")
+    await ctx.stores.repo.upsert_member(ctx.chat, member)
+    saved = await tool(plugin, "remember").handler(
+        ctx, fact="Bob's weekly chess club", about="Bob", pinned=True
+    )
+    memory_id = int(saved.content.split("#", 1)[1].split(":", 1)[0])
+    pending = await raw_tool(plugin, "remember").handler(
+        ctx, fact="Bob's weekly board game club", replaces=memory_id
+    )
+    command = CommandContext(ctx.chat, ctx.user, False, False, ctx.platform, ctx.stores)
+    echo = await plugin.action_handlers()["remember"].commit(pending.pending_action, command)
+    assert "Bob's weekly chess club" in echo and "Bob's weekly board game club" in echo
+    row = (await plugin._repo(ctx.stores).list(ctx.chat))[0]
+    assert row["pinned"] and row["subject_user_key"] == member.ref.key
+
+    pending_bad_about = await raw_tool(plugin, "remember").handler(
+        ctx, fact="Another corrected detail", about="Nobody", replaces=int(row["id"])
+    )
+    echo = await plugin.action_handlers()["remember"].commit(
+        pending_bad_about.pending_action, command
+    )
+    assert "existing memory was kept" in echo
+    assert await plugin._repo(ctx.stores).get(ctx.chat, int(row["id"])) is not None
+
+
+@pytest.mark.asyncio
+async def test_automatic_exact_and_near_deduplication_respect_identity_and_keep_text():
+    plugin = MemoryPlugin()
+    stores = stores_for_test()
+    chat = ChatRef("fake", "identity")
+    alice, bob = UserRef("fake", "alice"), UserRef("fake", "bob")
+    first = await plugin._save(
+        chat,
+        "Likes green tea.",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=alice,
+        subject_user=alice,
+    )
+    exact = await plugin._save(
+        chat,
+        "likes GREEN tea",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=bob,
+        subject_user=alice,
+    )
+    second = await plugin._save(
+        chat,
+        "likes green tea",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=bob,
+        subject_user=bob,
+    )
+    assert first["status"] == "saved" and exact["status"] == "exact"
+    assert second["status"] == "saved"
+    assert len(await plugin._repo(stores).list(chat)) == 2
+
+    null_first = await plugin._save(
+        chat, "The group meets every Friday", stores, source="auto", pinned=False, created_by=alice
+    )
+    null_exact = await plugin._save(
+        chat, "The group meets every Friday.", stores, source="auto", pinned=False, created_by=bob
+    )
+    null_alice_again = await plugin._save(
+        chat, "The group meets every Friday!", stores, source="auto", pinned=False, created_by=alice
+    )
+    assert null_first["status"] == "saved" and null_exact["status"] == "saved"
+    assert null_alice_again["status"] == "exact"
+    assert null_alice_again["row"]["id"] == null_first["row"]["id"]
+    assert len(await plugin._repo(stores).list(chat)) == 4
+
+
+@pytest.mark.asyncio
+async def test_automatic_extraction_skips_synthetic_and_drops_unlinked_labels():
+    from chatcore.threads import TurnOrigin, current_turn_origin
+
+    stores = stores_for_test()
+    provider = ScriptedProvider(
+        responses=[Completion(Message.assistant('{"facts":[]}'), "end_turn", Usage(1, 1))]
+    )
+    plugin = MemoryPlugin(provider=provider)
+    msg = message("A sufficiently long message for synthetic extraction skip.")
+    token = current_turn_origin.set(TurnOrigin("synthetic"))
+    try:
+        await plugin.after_turn(msg, msg.text, stores)
+    finally:
+        current_turn_origin.reset(token)
+    assert not provider.calls
+    raw = await stores.cache.get(
+        "memory_metrics:" + datetime.now(UTC).date().isoformat() + ":extract_skipped_synthetic"
+    )
+    assert int(raw or b"0") == 1
+
+
+def test_rendering_covers_null_subjects_unknown_names_and_hostile_display_names():
+    from chatcore_memory.service import render_fact, safe_name
+
+    stamp = datetime(2026, 11, 1, tzinfo=UTC)
+    base = {
+        "id": 7,
+        "text": "prefers tea",
+        "pinned": False,
+        "created_at": stamp,
+        "updated_at": stamp,
+        "subject_user_key": None,
+        "created_by": "fake:bob",
+    }
+    assert render_fact({**base, "source": "auto"}, {"fake:bob": "Bob"}) == (
+        "#7 [from Bob; saved 2026-11-01] prefers tea"
+    )
+    assert render_fact({**base, "source": "explicit"}, {"fake:bob": "Bob"}) == (
+        "#7 [saved by Bob; saved 2026-11-01] prefers tea"
+    )
+    assert render_fact({**base, "source": "explicit", "subject_user_key": "gone:user"}, {}) == (
+        "#7 [about unknown person; saved 2026-11-01] prefers tea"
+    )
+    assert safe_name("  Alice [admin]\n\t(Bob)  ") == "Alice adminBob"
+    assert len(safe_name("長" * 50)) == 40
+
+
+def test_context_budget_keeps_whole_unicode_facts_in_deterministic_order():
+    from chatcore_memory.service import build_context
+
+    stamp = datetime(2026, 11, 1, tzinfo=UTC)
+
+    def row(memory_id, text, pinned=False):
+        return {
+            "id": memory_id,
+            "text": text,
+            "source": "explicit",
+            "pinned": pinned,
+            "subject_user_key": None,
+            "created_by": "fake:alice",
+            "created_at": stamp,
+            "updated_at": stamp,
+        }
+
+    pinned = [row(2, "喜歡茶", True), row(1, "每週見面", True)]
+    recalled = [row(1, "duplicate"), row(3, "第一個"), row(4, "第二個")]
+    all_text = build_context(pinned, recalled, {"fake:alice": "Alice"}, max_chars=1000)
+    assert all_text.index("#2") < all_text.index("#1") < all_text.index("#3") < all_text.index("#4")
+    assert all_text.count("#1") == 1
+    pinned_only = build_context(
+        pinned,
+        recalled,
+        {"fake:alice": "Alice"},
+        max_chars=len(build_context(pinned, [], {"fake:alice": "Alice"}, max_chars=1000)),
+    )
+    assert "#2" in pinned_only and "#3" not in pinned_only
+
+
+@pytest.mark.asyncio
+async def test_vector_candidate_from_another_subject_cannot_dedupe():
+    search = MemorySearch()
+    plugin = MemoryPlugin(embedder=FakeEmbedder())
+    stores = stores_for_test(search)
+    chat = ChatRef("fake", "vector-identity")
+    alice, bob = UserRef("fake", "alice"), UserRef("fake", "bob")
+    await plugin._save(
+        chat,
+        "Likes green tea",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=alice,
+        subject_user=alice,
+    )
+    result = await plugin._save(
+        chat,
+        "Likes green tea",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=bob,
+        subject_user=bob,
+    )
+    assert result["status"] == "saved"
+    rows = await plugin._repo(stores).list(chat)
+    assert len(rows) == 2 and {row["subject_user_key"] for row in rows} == {alice.key, bob.key}
+
+
+@pytest.mark.asyncio
+async def test_identity_scan_checks_rows_beyond_first_500_and_never_rewrites():
+    plugin = MemoryPlugin()
+    stores = stores_for_test()
+    chat, alice = ChatRef("fake", "old-row"), UserRef("fake", "alice")
+    original = await plugin._save(
+        chat,
+        "The group meets every Friday evening",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=alice,
+        subject_user=alice,
+    )
+    repo = plugin._repo(stores)
+    for number in range(501):
+        await repo.insert(
+            chat,
+            f"Unrelated standing detail number {number}",
+            source="auto",
+            pinned=False,
+            created_by=alice,
+            subject_user=alice,
+        )
+    result = await plugin._save(
+        chat,
+        "The group meets every Friday evening after",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=alice,
+        subject_user=alice,
+    )
+    assert result["status"] == "near"
+    assert (await repo.get(chat, int(original["row"]["id"])))["text"] == (
+        "The group meets every Friday evening"
+    )
+    assert len(await repo.list(chat, limit=600)) == 502
+
+
+@pytest.mark.asyncio
+async def test_concurrent_no_database_exact_writes_reuse_one_row():
+    import asyncio
+
+    plugin = MemoryPlugin()
+    stores = stores_for_test()
+    chat, alice = ChatRef("fake", "local-race"), UserRef("fake", "alice")
+    results = await asyncio.gather(
+        plugin._save(
+            chat,
+            "The group meets every Friday",
+            stores,
+            source="auto",
+            pinned=False,
+            created_by=alice,
+        ),
+        plugin._save(
+            chat,
+            "The group meets every Friday",
+            stores,
+            source="auto",
+            pinned=False,
+            created_by=alice,
+        ),
+    )
+    assert {result["status"] for result in results} == {"saved", "exact"}
+    assert len(await plugin._repo(stores).list(chat)) == 1
+
+
+@pytest.mark.asyncio
+async def test_extraction_subject_labels_map_to_verified_mentions_only():
+    speaker = User(UserRef("fake", "alice"), "Alice", "alice")
+    bob = User(UserRef("fake", "bob"), "Bob", "bob")
+    msg = replace(
+        message("Bob prefers the window seat when traveling.", sender=speaker),
+        mentions=(
+            Mention(
+                0,
+                4,
+                "text_mention",
+                "Bob",
+                target=bob.ref,
+                username=bob.username,
+                display_name=bob.display_name,
+            ),
+        ),
+    )
+    provider = ScriptedProvider(
+        responses=[
+            Completion(
+                Message.assistant(
+                    json.dumps(
+                        {
+                            "facts": [
+                                {
+                                    "text": "prefers the window seat when traveling",
+                                    "about_label": "P1",
+                                },
+                                {"text": "someone likes the aisle", "about_other": True},
+                            ]
+                        }
+                    )
+                ),
+                "end_turn",
+                Usage(2, 3),
+            )
+        ]
+    )
+    stores = stores_for_test()
+    await stores.repo.upsert_member(msg.chat, speaker)
+    await stores.repo.upsert_member(msg.chat, bob)
+    plugin = MemoryPlugin(provider=provider)
+    await plugin.after_turn(msg, msg.text, stores)
+    rows = await plugin._repo(stores).list(msg.chat)
+    assert len(rows) == 1 and rows[0]["subject_user_key"] == bob.ref.key
+    raw = await stores.cache.get(
+        "memory_metrics:" + datetime.now(UTC).date().isoformat() + ":fact_dropped_unlinked"
+    )
+    assert int(raw or b"0") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("about", ["", "   ", "\t\n"])
+async def test_blank_about_replacement_preserves_existing_subject(about):
+    plugin = MemoryPlugin()
+    ctx = context(ChatRef("fake", "blank-about"))
+    bob = User(UserRef("fake", "bob"), "Bob", "bob")
+    await ctx.stores.repo.upsert_member(ctx.chat, bob)
+    saved = await tool(plugin, "remember").handler(
+        ctx, fact="Bob prefers morning meetings", about="Bob"
+    )
+    memory_id = int(saved.content.split("#", 1)[1].split(":", 1)[0])
+    pending = await raw_tool(plugin, "remember").handler(
+        ctx, fact="Bob prefers early meetings", replaces=memory_id, about=about
+    )
+    command = CommandContext(ctx.chat, ctx.user, False, False, ctx.platform, ctx.stores)
+    await plugin.action_handlers()["remember"].commit(pending.pending_action, command)
+    rows = await plugin._repo(ctx.stores).list(ctx.chat)
+    assert len(rows) == 1
+    assert rows[0]["text"] == "Bob prefers early meetings"
+    assert rows[0]["subject_user_key"] == bob.ref.key
+
+
+@pytest.mark.parametrize("section", ["pinned", "recalled"])
+def test_context_budget_keeps_admitted_facts_when_later_fact_overflows(section):
+    from chatcore_memory.service import build_context
+
+    stamp = datetime(2026, 11, 1, tzinfo=UTC)
+    admitted = {
+        "id": 11,
+        "text": "Short fact",
+        "source": "explicit",
+        "pinned": section == "pinned",
+        "subject_user_key": None,
+        "created_by": "fake:alice",
+        "created_at": stamp,
+        "updated_at": stamp,
+    }
+    oversized = {**admitted, "id": 12, "text": "oversized " * 100}
+    if section == "pinned":
+        full = [admitted, oversized]
+        expected = build_context([admitted], [], {}, max_chars=1000)
+        actual = build_context(full, [], {}, max_chars=len(expected))
+    else:
+        full = [admitted, oversized]
+        expected = build_context([], [admitted], {}, max_chars=1000)
+        actual = build_context([], full, {}, max_chars=len(expected))
+    assert actual == expected
+
+
+@pytest.mark.asyncio
+async def test_similar_explicit_insert_is_indexed_for_vector_recall():
+    search = MemorySearch()
+    plugin = MemoryPlugin(embedder=FakeEmbedder())
+    ctx = context(ChatRef("fake", "similar-index"), stores_for_test(search))
+    await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea")
+    result = await tool(plugin, "remember").handler(ctx, fact="Alice likes green tea please")
+    assert result.content.startswith('Saved memory #2: "Alice likes green tea please"')
+    assert search.docs["2"]["text"] == "Alice likes green tea please"
+
+
+@pytest.mark.parametrize(
+    ("fact", "expected"),
+    [
+        ({"about_other": True, "about_speaker": True}, "drop"),
+        ({"about_other": True, "about_speaker": True, "about_label": "P1"}, "drop"),
+        ({"about_speaker": True, "about_label": "P1"}, "drop"),
+        ({"about_other": True}, "drop"),
+        ({"about_label": "P9"}, "drop"),
+        ({"about_label": None}, None),
+        ({"about_label": ""}, None),
+        ({"about_label": None, "about_speaker": True}, UserRef("fake", "alice")),
+        ({"about_label": None, "about_other": True}, "drop"),
+        ({"about_label": "P1"}, UserRef("fake", "bob")),
+        ({"about_other": True, "about_label": "P1"}, UserRef("fake", "bob")),
+        ({"about_speaker": True}, UserRef("fake", "alice")),
+        ({}, None),
+        ({"about_speaker": "true"}, None),
+        ({"about_other": "true"}, None),
+        ({"about_speaker": True, "about_other": "true"}, UserRef("fake", "alice")),
+        ({"about_speaker": "true", "about_other": True}, "drop"),
+    ],
+)
+def test_fact_subject_resolution_drops_conflicting_or_unlinked_identity(fact, expected):
+    import chatcore_memory.service as memory_service
+
+    resolver = getattr(memory_service, "resolve_fact_subject", None)
+    assert callable(resolver), "service subject resolver is missing"
+    speaker = UserRef("fake", "alice")
+    labels = {"P1": UserRef("fake", "bob")}
+    assert resolver(fact, labels, speaker) == expected
