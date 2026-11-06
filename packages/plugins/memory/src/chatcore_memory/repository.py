@@ -12,6 +12,7 @@ from chatcore.store.base import Database
 
 class MemoryRepo(Protocol):
     async def list(self, chat: ChatRef, *, limit: int = 50) -> list[dict[str, Any]]: ...
+    async def audit_overwritten(self, chat: ChatRef) -> list[int]: ...
     async def get(self, chat: ChatRef, memory_id: int) -> dict[str, Any] | None: ...
     async def insert(
         self,
@@ -43,6 +44,15 @@ class MemoryMemoryRepo:
     async def list(self, chat: ChatRef, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = [row for row in self.rows.values() if row["chat_key"] == chat.key]
         return [dict(row) for row in sorted(rows, key=lambda row: row["id"], reverse=True)[:limit]]
+
+    async def audit_overwritten(self, chat: ChatRef) -> list[int]:
+        return sorted(
+            int(row["id"])
+            for row in self.rows.values()
+            if row["chat_key"] == chat.key
+            and row["source"] == "auto"
+            and row["updated_at"] > row["created_at"]
+        )
 
     async def get(self, chat: ChatRef, memory_id: int) -> dict[str, Any] | None:
         row = self.rows.get(memory_id)
@@ -140,6 +150,14 @@ class PostgresMemoryRepo:
             "SELECT * FROM memories WHERE chat_key = $1 ORDER BY id DESC LIMIT $2", chat.key, limit
         )
         return [dict(row) for row in rows]
+
+    async def audit_overwritten(self, chat: ChatRef) -> list[int]:
+        rows = await self.db.fetch(
+            "SELECT id FROM memories WHERE chat_key=$1 AND source='auto' "
+            "AND updated_at > created_at ORDER BY id ASC",
+            chat.key,
+        )
+        return [int(row["id"]) for row in rows]
 
     async def get(self, chat: ChatRef, memory_id: int) -> dict[str, Any] | None:
         row = await self.db.fetchrow(

@@ -38,3 +38,7 @@ expense records, settings or source documents.
 Inspect the save echo/reference, list saved memories and recall the specific fact. Use supported
 forget commands to remove it and explicitly save a corrected fact when appropriate. Verify a
 setting through its own tool rather than assuming a remembered preference changed configuration.
+
+Administrators can use `/memorystats` to inspect daily and 14-day extraction counters and the
+current chat's IDs for automatically written rows whose wording was later updated. The audit is
+read-only and does not show memory text.

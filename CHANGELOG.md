@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Memory extraction now records daily counters for attempts, skips, failures and index-write
+  failures, with no message content. Admins can read them with `/memorystats`, which also lists the
+  current chat's automatic memories whose wording was later overwritten. The audit changes nothing.
+
 ## [0.5.3] - 2026-11-06
 
 ### Fixed

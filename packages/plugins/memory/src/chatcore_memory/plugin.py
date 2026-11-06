@@ -7,6 +7,7 @@ import logging
 import math
 import re
 from collections.abc import Mapping
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from chatcore.command_prompts import CommandReply
@@ -25,6 +26,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .repository import MemoryMemoryRepo, MemoryRepo, PostgresMemoryRepo
 
 logger = logging.getLogger(__name__)
+
+COUNTER_TTL_S = 40 * 86400
+COUNTER_NAMES = (
+    "extract_attempted",
+    "extract_failed",
+    "extract_skipped_ineligible",
+    "extract_skipped_budget",
+    "extract_skipped_max_tokens",
+    "extract_skipped_empty",
+    "extract_skipped_truncated",
+    "extract_skipped_wrong_schema",
+    "extract_skipped_invalid_json",
+    "fact_dropped_invalid",
+    "fact_dropped_sensitive",
+    "fact_saved",
+    "index_write_failed",
+)
+
+
+def counter_key(name: str, day: date | None = None) -> str:
+    day = day or datetime.now(UTC).date()
+    return f"memory_metrics:{day.isoformat()}:{name}"
+
 
 SENSITIVE_PATTERNS = (
     re.compile(
@@ -194,6 +218,12 @@ class MemoryPlugin(BasePlugin):
             return None
         return await self.embedder.embed_query(text)
 
+    async def _count(self, stores: Stores, name: str) -> None:
+        try:
+            await stores.cache.incr(counter_key(name), ttl_s=COUNTER_TTL_S)
+        except Exception as exc:
+            logger.warning("memory counter failed error=%s", type(exc).__name__)
+
     async def _index(self, chat: ChatRef, row: Mapping[str, Any], stores: Stores) -> None:
         if stores.search is None or self.embedder is None:
             return
@@ -291,6 +321,7 @@ class MemoryPlugin(BasePlugin):
         try:
             await self._index(chat, row, stores)
         except Exception as exc:
+            await self._count(stores, "index_write_failed")
             logger.warning(
                 "memory index write failed chat=%s id=%s error=%s",
                 chat.key,
@@ -530,9 +561,44 @@ class MemoryPlugin(BasePlugin):
                 else "no such memory"
             )
 
+        async def stats(ctx: CommandContext, _args: str) -> str:
+            today = datetime.now(UTC).date()
+            values: list[str] = []
+
+            async def read_count(name: str, day: date) -> int:
+                try:
+                    raw = await ctx.stores.cache.get(counter_key(name, day))
+                    return int(raw) if raw is not None else 0
+                except Exception:
+                    return 0
+
+            for name in COUNTER_NAMES:
+                daily = [
+                    await read_count(name, today - timedelta(days=offset)) for offset in range(14)
+                ]
+                count_today = daily[0]
+                total = sum(daily)
+                values.append(f"{name} today={count_today} 14d={total}")
+            ids = await self._repo(ctx.stores).audit_overwritten(ctx.chat)
+            shown = ids[:50]
+            remaining = len(ids) - len(shown)
+            detail = ", ".join(str(memory_id) for memory_id in shown) or "none"
+            suffix = f"; {remaining} more not shown" if remaining else ""
+            values.append(
+                f"Overwritten automatic rows in this chat: {len(ids)}; "
+                f"IDs (up to 50): {detail}{suffix}"
+            )
+            return "\n".join(values)
+
         return [
             Command("memory", "List this chat's memories.", show),
             Command("forget", "Delete a memory by ID.", forget_command),
+            Command(
+                "memorystats",
+                "Show memory extraction counters and overwrite audit IDs.",
+                stats,
+                admin_only=True,
+            ),
         ]
 
     def action_handlers(self) -> dict[str, PendingActionHandler]:
@@ -564,17 +630,16 @@ class MemoryPlugin(BasePlugin):
             return None
 
     async def after_turn(self, message: IncomingMessage, text: str, stores: Stores) -> None:
-        if (
-            self.provider is None
-            or not self.settings.auto_extract
-            or message.user.is_bot
-            or len(text.strip()) < 12
-            or text.lstrip().startswith("/")
-        ):
+        if self.provider is None or not self.settings.auto_extract:
+            return
+        if message.user.is_bot or len(text.strip()) < 12 or text.lstrip().startswith("/"):
+            await self._count(stores, "extract_skipped_ineligible")
             return
         try:
             if self.limits and await self.limits.budget_exhausted():
+                await self._count(stores, "extract_skipped_budget")
                 return
+            await self._count(stores, "extract_attempted")
             completion = await self.provider.complete(
                 [Message.user(text)],
                 system=EXTRACTION_SYSTEM,
@@ -587,12 +652,14 @@ class MemoryPlugin(BasePlugin):
                     completion.usage.input_tokens + completion.usage.output_tokens
                 )
             if completion.stop_reason == "max_tokens":
+                await self._count(stores, "extract_skipped_max_tokens")
                 logger.warning(
                     "memory extraction skipped chat=%s reason=max_tokens", message.chat.key
                 )
                 return
             data, reason = _parse_extraction_response(completion.message.text)
             if reason:
+                await self._count(stores, f"extract_skipped_{reason}")
                 logger.warning(
                     "memory extraction skipped chat=%s reason=%s", message.chat.key, reason
                 )
@@ -601,11 +668,14 @@ class MemoryPlugin(BasePlugin):
             facts = data["facts"]
             for fact in facts[:2]:
                 if not isinstance(fact, dict) or not isinstance(fact.get("text"), str):
+                    await self._count(stores, "fact_dropped_invalid")
                     continue
                 fact_text = fact["text"].strip()
                 if not fact_text or len(fact_text) > self.settings.max_chars:
+                    await self._count(stores, "fact_dropped_invalid")
                     continue
                 if any(pattern.search(fact_text) for pattern in SENSITIVE_PATTERNS):
+                    await self._count(stores, "fact_dropped_sensitive")
                     continue
                 speaker = message.user.ref if fact.get("about_speaker") is True else None
                 await self._save(
@@ -617,7 +687,9 @@ class MemoryPlugin(BasePlugin):
                     created_by=message.user.ref,
                     subject_user=speaker,
                 )
+                await self._count(stores, "fact_saved")
         except Exception as exc:
+            await self._count(stores, "extract_failed")
             logger.warning(
                 "memory extraction failed chat=%s error=%s", message.chat.key, type(exc).__name__
             )
