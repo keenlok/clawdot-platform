@@ -602,7 +602,7 @@ def test_language_format_is_canonical_without_script_or_tone_heuristics():
     assert not _valid_pronunciation_request("こんにちは", "japanese", "こんにちは", "normal")
 
 
-async def test_enabled_router_handles_ordinary_pronunciation_and_sticky_slow_followup():
+async def test_enabled_router_handles_natural_audio_requests_and_sticky_slow_followup():
     from chatcore.agent import AgentResponder, AgentSettings
     from chatcore.conversation import ConversationPlugin, ConversationStore
     from chatcore.limits import Limits
@@ -694,10 +694,20 @@ async def test_enabled_router_handles_ordinary_pronunciation_and_sticky_slow_fol
     router = SkillRouter(
         app.skills, None, mode="keyword", timeout_ms=100, threshold=0.5, margin=0.05
     )
-    for phrase in ("Please pronounce this in Japanese", "Please say this aloud in Japanese"):
+    for phrase in (
+        "Please pronounce this in Japanese",
+        "Please say this aloud in Japanese",
+        "how to sound",
+        "voice pls",
+        "i want sound clip",
+        "please send an audio clip",
+        "讀畀我聽",
+        "请读给我听",
+        "この文を音声で聞きたい",
+    ):
         result = await router.route(phrase)
-        assert "language_tutor" in [hit.skill for hit in result.hits]
-    first = message("Please pronounce this in Japanese")
+        assert "language_tutor" in [hit.skill for hit in result.hits], phrase
+    first = message("voice pls")
     await stores.repo.log_message(first)
     await responder.respond(first, first.text, app)
     followup = message("slower please", sender=first.user)
