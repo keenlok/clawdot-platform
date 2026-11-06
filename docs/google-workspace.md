@@ -155,6 +155,21 @@ atomic delete/insert uses exact UTF-16 ranges, explicit tab IDs and `requiredRev
 A changed revision requires a fresh preview. Replacement styling is restored explicitly,
 and API read-back verifies the bounded result. No tab-wide replacement is issued.
 
+Read-back separates exact text from formatting preservation. Google can return an unset run
+style when the value matches its parent; verification resolves supported named-style inheritance
+from the selected tab and paragraph against frozen pre-edit evidence. Unknown editor defaults,
+unsupported table inheritance, mixed styles or incomplete coverage cannot establish formatting
+preservation. The verifier makes at most three reads within five seconds and never repeats a write.
+
+When the latest read proves the exact requested text but formatting differs or cannot be resolved,
+the result says the text was saved and verified, reports a formatting warning, and records a
+partial outcome. Do not repeat that edit; inspect the current Doc before proposing another write.
+A new copy retains its destination URL, while requested sharing and current-itinerary advancement
+remain gated on full verification. A later text mismatch, read error or expired read-back deadline
+does not retain an earlier saved-text claim. Text mismatch and unavailable verification remain
+distinct from formatting-only warnings. Existing historical uncertain records are not promoted or
+replayed by this repair.
+
 `google_edit_sheet` previews a stable numeric sheet ID, exact tab/range, typed before-values
 and literal after-values. The range must be rectangular, within configured row/column/content
 limits, and at most `GOOGLE_MAX_EDIT_CELLS` (default and maximum 100). Merged, spilled,

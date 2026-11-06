@@ -65,6 +65,11 @@ class DocMatch:
     end_index: int
     tab_id: str
     uniform_style: dict[str, Any]
+    effective_style: dict[str, Any] = field(default_factory=dict)
+    style_resolved: bool = False
+    named_style_type: str | None = None
+    in_table: bool = False
+    style_context_supported: bool = True
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,9 @@ class DocParagraph:
     start_index: int
     end_index: int
     runs: tuple[dict[str, Any], ...]
+    named_style_type: str | None = None
+    in_table: bool = False
+    style_context_supported: bool = True
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,8 @@ class DocSnapshot:
     text: str
     paragraphs: tuple[DocParagraph, ...]
     complete: bool = True
+    named_styles: tuple[dict[str, Any], ...] = ()
+    style_context_supported: bool = True
 
 
 def choose_destination(mime_type, metadata, *, requested="auto", copy_enabled=False):

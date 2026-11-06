@@ -16,12 +16,34 @@ def doc(text, revision="rev-1", *, tab_id="tab-1", tab_title="Main"):
             {
                 "tabProperties": {"tabId": tab_id, "title": tab_title},
                 "documentTab": {
+                    "namedStyles": {
+                        "styles": [
+                            {
+                                "namedStyleType": "NORMAL_TEXT",
+                                "textStyle": {
+                                    "bold": True,
+                                    "italic": False,
+                                    "underline": False,
+                                    "strikethrough": False,
+                                    "smallCaps": False,
+                                    "backgroundColor": {},
+                                    "baselineOffset": "NONE",
+                                    "weightedFontFamily": {"fontFamily": "Arial"},
+                                    "fontSize": {"magnitude": 11, "unit": "PT"},
+                                    "foregroundColor": {
+                                        "color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}
+                                    },
+                                },
+                            }
+                        ]
+                    },
                     "body": {
                         "content": [
                             {
                                 "startIndex": 1,
                                 "endIndex": units + 2,
                                 "paragraph": {
+                                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                                     "elements": [
                                         {
                                             "startIndex": 1,
@@ -36,11 +58,11 @@ def doc(text, revision="rev-1", *, tab_id="tab-1", tab_title="Main"):
                                             "endIndex": units + 2,
                                             "textRun": {"content": "\n", "textStyle": {}},
                                         },
-                                    ]
+                                    ],
                                 },
                             }
                         ]
-                    }
+                    },
                 },
             }
         ],
@@ -104,6 +126,32 @@ async def test_doc_proposal_is_frozen_and_performs_no_remote_write(google_servic
     client.edit_document.assert_not_awaited()
     client.copy_file.assert_not_awaited()
     client.grant_writer.assert_not_awaited()
+
+
+async def test_doc_commit_conflicts_when_named_style_changes_without_text_or_raw_change(
+    google_service,
+):
+    base, client, ctx, _ = google_service
+    base.settings.copy_qualified = True
+    client.metadata.return_value = metadata()
+    original = doc("Dinner at 7pm")
+    changed = doc("Dinner at 7pm", "rev-1")
+    changed["tabs"][0]["documentTab"]["namedStyles"]["styles"][0]["textStyle"][
+        "weightedFontFamily"
+    ] = {"fontFamily": "Courier New"}
+    client.document_for_edit.side_effect = [original, changed]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(
+        ctx, url(), "Dinner at 7pm", "Dinner at 8pm", destination="copy"
+    )
+
+    result = await edits.commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "Conflict" in result
+    assert journal["phase"] == "conflict"
+    client.copy_file.assert_not_awaited()
+    client.edit_document.assert_not_awaited()
 
 
 async def test_link_viewer_choice_applies_only_to_frozen_new_doc_copies(google_service):
@@ -341,6 +389,7 @@ async def test_doc_verification_ignores_unrelated_inline_image_and_keeps_target_
     base.settings.copy_qualified = True
     client.metadata.side_effect = [metadata(), metadata(), metadata("copy-id"), metadata("copy-id")]
     client.copy_file.return_value = {"id": "copy-id", "mimeType": DOC}
+    client.edit_document.side_effect = GoogleError("synthetic response loss")
     with_image = doc("Dinner at 8pm", "rev-2", tab_id="copy-tab")
     content = with_image["tabs"][0]["documentTab"]["body"]["content"][0]
     content["endIndex"] += 1
@@ -407,8 +456,12 @@ async def test_doc_verification_rejects_style_mismatch_after_bounded_reads(
     result = await edits.commit(action, ctx)
 
     journal = await base.repo.edit_result(ctx.chat.key, action.id)
-    assert "Uncertain" in result and "style_mismatch" in result
-    assert journal["error_category"] == "style_mismatch"
+    assert "Partial" in result and "text was saved and verified" in result
+    assert "Formatting preservation could not be verified" in result
+    assert "Do not repeat the edit" in result
+    assert "Sharing and current-itinerary advancement were not performed" in result
+    assert journal["phase"] == "partial"
+    assert journal["error_category"] == "formatting_mismatch"
     assert client.edit_document.await_count == 1
     client.grant_link_viewer.assert_not_awaited()
 
@@ -439,9 +492,84 @@ async def test_doc_verification_rejects_missing_target_style_coverage(google_ser
     result = await edits.commit(action, ctx)
 
     journal = await base.repo.edit_result(ctx.chat.key, action.id)
-    assert "Uncertain" in result and "style_coverage" in result
-    assert journal["error_category"] == "style_coverage"
+    assert "Partial" in result and "text was saved and verified" in result
+    assert journal["phase"] == "partial"
+    assert journal["error_category"] == "formatting_unverified"
     assert client.edit_document.await_count == 1
+
+
+async def test_table_inheritance_yields_text_verified_formatting_partial(google_service):
+    base, client, ctx, _ = google_service
+    client.metadata.return_value = metadata()
+
+    def table_doc(text, revision):
+        result = doc("unused", revision)
+        units = len(text.encode("utf-16-le")) // 2
+        result["tabs"][0]["documentTab"]["body"]["content"] = [
+            {
+                "startIndex": 1,
+                "endIndex": units + 7,
+                "table": {
+                    "tableRows": [
+                        {
+                            "tableCells": [
+                                {
+                                    "content": [
+                                        {
+                                            "startIndex": 2,
+                                            "endIndex": units + 3,
+                                            "paragraph": {
+                                                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                                                "elements": [
+                                                    {
+                                                        "startIndex": 2,
+                                                        "endIndex": units + 2,
+                                                        "textRun": {
+                                                            "content": text,
+                                                            "textStyle": {},
+                                                        },
+                                                    },
+                                                    {
+                                                        "startIndex": units + 2,
+                                                        "endIndex": units + 3,
+                                                        "textRun": {
+                                                            "content": "\n",
+                                                            "textStyle": {},
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+            }
+        ]
+        return result
+
+    client.document_for_edit.side_effect = [
+        table_doc("Dinner at 7pm", "rev-1"),
+        table_doc("Dinner at 7pm", "rev-1"),
+        table_doc("Dinner at 8pm", "rev-2"),
+        table_doc("Dinner at 8pm", "rev-2"),
+        table_doc("Dinner at 8pm", "rev-2"),
+    ]
+    edits = GoogleEditService(base)
+    action = await edits.propose_doc(ctx, url(), "Dinner at 7pm", "Dinner at 8pm")
+
+    result = await edits.commit(action, ctx)
+
+    journal = await base.repo.edit_result(ctx.chat.key, action.id)
+    assert "text was saved and verified" in result
+    assert "Formatting preservation could not be verified" in result
+    assert "Do not repeat the edit" in result
+    assert journal["phase"] == "partial"
+    assert journal["error_category"] == "formatting_unverified"
+    assert client.edit_document.await_count == 1
+    assert client.document_for_edit.await_count == 5
 
 
 async def test_doc_verification_stops_when_read_exceeds_aggregate_deadline():
@@ -976,3 +1104,238 @@ async def test_copied_sheet_resolves_destination_tab_by_title_and_new_numeric_id
     update = client.edit_cells.await_args.args[1]["requests"][0]["updateCells"]
     assert update["range"]["sheetId"] == 99
     assert "verified" in result.lower()
+
+
+async def test_doc_verification_accepts_equivalent_normal_text_inheritance(monkeypatch):
+    import asyncio
+
+    from chatcore_google.doc_verification import verify_doc_readback
+    from chatcore_google.edit_snapshot import find_doc_match, flatten_doc_snapshot
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    expected_style = {
+        "bold": True,
+        "italic": False,
+        "underline": False,
+        "strikethrough": False,
+        "smallCaps": False,
+        "backgroundColor": {},
+        "baselineOffset": "NONE",
+        "weightedFontFamily": {"fontFamily": "Arial"},
+        "fontSize": {"magnitude": 11, "unit": "PT"},
+        "foregroundColor": {"color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}},
+    }
+    before = doc("Dinner at 7pm")
+    before["tabs"][0]["documentTab"]["namedStyles"] = {
+        "styles": [{"namedStyleType": "NORMAL_TEXT", "textStyle": expected_style}]
+    }
+    before["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["paragraphStyle"] = {
+        "namedStyleType": "NORMAL_TEXT"
+    }
+    before["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"][
+        "textStyle"
+    ] = expected_style
+    after = doc("Dinner at 8pm", "rev-2")
+    after["tabs"][0]["documentTab"]["namedStyles"] = before["tabs"][0]["documentTab"]["namedStyles"]
+    after["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["paragraphStyle"] = {
+        "namedStyleType": "NORMAL_TEXT"
+    }
+    after["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"][
+        "textStyle"
+    ] = {}
+
+    class Client:
+        async def document_for_edit(self, _file_id):
+            return after
+
+    before_snapshot = flatten_doc_snapshot(before, tab_id="tab-1", max_chars=100)
+    match = find_doc_match(before_snapshot, "Dinner at 7pm")
+    result = await verify_doc_readback(
+        Client(),
+        "file",
+        "Dinner at 8pm\n",
+        max_chars=100,
+        tab_id="tab-1",
+        match=match,
+        replacement="Dinner at 8pm",
+    )
+
+    assert result.verified is True
+
+
+@pytest.mark.parametrize(
+    "changed_style",
+    [
+        {"bold": False},
+        {"weightedFontFamily": {"fontFamily": "Times New Roman"}},
+        {"weightedFontFamily": {"fontFamily": "Arial", "weight": 600}},
+        {"fontSize": {"magnitude": 12, "unit": "PT"}},
+        {"foregroundColor": {"color": {"rgbColor": {"red": 1, "green": 0, "blue": 0}}}},
+        {"link": {"url": "https://example.com"}},
+    ],
+)
+async def test_doc_verification_detects_changed_effective_style(changed_style):
+    from chatcore_google.doc_verification import verify_doc_readback
+    from chatcore_google.edit_snapshot import find_doc_match, flatten_doc_snapshot
+
+    before = doc("Dinner at 7pm")
+    after = doc("Dinner at 8pm", "rev-2")
+    after["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"][
+        "textStyle"
+    ] = changed_style
+    match = find_doc_match(
+        flatten_doc_snapshot(before, tab_id="tab-1", max_chars=100), "Dinner at 7pm"
+    )
+
+    class Client:
+        async def document_for_edit(self, _file_id):
+            return after
+
+    result = await verify_doc_readback(
+        Client(),
+        "file",
+        "Dinner at 8pm\n",
+        max_chars=100,
+        tab_id="tab-1",
+        match=match,
+        replacement="Dinner at 8pm",
+    )
+
+    assert result.verified is False
+    assert result.text_verified is True
+    assert result.category == "style_mismatch"
+
+
+async def test_later_text_mismatch_clears_earlier_exact_text_evidence(monkeypatch):
+    import asyncio
+
+    from chatcore_google.doc_verification import verify_doc_readback
+    from chatcore_google.edit_snapshot import find_doc_match, flatten_doc_snapshot
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    before = doc("Dinner at 7pm")
+    first = doc("Dinner at 8pm", "rev-2")
+    first["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"][
+        "textStyle"
+    ] = {"italic": True}
+    mismatch = doc("Dinner at 6pm", "rev-3")
+
+    class Client:
+        def __init__(self):
+            self.results = iter([first, mismatch, mismatch])
+
+        async def document_for_edit(self, _file_id):
+            return next(self.results)
+
+    match = find_doc_match(
+        flatten_doc_snapshot(before, tab_id="tab-1", max_chars=100), "Dinner at 7pm"
+    )
+    result = await verify_doc_readback(
+        Client(),
+        "file",
+        "Dinner at 8pm\n",
+        max_chars=100,
+        tab_id="tab-1",
+        match=match,
+        replacement="Dinner at 8pm",
+    )
+
+    assert result.category == "text_mismatch"
+    assert result.text_verified is False
+    assert result.formatting_verified is False
+
+
+async def test_later_read_error_clears_earlier_exact_text_evidence(monkeypatch):
+    import asyncio
+
+    from chatcore_google.doc_verification import verify_doc_readback
+    from chatcore_google.edit_snapshot import find_doc_match, flatten_doc_snapshot
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    before = doc("Dinner at 7pm")
+    exact_text = doc("Dinner at 8pm", "rev-2")
+    exact_text["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "textRun"
+    ]["textStyle"] = {"italic": True}
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+
+        async def document_for_edit(self, _file_id):
+            self.calls += 1
+            if self.calls == 1:
+                return exact_text
+            raise GoogleError("read failed")
+
+    match = find_doc_match(
+        flatten_doc_snapshot(before, tab_id="tab-1", max_chars=100), "Dinner at 7pm"
+    )
+    client = Client()
+    result = await verify_doc_readback(
+        client,
+        "file",
+        "Dinner at 8pm\n",
+        max_chars=100,
+        tab_id="tab-1",
+        match=match,
+        replacement="Dinner at 8pm",
+    )
+
+    assert client.calls == 3
+    assert result.category == "read_error"
+    assert result.text_verified is False
+    assert result.formatting_verified is False
+
+
+async def test_deadline_after_exact_text_with_style_warning_clears_current_text_claim():
+    from chatcore_google.doc_verification import verify_doc_readback
+    from chatcore_google.edit_snapshot import find_doc_match, flatten_doc_snapshot
+
+    now = 0.0
+    before = doc("Dinner at 7pm")
+    after = doc("Dinner at 8pm", "rev-2")
+    after["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"][
+        "textStyle"
+    ] = {"italic": True}
+    match = find_doc_match(
+        flatten_doc_snapshot(before, tab_id="tab-1", max_chars=100), "Dinner at 7pm"
+    )
+
+    class Client:
+        calls = 0
+
+        async def document_for_edit(self, _file_id):
+            self.calls += 1
+            return after
+
+    async def expire_deadline(_delay):
+        nonlocal now
+        now = 6.0
+
+    client = Client()
+    result = await verify_doc_readback(
+        client,
+        "file",
+        "Dinner at 8pm\n",
+        max_chars=100,
+        tab_id="tab-1",
+        match=match,
+        replacement="Dinner at 8pm",
+        clock=lambda: now,
+        sleep=expire_deadline,
+    )
+
+    assert client.calls == 1
+    assert result.category == "readback_deadline"
+    assert result.text_verified is False
+    assert result.formatting_verified is False

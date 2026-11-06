@@ -60,6 +60,22 @@ def flatten_doc_snapshot(document, *, tab_id, max_chars, file_id=None):
         raise ValueError("Google did not return a stable tab ID required for edits.")
 
     paragraphs: list[DocParagraph] = []
+    if "namedStyles" in body_tab:
+        named_styles = body_tab["namedStyles"]
+        named_style_owner = body_tab
+    elif not document.get("tabs") or len(tabs) == 1:
+        named_styles = document.get("namedStyles", {})
+        named_style_owner = document
+    else:
+        named_styles = {}
+        named_style_owner = body_tab
+    style_rows = named_styles.get("styles", ()) if isinstance(named_styles, dict) else ()
+    style_context_supported = not bool(named_style_owner.get("suggestedNamedStylesChanges"))
+    if not isinstance(style_rows, list | tuple) or any(
+        not isinstance(row, dict) for row in style_rows
+    ):
+        style_rows = ()
+        style_context_supported = False
     used = 0
     complete = True
 
@@ -73,7 +89,7 @@ def flatten_doc_snapshot(document, *, tab_id, max_chars, file_id=None):
             )
         )
 
-    def collect_content(content, inherited_suggestion=False):
+    def collect_content(content, inherited_suggestion=False, in_table=False):
         nonlocal used, complete
         for structural in content or ():
             suggested = inherited_suggestion or has_suggestions(structural)
@@ -111,7 +127,27 @@ def flatten_doc_snapshot(document, *, tab_id, max_chars, file_id=None):
                 used += len(text)
                 if used > max_chars:
                     raise ValueError("Document exceeds the edit snapshot size limit.")
-                paragraphs.append(DocParagraph(text, int(start), int(end), tuple(runs)))
+                paragraph_style = paragraph.get("paragraphStyle") or {}
+                paragraph_style_supported = isinstance(paragraph_style, dict) and not bool(
+                    paragraph.get("suggestedParagraphStyleChanges")
+                )
+                if not isinstance(paragraph_style, dict):
+                    paragraph_style = {}
+                named_style_type = paragraph_style.get("namedStyleType")
+                if named_style_type is not None and not isinstance(named_style_type, str):
+                    complete = False
+                    named_style_type = None
+                paragraphs.append(
+                    DocParagraph(
+                        text,
+                        int(start),
+                        int(end),
+                        tuple(runs),
+                        named_style_type,
+                        in_table,
+                        paragraph_style_supported,
+                    )
+                )
             elif "table" in structural:
                 for row in structural["table"].get("tableRows", ()):
                     row_suggested = suggested or has_suggestions(row)
@@ -121,9 +157,11 @@ def flatten_doc_snapshot(document, *, tab_id, max_chars, file_id=None):
                         cell_suggested = row_suggested or has_suggestions(cell)
                         if cell_suggested:
                             complete = False
-                        collect_content(cell.get("content", ()), cell_suggested)
+                        collect_content(cell.get("content", ()), cell_suggested, True)
             elif "tableOfContents" in structural:
-                collect_content(structural["tableOfContents"].get("content", ()), suggested)
+                collect_content(
+                    structural["tableOfContents"].get("content", ()), suggested, in_table
+                )
             elif "sectionBreak" not in structural:
                 complete = False
 
@@ -136,6 +174,8 @@ def flatten_doc_snapshot(document, *, tab_id, max_chars, file_id=None):
         text="".join(item.text for item in paragraphs),
         paragraphs=tuple(paragraphs),
         complete=complete,
+        named_styles=tuple(style_rows),
+        style_context_supported=style_context_supported,
     )
 
 
@@ -217,7 +257,25 @@ def find_doc_match(snapshot: DocSnapshot, find: str) -> DocMatch:
             raise ValueError("The requested range uses unsupported text styling.")
         if end - start != utf16_length(find):
             raise ValueError("Google returned inconsistent UTF-16 indexes for the requested range.")
-        return DocMatch(find, start, end, snapshot.tab_id, dict(styles[0]))
+        effective_style, resolved = resolve_effective_doc_style(
+            styles[0], snapshot.named_styles, paragraph.named_style_type
+        )
+        if paragraph.in_table:
+            effective_style, resolved = {}, False
+        if not snapshot.style_context_supported or not paragraph.style_context_supported:
+            effective_style, resolved = {}, False
+        return DocMatch(
+            find,
+            start,
+            end,
+            snapshot.tab_id,
+            dict(styles[0]),
+            effective_style,
+            resolved,
+            paragraph.named_style_type,
+            paragraph.in_table,
+            paragraph.style_context_supported and snapshot.style_context_supported,
+        )
     raise ValueError("The requested text must stay within one paragraph boundary.")
 
 
@@ -254,6 +312,158 @@ def doc_style_for_range(snapshot: DocSnapshot, start_index: int, end_index: int)
     if any(value != style for _, _, value in candidates[1:]):
         raise ValueError("The saved replacement has mixed text styling.")
     return dict(style)
+
+
+_SUPPORTED_DOC_STYLE = frozenset(
+    {
+        "bold",
+        "italic",
+        "underline",
+        "strikethrough",
+        "smallCaps",
+        "backgroundColor",
+        "foregroundColor",
+        "baselineOffset",
+        "fontSize",
+        "weightedFontFamily",
+        "link",
+    }
+)
+
+
+def resolve_effective_doc_style(raw_style, named_styles, named_style_type):
+    """Resolve only explicitly evidenced style values; unknown inheritance stays unknown."""
+    if not isinstance(raw_style, dict) or set(raw_style) - _SUPPORTED_DOC_STYLE:
+        return {}, False
+    inherited = {}
+    if named_style_type is not None:
+        if not isinstance(named_styles, tuple | list):
+            return {}, False
+        normal = [row for row in named_styles if row.get("namedStyleType") == "NORMAL_TEXT"]
+        if len(normal) != 1 or not isinstance(normal[0].get("textStyle"), dict):
+            return {}, False
+        named = [row for row in named_styles if row.get("namedStyleType") == named_style_type]
+        if len(named) != 1 or not isinstance(named[0].get("textStyle"), dict):
+            return {}, False
+        normal_style = {k: v for k, v in normal[0]["textStyle"].items() if k != "link"}
+        named_style = {k: v for k, v in named[0]["textStyle"].items() if k != "link"}
+        if set(normal_style) - _SUPPORTED_DOC_STYLE or set(named_style) - _SUPPORTED_DOC_STYLE:
+            return {}, False
+        inherited = _merge_style_layers(normal_style, named_style)
+    else:
+        return {}, False
+    resolved = _merge_style_layers(inherited, raw_style)
+    if not resolved:
+        return {}, False
+    resolved.setdefault("link", None)
+    required = _SUPPORTED_DOC_STYLE - {"link"}
+    if not required.issubset(resolved):
+        return {}, False
+    try:
+        resolved = {key: _normalize_style_value(key, value) for key, value in resolved.items()}
+    except (TypeError, ValueError):
+        return {}, False
+    return resolved, True
+
+
+def _merge_style_layers(*layers):
+    result = {}
+    for layer in layers:
+        for key, value in layer.items():
+            if key == "baselineOffset" and value == "BASELINE_OFFSET_UNSPECIFIED":
+                continue
+            result[key] = value
+    return result
+
+
+def _normalize_style_value(key, value):
+    booleans = {"bold", "italic", "underline", "strikethrough", "smallCaps"}
+    if key in booleans:
+        if not isinstance(value, bool):
+            raise ValueError("Invalid boolean text style.")
+        return value
+    if key in {"backgroundColor", "foregroundColor"}:
+        if value == {}:
+            return {"transparent": True}
+        if not isinstance(value, dict) or set(value) != {"color"}:
+            raise ValueError("Unsupported optional color.")
+        color = value["color"]
+        if not isinstance(color, dict) or set(color) != {"rgbColor"}:
+            raise ValueError("Unsupported color type.")
+        rgb = color["rgbColor"]
+        if not isinstance(rgb, dict) or set(rgb) - {"red", "green", "blue"}:
+            raise ValueError("Malformed RGB color.")
+        if any(
+            isinstance(component, bool)
+            or not isinstance(component, int | float)
+            or not math.isfinite(component)
+            or not 0 <= component <= 1
+            for component in rgb.values()
+        ):
+            raise ValueError("Invalid RGB component.")
+        return {channel: float(rgb.get(channel, 0)) for channel in ("red", "green", "blue")}
+    if key == "fontSize":
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"magnitude", "unit"}
+            or value["unit"] != "PT"
+            or isinstance(value["magnitude"], bool)
+            or not isinstance(value["magnitude"], int | float)
+            or not math.isfinite(value["magnitude"])
+            or value["magnitude"] <= 0
+        ):
+            raise ValueError("Unsupported font size.")
+        return float(value["magnitude"])
+    if key == "weightedFontFamily":
+        if not isinstance(value, dict) or set(value) - {"fontFamily", "weight"}:
+            raise ValueError("Unsupported font family.")
+        family, weight = value.get("fontFamily"), value.get("weight", 400)
+        if (
+            not isinstance(family, str)
+            or not family
+            or isinstance(weight, bool)
+            or not isinstance(weight, int)
+            or weight < 100
+            or weight > 900
+            or weight % 100
+        ):
+            raise ValueError("Invalid font family.")
+        return {"fontFamily": family, "weight": weight}
+    if key == "baselineOffset":
+        if value not in {"NONE", "SUPERSCRIPT", "SUBSCRIPT"}:
+            raise ValueError("Unsupported baseline offset.")
+        return value
+    if key == "link":
+        if value is None:
+            return None
+        if not isinstance(value, dict) or len(value) != 1:
+            raise ValueError("Unsupported link target.")
+        target, target_value = next(iter(value.items()))
+        if (
+            target not in {"url", "bookmarkId", "headingId", "tabId"}
+            or not isinstance(target_value, str)
+            or not target_value
+        ):
+            raise ValueError("Invalid link target.")
+        return {target: target_value}
+    raise ValueError("Unsupported text style.")
+
+
+def paragraph_style_for_range(snapshot, start_index, end_index):
+    matches = [
+        paragraph
+        for paragraph in snapshot.paragraphs
+        if paragraph.start_index <= start_index and paragraph.end_index >= end_index
+    ]
+    if len(matches) != 1:
+        return None, False
+    paragraph = matches[0]
+    return (
+        paragraph.named_style_type,
+        not paragraph.in_table
+        and paragraph.style_context_supported
+        and snapshot.style_context_supported,
+    )
 
 
 _A1_RANGE = re.compile(r"^([A-Z]{1,3})([1-9][0-9]*)(?::([A-Z]{1,3})([1-9][0-9]*))?$")

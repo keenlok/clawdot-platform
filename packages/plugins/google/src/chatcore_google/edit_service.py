@@ -245,6 +245,11 @@ class GoogleEditService:
                 "start_index": match.start_index,
                 "end_index": match.end_index,
                 "uniform_style": match.uniform_style,
+                "effective_style": match.effective_style,
+                "style_resolved": match.style_resolved,
+                "named_style_type": match.named_style_type,
+                "named_styles": list(snapshot.named_styles),
+                "in_table": match.in_table,
                 "before_text": before_text,
                 "coverage_complete": snapshot.complete,
             }
@@ -462,6 +467,11 @@ class GoogleEditService:
             match.start_index == pre.get("start_index")
             and match.end_index == pre.get("end_index")
             and match.uniform_style == pre.get("uniform_style")
+            and match.effective_style == pre.get("effective_style", match.effective_style)
+            and match.style_resolved == pre.get("style_resolved", match.style_resolved)
+            and match.named_style_type == pre.get("named_style_type", match.named_style_type)
+            and list(snapshot.named_styles) == pre.get("named_styles", list(snapshot.named_styles))
+            and match.in_table == pre.get("in_table", match.in_table)
         )
         return snapshot, valid
 
@@ -814,6 +824,29 @@ class GoogleEditService:
         }[access]
         return f"Verified: {_web_url(destination_id, DOC)}{suffix}"
 
+    async def _finish_doc_text_only(self, action, ctx, payload, destination_id, verification):
+        category = (
+            "formatting_mismatch"
+            if verification.category == "style_mismatch"
+            else "formatting_unverified"
+        )
+        await self._phase(
+            action,
+            ctx,
+            "partial",
+            destination_id=destination_id,
+            stage="verification",
+            category=category,
+        )
+        response = (
+            f"Partial: text was saved and verified in this Doc at {_web_url(destination_id, DOC)}. "
+            "Formatting preservation could not be verified. Do not repeat the edit; inspect "
+            "the current Doc before proposing another write."
+        )
+        if payload["destination"]["mode"] != "original":
+            response += " Sharing and current-itinerary advancement were not performed."
+        return response
+
     async def _copy_doc_tab(self, payload, file_id):
         pre = payload["precondition"]
         raw = await self.client.document_for_edit(file_id)
@@ -998,6 +1031,14 @@ class GoogleEditService:
                 if source["mime"] != DOCX and (
                     target_snapshot.text != payload["snapshot"]["text"]
                     or target_match.uniform_style != payload["precondition"]["uniform_style"]
+                    or target_match.effective_style
+                    != payload["precondition"].get("effective_style", target_match.effective_style)
+                    or target_match.style_resolved
+                    != payload["precondition"].get("style_resolved", target_match.style_resolved)
+                    or list(target_snapshot.named_styles)
+                    != payload["precondition"].get(
+                        "named_styles", list(target_snapshot.named_styles)
+                    )
                 ):
                     await self._phase(
                         action,
@@ -1044,6 +1085,10 @@ class GoogleEditService:
                     return await self._finish_doc_success(
                         action, ctx, payload, destination_id, target_snapshot.tab_id
                     )
+                if verification.text_verified:
+                    return await self._finish_doc_text_only(
+                        action, ctx, payload, destination_id, verification
+                    )
                 stale = "HTTP 400" in str(exc)
                 phase = (
                     "partial"
@@ -1080,6 +1125,10 @@ class GoogleEditService:
                 tab_id,
             )
             if not verification.verified:
+                if verification.text_verified:
+                    return await self._finish_doc_text_only(
+                        action, ctx, payload, destination_id, verification
+                    )
                 await self._phase(
                     action,
                     ctx,

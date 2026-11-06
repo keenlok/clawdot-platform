@@ -1,6 +1,7 @@
 # Google Doc verification outcomes and inherited styles
 
-Status: Planned; awaiting owner approval before implementation.
+Status: Owner approved 2026-11-07; implemented and independently reviewed for v0.5.5.
+Downstream release/deployment evidence is recorded on the associated PRs.
 
 ## Problem and evidence
 
@@ -10,6 +11,10 @@ all three read-backs returned `style_mismatch`. Read-only inspection established
 that the replacement's raw text-style object was empty, while its paragraph's
 NORMAL_TEXT named style supplied the same expected font, size, weight and color.
 The existing verifier compares raw overrides, without resolving inheritance.
+Fresh read-only qualification on 2026-11-07 also identified table ancestry for this
+paragraph. Under the conservative table-parent rule below, this historical case
+therefore qualifies for exact saved-text reporting with a formatting warning; the
+matching paragraph named style alone does not establish its complete effective style.
 
 Google documents that an update matching its parent style becomes inherited and
 that inherited properties are returned as unset fields. See the
@@ -125,3 +130,25 @@ Production qualification is read-only: inspect the already-saved replacement wit
 the repaired resolver and report current evidence. Do not replay its uncertain
 action, retroactively mark it verified, send a chat message or alter any document
 content/sharing as part of this code repair.
+
+## Implementation validation — 2026-11-07
+
+Luna implemented runtime/tests, Sol independently reviewed and confirmed the final
+inheritance-context fixes, and Codex coordinated docs/release. The synthetic
+explicit-to-NORMAL_TEXT regression failed before implementation. The final focused
+snapshot/edit/trip run passed 86 tests; the Postgres partial-result journal test
+passed across repository reload. The final full suite passed **3,788 tests**, with
+four skips, 26 deselections and 14 existing Telegram deprecation warnings.
+
+Locked sync, whole-tree lint, changed-Python formatting, generated explainers and
+diff checks passed. Whole-tree formatting retains exactly the same 14 untouched
+Markdown baseline exceptions. All 26 migration hashes and all 104 third-party
+registry records are unchanged. All 19 candidate wheels built, and the Google
+wheel's 34 runtime/SQL/explainer resources match reviewed source. The isolated
+private app candidate suite passed 433 tests (24 skips, one deselection, six
+subtests); released-pin validation and installed receipts follow on the private PR.
+
+Production read-only inspection confirms the saved addition is present once and
+its text hash matches the earlier inspection. Its table ancestry remains a
+formatting warning under this conservative resolver. Historical journals, document
+contents/access and trip associations remain unchanged.

@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-11-07
+
+### Fixed
+
+- Google Doc edit verification resolves provable inherited text styles, avoiding false
+  formatting failures when Google normalizes matching explicit styles. Exact saved text
+  with unverified formatting is reported separately, without replaying the edit; sharing
+  and current-itinerary promotion still require complete verification.
+
 ## [0.5.4] - 2026-11-06
 
 ### Fixed
@@ -142,7 +151,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/keenlok/clawdot-platform/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/keenlok/clawdot-platform/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/keenlok/clawdot-platform/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/keenlok/clawdot-platform/compare/v0.5.1...v0.5.2
