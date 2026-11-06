@@ -1,6 +1,7 @@
 # Google Doc verification outcomes and inherited styles
 
 Status: Owner approved 2026-11-07; implemented and independently reviewed for v0.5.5.
+Implementation: [PR #20](https://github.com/keenlok/clawdot-platform/pull/20).
 Downstream release/deployment evidence is recorded on the associated PRs.
 
 ## Problem and evidence
