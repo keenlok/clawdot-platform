@@ -43,7 +43,7 @@ class ScenarioSearch:
         ]
         return [SearchHit(key, 1.0, value) for key, value in found[:size]]
 
-    async def delete(self, _index, *, chat, query=None):
+    async def delete(self, _index, *, chat, query=None, refresh_first=False):
         if self.delete_fails:
             self.delete_fails = False
             raise ConnectionError("scenario search delete failure")
@@ -250,6 +250,8 @@ async def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
             await plugin.purge_user(chat, target.ref, stores)
         elif action["action"] == "purge_chat":
             await plugin.purge_chat(chat, stores)
+        if action["action"] in {"purge_user", "purge_chat", "forget"}:
+            await plugin.process_index_work(stores)
         after = await snapshot_rows()
         record_mutations(before, after, actor)
         erased_text_seen = erased_text_seen or await observe_erased_text()

@@ -21,6 +21,7 @@ from chatcore.pending import PendingAction, PendingActionHandler
 from chatcore.plugin import BasePlugin, Command, CommandContext
 from chatcore.skills import Skill
 from chatcore.store.base import SearchHit, Stores
+from chatcore.store.evidence import human_source
 from chatcore.threads import TurnOrigin, current_turn_origin
 from chatcore.tools.registry import Tool, ToolContext, ToolResult
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,6 +30,7 @@ from .repository import MemoryMemoryRepo, MemoryRepo, PostgresMemoryRepo
 from .service import DROP_FACT, build_context, render_fact, resolve_fact_subject
 
 logger = logging.getLogger(__name__)
+SOURCE_POLICY_VERSION = 1
 
 COUNTER_TTL_S = 40 * 86400
 COUNTER_NAMES = (
@@ -46,6 +48,10 @@ COUNTER_NAMES = (
     "fact_dropped_sensitive",
     "fact_dropped_unlinked",
     "fact_saved",
+    "fact_rejected_source",
+    "fact_rejected_epoch",
+    "fact_sources_capped",
+    "extract_skipped_erasure",
     "fact_reused",
     "skipped_near_duplicate",
     "index_write_failed",
@@ -181,6 +187,7 @@ class MemorySettings(BaseSettings):
 
 class MemoryPlugin(BasePlugin):
     name = "memory"
+    erasure_blocks_writes = True
     explainer_package = "chatcore_memory"
     help_title = "Memory"
 
@@ -212,13 +219,18 @@ class MemoryPlugin(BasePlugin):
         provider: Provider | None = None,
         limits: Limits | None = None,
         settings: MemorySettings | None = None,
+        clock=None,
+        sleep=None,
     ) -> None:
         self.embedder = embedder
         self.provider = provider
         self.limits = limits
         self.settings = settings or MemorySettings()
+        self.clock = clock or (lambda: datetime.now(UTC))
+        self.sleep = sleep or asyncio.sleep
         self._memory_repo: MemoryMemoryRepo | None = None
         self._memory_locks: dict[str, asyncio.Lock] = {}
+        self._index_task: asyncio.Task | None = None
 
     def _repo(self, stores: Stores) -> MemoryRepo:
         if stores.db is not None:
@@ -238,10 +250,17 @@ class MemoryPlugin(BasePlugin):
         except Exception as exc:
             logger.warning("memory counter failed error=%s", type(exc).__name__)
 
-    async def _index(self, chat: ChatRef, row: Mapping[str, Any], stores: Stores) -> None:
+    async def _index(
+        self,
+        chat: ChatRef,
+        row: Mapping[str, Any],
+        stores: Stores,
+        *,
+        vector: list[float] | None = None,
+    ) -> None:
         if stores.search is None or self.embedder is None:
             return
-        vector = await self.embedder.embed_documents([str(row["text"])])
+        vector = vector or (await self.embedder.embed_documents([str(row["text"])]))[0]
         await stores.search.index(
             "memories",
             str(row["id"]),
@@ -252,7 +271,7 @@ class MemoryPlugin(BasePlugin):
                 "source": row["source"],
                 "pinned": bool(row["pinned"]),
                 "created_at": row["created_at"],
-                "embedding": vector[0],
+                "embedding": vector,
             },
             chat=chat,
         )
@@ -260,9 +279,12 @@ class MemoryPlugin(BasePlugin):
     async def _delete_index(self, chat: ChatRef, memory_ids: list[int], stores: Stores) -> None:
         if stores.search is None:
             return
-        for memory_id in memory_ids:
+        for start in range(0, len(memory_ids), 500):
             await stores.search.delete(
-                "memories", chat=chat, query={"term": {"memory_id": memory_id}}
+                "memories",
+                chat=chat,
+                query={"terms": {"memory_id": memory_ids[start : start + 500]}},
+                refresh_first=True,
             )
 
     async def _candidate_ids(self, chat: ChatRef, text: str, stores: Stores) -> set[int]:
@@ -303,8 +325,17 @@ class MemoryPlugin(BasePlugin):
         replaces: int | None = None,
         expected_updated_at: Any = None,
         preserve_subject: bool = False,
+        epoch: int | None = None,
+        source_ids: list[tuple[str, str]] | None = None,
+        provenance: str = "none",
     ) -> dict[str, Any]:
         repo = self._repo(stores)
+        vector = None
+        if stores.search is not None and self.embedder is not None:
+            try:
+                vector = (await self.embedder.embed_documents([text]))[0]
+            except Exception as exc:
+                logger.warning("memory embedding failed error=%s", type(exc).__name__)
         candidate_ids = await self._candidate_ids(chat, text, stores)
         commit_args = {
             "source": source,
@@ -316,25 +347,44 @@ class MemoryPlugin(BasePlugin):
             "replaces": replaces,
             "expected_updated_at": expected_updated_at,
             "preserve_subject": preserve_subject,
+            "epoch": epoch,
+            "source_ids": source_ids,
+            "provenance": provenance,
+            "policy_version": SOURCE_POLICY_VERSION,
+            "index_enabled": stores.search is not None,
         }
         if stores.db is None:
+
+            async def source_lookup(source_chat, message_id):
+                return await human_source(stores.repo, source_chat, message_id)
+
+            commit_args["source_lookup"] = source_lookup
             async with self._memory_locks.setdefault(chat.key, asyncio.Lock()):
                 outcome = await repo.commit_fact(chat, text, **commit_args)
         else:
             outcome = await repo.commit_fact(chat, text, **commit_args)
+        if outcome["status"] in {"epoch", "erasure", "source"}:
+            return outcome
         if outcome["status"] not in {"saved", "replaced", "similar"}:
             return outcome
         row = outcome["row"]
         if outcome["status"] == "replaced":
             try:
                 await self._delete_index(chat, [int(outcome["old"]["id"])], stores)
+                if stores.search is not None:
+                    await self._finish_work(repo, chat, int(outcome["old"]["id"]), "delete_doc")
             except Exception as exc:
                 await self._count(stores, "index_write_failed")
                 logger.warning(
                     "memory index delete failed chat=%s error=%s", chat.key, type(exc).__name__
                 )
         try:
-            await self._index(chat, row, stores)
+            await self._index(chat, row, stores, vector=vector)
+            if stores.search is not None:
+                fresh = await repo.get(chat, int(row["id"]))
+                if fresh is None:
+                    await self._delete_index(chat, [int(row["id"])], stores)
+                await self._finish_work(repo, chat, int(row["id"]), "verify_index")
         except Exception as exc:
             await self._count(stores, "index_write_failed")
             logger.warning(
@@ -397,7 +447,18 @@ class MemoryPlugin(BasePlugin):
         if not fact or len(fact) > self.settings.max_chars:
             return ToolResult.error(f"Fact must contain 1 to {self.settings.max_chars} characters.")
         if source == "explicit":
-            payload = {"fact": fact, "about": about, "pinned": pinned}
+            repo = self._repo(ctx.stores)
+            epoch = await repo.capture_epoch(ctx.chat)
+            if await repo.erasure_active(ctx.chat):
+                return ToolResult.error("Saving is briefly paused while chat deletion finishes.")
+            payload = {
+                "fact": fact,
+                "about": about,
+                "pinned": pinned,
+                "epoch": epoch,
+                "source_message_id": ctx.source_message_id,
+                "reply_to_message_id": ctx.reply_to_message_id,
+            }
             summary = f'Save this memory exactly as written: "{fact}"'
             if replaces is not None:
                 target = await self._repo(ctx.stores).get(ctx.chat, replaces)
@@ -488,11 +549,18 @@ class MemoryPlugin(BasePlugin):
         )
 
     async def _delete_memory(self, chat: ChatRef, memory_id: int, stores: Stores) -> bool:
-        row = await self._repo(stores).delete(chat, memory_id)
+        repo = self._repo(stores)
+        if stores.db is None:
+            async with self._memory_locks.setdefault(chat.key, asyncio.Lock()):
+                row = await repo.delete(chat, memory_id, index_enabled=stores.search is not None)
+        else:
+            row = await repo.delete(chat, memory_id, index_enabled=stores.search is not None)
         if not row:
             return False
         try:
             await self._delete_index(chat, [memory_id], stores)
+            if stores.search is not None:
+                await self._finish_work(repo, chat, memory_id, "delete_doc")
         except Exception as exc:
             logger.warning(
                 "memory index delete failed chat=%s id=%s error=%s",
@@ -681,6 +749,11 @@ class MemoryPlugin(BasePlugin):
             await self._count(stores, "extract_skipped_ineligible")
             return
         try:
+            repo = self._repo(stores)
+            epoch = await repo.capture_epoch(message.chat)
+            if await repo.erasure_active(message.chat):
+                await self._count(stores, "extract_skipped_erasure")
+                return
             if self.limits and await self.limits.budget_exhausted():
                 await self._count(stores, "extract_skipped_budget")
                 return
@@ -757,7 +830,18 @@ class MemoryPlugin(BasePlugin):
                     pinned=False,
                     created_by=message.user.ref,
                     subject_user=subject,
+                    epoch=epoch,
+                    source_ids=[(origin.source_message_id or message.message_id, "statement")],
+                    provenance="known",
                 )
+                if outcome["status"] == "source":
+                    await self._count(stores, "fact_rejected_source")
+                    continue
+                if outcome["status"] in {"epoch", "erasure"}:
+                    await self._count(stores, "fact_rejected_epoch")
+                    continue
+                if outcome.get("sources_capped"):
+                    await self._count(stores, "fact_sources_capped")
                 if outcome["status"] == "saved":
                     await self._count(stores, "fact_saved")
                 elif outcome["status"] == "exact":
@@ -771,9 +855,14 @@ class MemoryPlugin(BasePlugin):
             )
 
     async def purge_user(self, chat: ChatRef, user: UserRef, stores: Stores) -> None:
-        ids = await self._repo(stores).purge_user(chat, user)
+        ids = await self._repo(stores).purge_user(
+            chat, user, index_enabled=stores.search is not None
+        )
         try:
             await self._delete_index(chat, ids, stores)
+            if stores.search is not None:
+                for memory_id in ids:
+                    await self._finish_work(self._repo(stores), chat, memory_id, "delete_doc")
         except Exception as exc:
             logger.warning(
                 "memory purge-user index failed chat=%s count=%d error=%s",
@@ -782,17 +871,152 @@ class MemoryPlugin(BasePlugin):
                 type(exc).__name__,
             )
 
+    async def erasure_notes(self, chat: ChatRef, user: UserRef, stores: Stores) -> str | None:
+        names = []
+        try:
+            members = await stores.repo.find_members(chat)
+        except Exception:
+            members = []
+        for member in members:
+            if member.ref == user:
+                names = [name for name in (member.username, member.display_name) if name]
+                break
+        survivors = await self._repo(stores).list(chat, limit=1_000_000)
+        matches = sorted(
+            int(row["id"])
+            for row in survivors
+            if any(
+                re.search(rf"(?<!\w){re.escape(name)}(?!\w)", str(row["text"]), re.IGNORECASE)
+                for name in names
+            )
+        )
+        if not matches:
+            return None
+        return (
+            f"{len(matches)} surviving memory text(s) match your name or username: "
+            + ", ".join(f"#{memory_id}" for memory_id in matches)
+            + ". Use /forget for any you want removed."
+        )
+
     async def purge_chat(self, chat: ChatRef, stores: Stores) -> None:
-        ids = await self._repo(stores).purge_chat(chat)
+        ids = await self._repo(stores).purge_chat(chat, index_enabled=stores.search is not None)
         try:
             if stores.search is not None:
-                await stores.search.delete("memories", chat=chat)
+                await stores.search.delete("memories", chat=chat, refresh_first=True)
+                await self._finish_work(self._repo(stores), chat, None, "delete_chat")
         except Exception as exc:
             logger.warning(
                 "memory purge-chat index failed chat=%s count=%d error=%s",
                 chat.key,
                 len(ids),
                 type(exc).__name__,
+            )
+
+    async def _finish_work(self, repo, chat, memory_id, op) -> None:
+        await repo.finish_index_work_for(chat, memory_id, op)
+
+    async def process_index_work(self, stores: Stores) -> int:
+        if stores.search is None:
+            return 0
+        repo = self._repo(stores)
+        completed = 0
+        for work in await repo.index_work():
+            chat = ChatRef.parse(str(work["chat_key"]))
+            memory_id = work.get("memory_id")
+            try:
+                if work["op"] == "verify_index":
+                    row = await repo.get(chat, int(memory_id))
+                    if row is None:
+                        await self._delete_index(chat, [int(memory_id)], stores)
+                    else:
+                        await self._index(chat, row, stores)
+                        if await repo.get(chat, int(memory_id)) is None:
+                            await self._delete_index(chat, [int(memory_id)], stores)
+                elif work["op"] == "delete_doc":
+                    await self._delete_index(chat, [int(memory_id)], stores)
+                elif work["op"] == "delete_chat":
+                    await stores.search.delete("memories", chat=chat, refresh_first=True)
+                await repo.finish_index_work(int(work["id"]))
+                completed += 1
+            except Exception as exc:
+                await repo.fail_index_work(int(work["id"]))
+                logger.error(
+                    "memory index work failed id=%s error=%s",
+                    work["id"],
+                    type(exc).__name__,
+                )
+        return completed
+
+    async def pending_cleanup(self, chat: ChatRef, stores: Stores) -> int:
+        return await self._repo(stores).count_index_work(chat)
+
+    async def on_startup(self, stores: Stores) -> None:
+        if stores.search is None:
+            return
+        try:
+            await self.process_index_work(stores)
+        except Exception as exc:
+            logger.error("memory index work startup failed error=%s", type(exc).__name__)
+        if self._index_task is None or self._index_task.done():
+            self._index_task = asyncio.create_task(self._index_work_loop(stores))
+
+    async def _index_work_loop(self, stores: Stores) -> None:
+        while True:
+            await self.sleep(300)
+            try:
+                await self.process_index_work(stores)
+            except Exception as exc:
+                logger.error("memory index work loop failed error=%s", type(exc).__name__)
+
+    async def begin_erasure(self, chat, operation_id, scope, target, stores) -> None:
+        if stores.db is None:
+            async with self._memory_locks.setdefault(chat.key, asyncio.Lock()):
+                repo = self._repo(stores)
+                if repo.erasure_ids.get(chat.key) != operation_id:
+                    await repo.bump_epoch(chat, operation_id)
+            return
+        async with stores.db.transaction() as tx:
+            await tx.execute(
+                "INSERT INTO memory_control (chat_key) VALUES ($1) ON CONFLICT DO NOTHING",
+                chat.key,
+            )
+            control = await tx.fetchrow(
+                "SELECT erasure_id FROM memory_control WHERE chat_key=$1 FOR UPDATE", chat.key
+            )
+            if control["erasure_id"] != operation_id:
+                await tx.execute(
+                    "UPDATE memory_control SET epoch=epoch+1, erasure_id=$2 WHERE chat_key=$1",
+                    chat.key,
+                    operation_id,
+                )
+
+    async def finish_erasure(self, chat, operation_id, *, success, stores) -> None:
+        if not success:
+            return
+        if stores.db is None:
+            repo = self._repo(stores)
+            if repo.erasure_ids.get(chat.key) == operation_id:
+                repo.erasure_ids[chat.key] = None
+            return
+        await stores.db.execute(
+            "UPDATE memory_control SET erasure_id=NULL WHERE chat_key=$1 AND erasure_id=$2",
+            chat.key,
+            operation_id,
+        )
+
+    async def release_erasure(self, chat, operation_id, stores) -> None:
+        if stores.db is None:
+            repo = self._repo(stores)
+            if repo.erasure_ids.get(chat.key) == operation_id:
+                await repo.bump_epoch(chat)
+                repo.erasure_ids[chat.key] = None
+            return
+        async with stores.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE memory_control SET epoch=epoch+1, erasure_id=NULL "
+                "WHERE chat_key=$1 AND erasure_id=$2",
+                chat.key,
+                operation_id,
             )
 
 
@@ -803,7 +1027,17 @@ class _MemoryActionHandler(PendingActionHandler):
     async def commit(self, action: PendingAction, ctx: CommandContext) -> str:
         if action.kind == "remember":
             data = action.payload
-            tool_ctx = ToolContext(ctx.chat, ctx.user, ctx.is_dm, ctx.platform, ctx.stores)
+            if data.get("epoch") is None:
+                return "This save request is out of date. Please request it again."
+            tool_ctx = ToolContext(
+                ctx.chat,
+                ctx.user,
+                ctx.is_dm,
+                ctx.platform,
+                ctx.stores,
+                source_message_id=data.get("source_message_id"),
+                reply_to_message_id=data.get("reply_to_message_id"),
+            )
             about = data.get("about")
             subject = await self.plugin._resolve_subject(tool_ctx, about)
             replacing = data.get("replaces")
@@ -825,6 +1059,38 @@ class _MemoryActionHandler(PendingActionHandler):
                 replaces=int(replacing) if replacing is not None else None,
                 expected_updated_at=expected_at,
                 preserve_subject=replacing is not None and about is None,
+                epoch=int(data["epoch"]),
+                source_ids=(
+                    (
+                        [(data["reply_to_message_id"], "statement")]
+                        if data.get("reply_to_message_id")
+                        else []
+                    )
+                    + (
+                        [(data["source_message_id"], "request")]
+                        if data.get("source_message_id")
+                        else []
+                    )
+                ),
+                provenance=(
+                    "known"
+                    if data.get("reply_to_message_id")
+                    else "request_only"
+                    if data.get("source_message_id")
+                    else "none"
+                ),
+            )
+            if outcome["status"] in {"epoch", "erasure"}:
+                return (
+                    "This save request is out of date or saving is briefly paused. "
+                    "Please request it again."
+                )
+            if outcome["status"] == "source":
+                return "The source message is unavailable, so this fact was not saved."
+            source_note = (
+                " Further support was not attached because this fact already has 32 sources."
+                if outcome.get("sources_capped")
+                else ""
             )
             if outcome["status"] == "stale":
                 return (
@@ -832,25 +1098,30 @@ class _MemoryActionHandler(PendingActionHandler):
                     "Please request the replacement again."
                 )
             if outcome["status"] == "exact":
-                return f"Already saved as #{outcome['row']['id']}."
+                return f"Already saved as #{outcome['row']['id']}.{source_note}"
             row = outcome["row"]
             if outcome["status"] == "similar":
                 near_id = outcome["similar"]["id"]
                 return (
                     f'Saved memory #{row["id"]}: "{row["text"]}". Similar to #{near_id}; '
-                    f"use replaces={near_id} to replace it."
+                    f"use replaces={near_id} to replace it.{source_note}"
                 )
             if outcome["status"] == "replaced":
                 old_text = outcome["old"]["text"]
                 return (
                     f'Replaced memory #{replacing} with #{row["id"]}: "{row["text"]}" '
-                    f'(was "{old_text}"). Say "undo" to restore the old text.'
+                    f'(was "{old_text}"). Say "undo" to restore the old text.{source_note}'
                 )
-            return f'Saved memory #{row["id"]}: "{row["text"]}". Say "undo" to forget it.'
+            return (
+                f'Saved memory #{row["id"]}: "{row["text"]}". Say "undo" to forget it.{source_note}'
+            )
         memory_id = int(action.payload["memory_id"])
         row = await self.plugin._repo(ctx.stores).get(action.chat, memory_id)
         if row is None:
             return f"No memory #{memory_id} in this chat."
         if not await self.plugin._delete_memory(action.chat, memory_id, ctx.stores):
             return f"No memory #{memory_id} in this chat."
-        return f'Forgot memory #{memory_id}: "{row["text"]}". Say "undo" to save it again.'
+        return (
+            f'Forgot memory #{memory_id}: "{row["text"]}". Older pending memory saves '
+            'are now out of date and need to be requested again. Say "undo" to save it again.'
+        )

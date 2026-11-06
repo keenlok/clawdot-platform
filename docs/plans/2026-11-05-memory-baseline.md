@@ -123,3 +123,31 @@ phase 3.
 For the representative rendered fact `#12 prefers tea` (15 characters), attribution produces
 `#12 [about Alice; saved 2026-11-01] prefers tea` (47 characters), a **32-character increase**.
 The context cap accounts for the whole rendered section, including headings and attribution.
+
+## After slice 2a
+
+Slice 2a adds source provenance for new facts, write fencing and durable index deletion work. The
+synthetic scenario suite now passes `erasure-08`; `expired-01` remains the only scenario failure.
+The request snapshot delta remains **0 bytes**.
+
+| Measure | After slice 2a |
+| --- | ---: |
+| Wrong-person mutations | 0 |
+| Wrong-person answers | 0 |
+| Stale-current answers | 1 |
+| Erased-fact returns | 0 |
+| Erased-text index documents | 0 |
+
+| Category | Pass | Fail |
+| --- | ---: | ---: |
+| `similar_wording` | 4 | 0 |
+| `ambiguous_subject` | 5 | 0 |
+| `explicit_vs_auto` | 3 | 0 |
+| `new_conversation` | 4 | 0 |
+| `correction` | 4 | 0 |
+| `expired_plan` | 2 | 1 |
+| `multilingual` | 4 | 0 |
+| `injection` | 3 | 0 |
+| `bare_tag_reply` | 5 | 0 |
+| `erasure` | 8 | 0 |
+| **Total** | **42** | **1** |

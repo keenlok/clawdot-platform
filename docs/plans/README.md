@@ -57,7 +57,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 | [phase2-wiring.md](phase2-wiring.md) | Live | — | Phase 2 |
 | [phase2-deploy.md](phase2-deploy.md) | Record | — | Original operator record preserved in private archive; platform stub retains references |
 | [memory-json-fix.md](memory-json-fix.md) | Live | history #1 | |
-| [Memory reliability and evidence](2026-11-05-memory-improvements.md) | Planned | — | Slices 0–2a approved 2026-11-06; later slices need separate review |
+| [Memory reliability and evidence](2026-11-05-memory-improvements.md) | Planned | — | Slices 0–2a approved 2026-11-06 and implemented on `codex/memory-reliability`, not merged; later slices need separate review |
 | [Memory framework comparison](2026-11-05-memory-framework-comparison.md) | Record | — | Research behind the memory reliability plan |
 | [Memory reliability slice 0 baseline](2026-11-05-memory-baseline.md) | Record | — | Synthetic and scripted behavioral baseline; no production quality run |
 | [telegram-formatting.md](telegram-formatting.md) | Live | — | |

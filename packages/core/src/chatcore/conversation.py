@@ -1315,6 +1315,7 @@ _RESET_NOT_ALLOWED_NEW = (
 
 class ConversationPlugin(BasePlugin):
     name = "conversation"
+    purge_reads_messages = True
     help_title = "Conversation"
 
     def __init__(

@@ -70,6 +70,7 @@ class MemoryCoreRepo:
         self._members: dict[str, dict[str, tuple[User, bool]]] = defaultdict(dict)
         self._settings: dict[str, ChatSettings] = {}
         self._pending: dict[str, PendingAction] = {}
+        self._erasures: dict[str, dict] = {}
 
     async def log_message(self, message: IncomingMessage) -> None:
         self._messages[message.chat.key].append(
@@ -126,6 +127,62 @@ class MemoryCoreRepo:
 
     async def get_message(self, chat: ChatRef, message_id: str) -> StoredMessage | None:
         return next((m for m in self._messages[chat.key] if m.message_id == message_id), None)
+
+    async def create_erasure(self, operation_id, chat, scope, target_user_key):
+        active = any(
+            row["chat_key"] == chat.key and row["status"] == "active"
+            for row in self._erasures.values()
+        )
+        row = {
+            "operation_id": operation_id,
+            "chat_key": chat.key,
+            "scope": scope,
+            "target_user_key": target_user_key,
+            "status": "queued" if active else "active",
+            "completed_steps": [],
+            "attempts": 0,
+            "next_attempt_at": datetime.now(UTC),
+            "last_error_code": None,
+            "created_at": datetime.now(UTC),
+        }
+        self._erasures[operation_id] = row
+        return dict(row)
+
+    async def list_erasures(self, chat: ChatRef | None = None):
+        return [
+            dict(row)
+            for row in self._erasures.values()
+            if chat is None or row["chat_key"] == chat.key
+        ]
+
+    async def update_erasure(self, operation_id: str, **fields: object) -> None:
+        self._erasures[operation_id].update(fields)
+
+    async def delete_erasure(self, operation_id: str) -> None:
+        self._erasures.pop(operation_id, None)
+
+    async def promote_erasure(self, chat: ChatRef):
+        if any(
+            row["chat_key"] == chat.key and row["status"] == "active"
+            for row in self._erasures.values()
+        ):
+            return None
+        queued = sorted(
+            (
+                row
+                for row in self._erasures.values()
+                if row["chat_key"] == chat.key and row["status"] == "queued"
+            ),
+            key=lambda row: row["created_at"],
+        )
+        if not queued:
+            return None
+        queued[0]["status"] = "active"
+        return dict(queued[0])
+
+    async def human_source(self, chat: ChatRef, message_id: str) -> tuple[str, bool] | None:
+        row = await self.get_message(chat, message_id)
+        return (row.user.key, row.is_bot) if row else None
 
     async def upsert_member(self, chat: ChatRef, user: User) -> None:
         self._members[chat.key][user.ref.key] = (user, True)

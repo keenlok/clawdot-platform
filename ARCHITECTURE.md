@@ -303,7 +303,7 @@ Ambient context stays separate from memory: the last ~20 messages in the chat th
 **Commands (no LLM needed):**
 - `/memory`: list what the bot remembers about this chat, numbered
 - `/forget <n>` or "@example_bot forget that…": delete a memory (hard-deleted, not just flagged). Anyone in the group can do this.
-- `/forgetme`: privacy deletion of **your own messages** and the memories about you in this chat (§6a). It is a different command from `/forget`.
+- `/forgetme`: privacy deletion of **your own messages** and memories supported by your messages or resolved identity in this chat (§6a). Name matches are reported for review and are not automatically deleted. It is a different command from `/forget`.
 - `/reset`: clear the conversation and summary layers. Long-term facts are kept.
 - `/persona <text>`: per-chat custom instructions, e.g. "be sarcastic", "reply in Chinese", "keep answers short". `/persona` alone shows the current one. Personas are capped at 500 characters and placed **below** the system prompt's safety rules, so a persona can't switch off the untrusted-content or confirmation rules.
 
@@ -318,6 +318,8 @@ Ambient context stays separate from memory: the last ~20 messages in the chat th
 - `chat_summaries(chat_id, thread_id, summary, covers_until_turn_id, updated_at)`
 - `memories(id, chat_id, subject_user_id?, text, source(explicit|auto), pinned, created_by, created_at, updated_at)`, indexed into ES `sb-bot-memories` with the same embedder. Deletes are hard deletes in both Postgres and ES
 - `pending_actions(id, chat_id, requester_user_id, tool, payload_json, created_at, expires_at, used_at)`: what a Confirm button refers to (§6a)
+- `memory_sources(chat_key, memory_id, source_message_id, source_author_key, source_role, policy_version)`: bounded links to human statements or requests; source IDs and author keys remain after raw-message retention so `/forgetme` can find affected facts.
+- `privacy_erasures`: per-chat deletion journal with completed plugin/core steps; operational erasure markers and memory index work may remain after content is deleted.
 - `chat_settings(chat_id, persona, chatmode, updated_by, updated_at)`
 
 **Prompt assembly order**, chosen so the stable parts stay cacheable:
@@ -537,6 +539,7 @@ A basic baseline for a friends' bot on a home server, not an enterprise program.
   - **Link previews are off** on every bot message (`link_preview_options.is_disabled`). Otherwise Telegram's servers would fetch any URL the bot wrote, leaking whatever an injection had put into its query string.
   - **URL provenance rule:** `fetch_web_page` only fetches URLs that appeared in a human message or in a `search_web` result in this turn. The LLM can't invent `https://evil/?data=…`.
 - **Memory stays clean:** auto-extraction reads only human messages (§3c).
+- **Memory erasure and evidence:** new writes are fenced by a per-chat epoch while `/forget`, `/forgetme` or `/purgechat` runs. New memory facts carry bounded source author/message identifiers; expired message bodies are not reconstructed. `/forgetme` deletes facts supported only by that person's sources and removes their links from independently supported shared facts. Whole-word name matches are reported for manual `/forget`, never used as deletion authority. Search index deletion is queued and retried. The `privacy_erasures` journal records each plugin and core purge step; startup recovery resumes incomplete operations, and only completed reader-plugin purges allow core message deletion.
 
 **SSRF guard (`net_guard.py`).**
 - Only `http`/`https` on ports **80/443**. No credentials in URLs, no cookies, no auth headers.

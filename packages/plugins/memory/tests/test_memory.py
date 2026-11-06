@@ -11,7 +11,7 @@ from chatcore.llm.types import Completion, Message, Usage
 from chatcore.plugin import CommandContext
 from chatcore.store.base import SearchHit, Stores
 from chatcore.store.memory import MemoryCache, MemoryCoreRepo
-from chatcore.testing import FakePlatform, ScriptedProvider, message
+from chatcore.testing import FakePlatform, ScriptedProvider, message, user
 from chatcore.tools.registry import ToolContext, ToolRegistry
 from chatcore_memory.plugin import SENSITIVE_PATTERNS, MemoryPlugin, MemorySettings
 from chatcore_memory.repository import PostgresMemoryRepo
@@ -38,7 +38,7 @@ class MemorySearch:
             docs = [(key, doc) for key, doc in docs if words & set(doc["text"].casefold().split())]
         return [SearchHit(key, 1.0, doc) for key, doc in docs[:size]]
 
-    async def delete(self, index, *, chat, query=None):
+    async def delete(self, index, *, chat, query=None, refresh_first=False):
         term = (query or {}).get("term", {})
         doomed = [
             key
@@ -155,7 +155,10 @@ async def test_clean_forget_is_pending_until_commit_and_echoes_deleted_text():
     assert await plugin._repo(ctx.stores).get(ctx.chat, memory_id) is not None
     command = CommandContext(ctx.chat, ctx.user, False, False, ctx.platform, ctx.stores)
     echo = await plugin.action_handlers()["forget"].commit(pending.pending_action, command)
-    assert echo == f'Forgot memory #{memory_id}: "A quiet surprise". Say "undo" to save it again.'
+    assert echo == (
+        f'Forgot memory #{memory_id}: "A quiet surprise". Older pending memory saves '
+        'are now out of date and need to be requested again. Say "undo" to save it again.'
+    )
     assert await plugin._repo(ctx.stores).get(ctx.chat, memory_id) is None
 
 
@@ -210,9 +213,9 @@ async def test_tool_and_command_forget_delete_by_id():
     saved = await tool(plugin, "remember").handler(ctx, fact="Forgettable detail")
     memory_id = int(saved.content.split("#", 1)[1].split(":", 1)[0])
     forgotten = await tool(plugin, "forget").handler(ctx, memory_id=memory_id)
-    assert (
-        forgotten.content
-        == f'Forgot memory #{memory_id}: "Forgettable detail". Say "undo" to save it again.'
+    assert forgotten.content == (
+        f'Forgot memory #{memory_id}: "Forgettable detail". Older pending memory saves '
+        'are now out of date and need to be requested again. Say "undo" to save it again.'
     )
     saved = await tool(plugin, "remember").handler(ctx, fact="Another forgettable detail")
     memory_id = int(saved.content.split("#", 1)[1].split(":", 1)[0])
@@ -254,9 +257,11 @@ async def test_auto_extraction_sees_only_human_text_and_filters_sensitive_facts(
     )
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our standing plan is to meet every Friday after work.")
-    await plugin.after_turn(msg, msg.text, stores_for_test())
+    stores = stores_for_test()
+    await stores.repo.log_message(msg)
+    await plugin.after_turn(msg, msg.text, stores)
     assert json.loads(provider.calls[0]["messages"][0].text)["untrusted"] == msg.text
-    cmd = CommandContext(msg.chat, msg.user, False, False, FakePlatform(), stores_for_test())
+    cmd = CommandContext(msg.chat, msg.user, False, False, FakePlatform(), stores)
     listing = await plugin.commands()[0].handler(cmd, "")
     assert "We meet every Friday" in listing
     assert "board games" in listing
@@ -289,6 +294,7 @@ async def test_iso_date_range_survives_phone_sensitive_filter():
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our trip to Japan will run from 2026-12-12 to 2026-12-20 every year.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     assert "2026-12-12" in (
         await plugin.commands()[0].handler(
@@ -313,6 +319,7 @@ async def test_extraction_strips_surrounding_json_code_fence():
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our weekly standing plan is to meet each Friday.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     assert "We meet each Friday" in (
         await plugin.commands()[0].handler(
@@ -339,6 +346,7 @@ async def test_extraction_parses_json_surrounded_by_prose():
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our weekly standing plan is to meet each Friday.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     rows = await plugin._repo(stores).list(msg.chat)
     assert [row["text"] for row in rows] == ["We meet each Friday"]
@@ -358,6 +366,7 @@ async def test_extraction_accepts_prose_with_unmatched_brace_after_json():
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our weekly standing plan is to meet each Friday.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     rows = await plugin._repo(stores).list(msg.chat)
     assert [row["text"] for row in rows] == ["We meet each Friday"]
@@ -383,6 +392,7 @@ async def test_unusable_extraction_response_logs_reason_and_saves_nothing(reply,
     plugin = MemoryPlugin(provider=provider)
     msg = message("This is a long enough ordinary message.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     assert await plugin._repo(stores).list(msg.chat) == []
     assert f"reason={reason}" in caplog.text
@@ -396,6 +406,7 @@ async def test_empty_facts_array_is_a_valid_extraction():
     plugin = MemoryPlugin(provider=provider)
     msg = message("This is a long enough ordinary message.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     assert await plugin._repo(stores).list(msg.chat) == []
 
@@ -431,6 +442,7 @@ async def test_max_tokens_refuses_facts_after_recording_completion_usage():
     plugin = MemoryPlugin(provider=provider, limits=limits)
     msg = message("Our weekly standing plan is to meet each Friday.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     assert await plugin._repo(stores).list(msg.chat) == []
     assert limits.recorded == [18]
@@ -454,6 +466,7 @@ async def test_extraction_uses_trusted_provenance_not_response_fields():
     plugin = MemoryPlugin(provider=provider)
     msg = message("Our weekly standing plan is to meet together.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     rows = await plugin._repo(stores).list(msg.chat)
     assert len(rows) == 1
@@ -484,6 +497,7 @@ async def test_auto_extraction_uses_runtime_budget_override():
     plugin = MemoryPlugin(provider=provider, limits=limits)
     msg = message("Our recurring plan is to meet every Tuesday.")
     stores = stores_for_test()
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     assert len(provider.calls) == 1
     assert len(await plugin._repo(stores).list(msg.chat)) == 1
@@ -880,19 +894,41 @@ async def test_automatic_exact_and_near_deduplication_respect_identity_and_keep_
     assert second["status"] == "saved"
     assert len(await plugin._repo(stores).list(chat)) == 2
 
+    alice_source = message("The group meets every Friday", sender=user("alice"), chat=chat)
+    bob_source = message("The group meets every Friday", sender=user("bob"), chat=chat)
+    await stores.repo.log_message(alice_source)
+    await stores.repo.log_message(bob_source)
     null_first = await plugin._save(
-        chat, "The group meets every Friday", stores, source="auto", pinned=False, created_by=alice
+        chat,
+        "The group meets every Friday",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=alice,
+        epoch=0,
+        source_ids=[(alice_source.message_id, "statement")],
+        provenance="known",
     )
     null_exact = await plugin._save(
-        chat, "The group meets every Friday.", stores, source="auto", pinned=False, created_by=bob
+        chat,
+        "The group meets every Friday.",
+        stores,
+        source="auto",
+        pinned=False,
+        created_by=bob,
+        epoch=0,
+        source_ids=[(bob_source.message_id, "statement")],
+        provenance="known",
     )
     null_alice_again = await plugin._save(
         chat, "The group meets every Friday!", stores, source="auto", pinned=False, created_by=alice
     )
-    assert null_first["status"] == "saved" and null_exact["status"] == "saved"
+    assert null_first["status"] == "saved" and null_exact["status"] == "exact"
     assert null_alice_again["status"] == "exact"
     assert null_alice_again["row"]["id"] == null_first["row"]["id"]
-    assert len(await plugin._repo(stores).list(chat)) == 4
+    assert len(await plugin._repo(stores).list(chat)) == 3
+    supports = plugin._repo(stores).sources[null_first["row"]["id"]]
+    assert {item["source_author_key"] for item in supports} == {alice.key, bob.key}
 
 
 @pytest.mark.asyncio
@@ -1116,6 +1152,7 @@ async def test_extraction_subject_labels_map_to_verified_mentions_only():
     await stores.repo.upsert_member(msg.chat, speaker)
     await stores.repo.upsert_member(msg.chat, bob)
     plugin = MemoryPlugin(provider=provider)
+    await stores.repo.log_message(msg)
     await plugin.after_turn(msg, msg.text, stores)
     rows = await plugin._repo(stores).list(msg.chat)
     assert len(rows) == 1 and rows[0]["subject_user_key"] == bob.ref.key

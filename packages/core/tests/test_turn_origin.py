@@ -1,11 +1,24 @@
 from chatcore.access import AccessPolicy
 from chatcore.app import BotApp
-from chatcore.testing import FakePlatform, memory_stores, message
+from chatcore.testing import GROUP, FakePlatform, memory_stores, message, user
 from chatcore.threads import TurnOrigin, current_turn_origin
+from chatcore.tools.registry import ToolContext, TurnState
 
 
 def test_turn_origin_context_defaults_and_restores():
     assert current_turn_origin.get() is None
+
+
+def test_tool_context_keeps_existing_positional_fields_in_place():
+    platform = FakePlatform()
+    stores = memory_stores()
+    turn = TurnState()
+
+    ctx = ToolContext(GROUP, user(), False, platform, stores, "topic", turn, True)
+
+    assert ctx.thread_id == "topic"
+    assert ctx.turn is turn
+    assert ctx.is_admin is True
 
 
 async def test_bot_app_sets_turn_origin_during_responder_and_resets_it():

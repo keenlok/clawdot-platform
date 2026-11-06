@@ -153,11 +153,18 @@ class EsSearchIndex:
         return self._hits(response)
 
     async def delete(
-        self, index: str, *, chat: ChatRef, query: Mapping[str, Any] | None = None
+        self,
+        index: str,
+        *,
+        chat: ChatRef,
+        query: Mapping[str, Any] | None = None,
+        refresh_first: bool = False,
     ) -> int:
         filters = [{"term": {"chat_key": chat.key}}]
         if query:
             filters.append(dict(query))
+        if refresh_first:
+            await self.client.indices.refresh(index=self.index_name(index))
         response = await self.client.delete_by_query(
             index=self.index_name(index),
             query={"bool": {"filter": filters}},

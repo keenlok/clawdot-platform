@@ -4,7 +4,7 @@
 
 **Goal:** Make per-chat memories attributable when written and when read, recoverable from supporting messages, safe to correct and erase, and measurable across new conversations.
 
-**Status:** Planned; revised 2026-11-06 after review. The owner approved implementation of slices 0–2a on 2026-11-06 with the D2 and D3 defaults. Slices 2b, 2c, 3 and 4 remain unapproved.
+**Status:** Slices 0–2a implemented on branch `codex/memory-reliability`, not yet merged or released; revised 2026-11-06 after review. The owner approved implementation of slices 0–2a on 2026-11-06 with the D2 and D3 defaults. Slices 2b, 2c, 3 and 4 remain unapproved. Measures that need a live model run stay unmeasured; [the baseline](2026-11-05-memory-baseline.md) lists them.
 
 **Architecture:** Keep Postgres authoritative, Elasticsearch rebuildable, conversation state separate from durable facts, and every operation scoped to one chat. Improve the existing memory plugin incrementally rather than adopting a new memory backend. Evidence is read from the existing message log through core interfaces.
 
@@ -91,12 +91,12 @@ All memory-relative paths are under `packages/plugins/memory/src/chatcore_memory
 
 **Files:** create `tests/fixtures/memory_scenarios.jsonl` and `tests/test_memory_scenarios.py`; extend `test_memory.py` only where its helpers are reused; add extraction counters in `plugin.py`.
 
-- [ ] Build at least 30 synthetic, attributed multi-turn scenarios: distinct people with similar wording, ambiguous subjects, explicit vs automatic facts, new conversations, corrections, expired plans, multilingual statements, injection attempts, bare-tag and reply turns, and source/user/chat erasure. Cover extraction, cross-session recall, knowledge updates, temporal reasoning and abstention, following the dimensions of [LongMemEval](https://github.com/xiaowu0162/LongMemEval), plus our group-chat safety cases.
-- [ ] Keep deterministic persistence/privacy tests separate from optional model-quality runs. Use scripted completions for CI; record provider/model/prompt version for any live quality report. Keep a held-out question set separate from prompt/threshold tuning.
-- [ ] Record these separately, never as a single score: relevant-fact recall@5, wrong-person mutations, **wrong-person answers**, stale-current answers, evidence-supported answer accuracy, abstention precision, erased-fact returns, erased-text index documents, source lookup availability, provider tokens/calls and latency.
-- [ ] Record extraction attempts, skips by reason and failures, plus index-write failures, with no raw content. Phase 4's trigger depends on these counters, so they ship now.
-- [ ] Add a read-only audit that reports, by count and memory ID only, automatic rows where `updated_at > created_at`. These may hold one person's words under another's `created_by`. The owner decides what to do with them; do not auto-delete.
-- [ ] Capture the baseline before changing behavior; record failures as baseline observations rather than weakening safety assertions.
+- [x] Build at least 30 synthetic, attributed multi-turn scenarios: distinct people with similar wording, ambiguous subjects, explicit vs automatic facts, new conversations, corrections, expired plans, multilingual statements, injection attempts, bare-tag and reply turns, and source/user/chat erasure. Cover extraction, cross-session recall, knowledge updates, temporal reasoning and abstention, following the dimensions of [LongMemEval](https://github.com/xiaowu0162/LongMemEval), plus our group-chat safety cases.
+- [x] Keep deterministic persistence/privacy tests separate from optional model-quality runs. Use scripted completions for CI; record provider/model/prompt version for any live quality report. Keep a held-out question set separate from prompt/threshold tuning.
+- [x] Record these separately, never as a single score: relevant-fact recall@5, wrong-person mutations, **wrong-person answers**, stale-current answers, evidence-supported answer accuracy, abstention precision, erased-fact returns, erased-text index documents, source lookup availability, provider tokens/calls and latency.
+- [x] Record extraction attempts, skips by reason and failures, plus index-write failures, with no raw content. Phase 4's trigger depends on these counters, so they ship now.
+- [x] Add a read-only audit that reports, by count and memory ID only, automatic rows where `updated_at > created_at`. These may hold one person's words under another's `created_by`. The owner decides what to do with them; do not auto-delete.
+- [x] Capture the baseline before changing behavior; record failures as baseline observations rather than weakening safety assertions.
 
 ### Phase 1: attributed reads, identity-safe writes, explicit replacement
 
@@ -104,45 +104,45 @@ All memory-relative paths are under `packages/plugins/memory/src/chatcore_memory
 
 **Attributed reads**
 
-- [ ] Render every fact in `before_turn`, `_recall` and `/memory` with trusted attribution and its saved date, for example `#12 [about Alice; saved 2026-11-01] prefers tea`. Use `from Bob` for a null-subject automatic fact and `saved by Bob` for a null-subject explicit fact. Resolve names at render time from `find_members`; show `unknown person` when unresolved.
-- [ ] Treat display names as user-controlled: collapse whitespace, remove brackets and newlines, cap at 40 characters, and keep them inside the untrusted memory block.
-- [ ] Mark the attribution of rows found by the phase 0 audit as `unverified` rather than stating it as fact.
-- [ ] Add `MEMORY_CONTEXT_MAX_CHARS=5000` to the existing `MemorySettings` exception in `plugin.py`, bounding the complete pinned/recalled section including headings and attribution. Attribution is what makes this reachable: the current defaults otherwise top out near 4,700 characters. Admit pinned facts first, then ranked facts, skipping duplicates. Keep whole facts; stop rather than truncating a fact into a different meaning. Test empty budgets, full pinned sets, Unicode, deterministic ordering and duplicate suppression. This is a character budget inspired by [LlamaIndex's token accounting](https://developers.llamaindex.ai/python/framework/module_guides/deploying/agents/memory/), so record actual token usage in quality runs.
+- [x] Render every fact in `before_turn`, `_recall` and `/memory` with trusted attribution and its saved date, for example `#12 [about Alice; saved 2026-11-01] prefers tea`. Use `from Bob` for a null-subject automatic fact and `saved by Bob` for a null-subject explicit fact. Resolve names at render time from `find_members`; show `unknown person` when unresolved.
+- [x] Treat display names as user-controlled: collapse whitespace, remove brackets and newlines, cap at 40 characters, and keep them inside the untrusted memory block.
+- [x] Mark the attribution of rows found by the phase 0 audit as `unverified` rather than stating it as fact.
+- [x] Add `MEMORY_CONTEXT_MAX_CHARS=5000` to the existing `MemorySettings` exception in `plugin.py`, bounding the complete pinned/recalled section including headings and attribution. Attribution is what makes this reachable: the current defaults otherwise top out near 4,700 characters. Admit pinned facts first, then ranked facts, skipping duplicates. Keep whole facts; stop rather than truncating a fact into a different meaning. Test empty budgets, full pinned sets, Unicode, deterministic ordering and duplicate suppression. This is a character budget inspired by [LlamaIndex's token accounting](https://developers.llamaindex.ai/python/framework/module_guides/deploying/agents/memory/), so record actual token usage in quality runs.
 
 **Extraction input**
 
-- [ ] Add a core turn-origin value alongside `current_conversation`, set by trusted app code: `direct` (`text` is the message body, source is the message), `bare_tag` (`text` is an earlier row, source is that row, same author) or `synthetic` (`text` is not human-authored). `after_turn` skips extraction for `synthetic`. The hook signature does not change.
-- [ ] Mark the message body as untrusted data in the extraction request. Tell the model to write facts about the speaker in the third person without a name, because rendering supplies it.
-- [ ] Offer verified `Mention` targets that are not bots as request-local labels (`P1`, `P2`) and add optional `about_label` and `about_other` fields. Code maps a valid label to the mention's `UserRef` as the subject. Drop a fact marked `about_other` that has no valid label, so automatic extraction no longer stores an unlinked claim about a third party. Existing strict parsing still applies.
+- [x] Add a core turn-origin value alongside `current_conversation`, set by trusted app code: `direct` (`text` is the message body, source is the message), `bare_tag` (`text` is an earlier row, source is that row, same author) or `synthetic` (`text` is not human-authored). `after_turn` skips extraction for `synthetic`. The hook signature does not change.
+- [x] Mark the message body as untrusted data in the extraction request. Tell the model to write facts about the speaker in the third person without a name, because rendering supplies it.
+- [x] Offer verified `Mention` targets that are not bots as request-local labels (`P1`, `P2`) and add optional `about_label` and `about_other` fields. Code maps a valid label to the mention's `UserRef` as the subject. Drop a fact marked `about_other` that has no valid label, so automatic extraction no longer stores an unlinked claim about a third party. Existing strict parsing still applies.
 
 **Identity-safe writes**
 
-- [ ] Write regressions for identical facts from Alice and Bob, same-person paraphrases, unresolved subjects, different chats, and an automatic fact similar to a pinned or explicit fact.
-- [ ] Split `_similar` into candidate lookup, which may call the embedder outside any lock, and a commit step inside the transaction. Lock `memory_control` as in §7.2 and re-check there, so two identical concurrent writes cannot both insert. Do not rely on the existing `limit=500` list, which silently misses older rows.
-- [ ] Restrict candidates by identity before similarity: a known subject must match exactly, and an unknown subject must not match a known subject.
-- [ ] Automatic extraction, by case:
+- [x] Write regressions for identical facts from Alice and Bob, same-person paraphrases, unresolved subjects, different chats, and an automatic fact similar to a pinned or explicit fact.
+- [x] Split `_similar` into candidate lookup, which may call the embedder outside any lock, and a commit step inside the transaction. Lock `memory_control` as in §7.2 and re-check there, so two identical concurrent writes cannot both insert. Do not rely on the existing `limit=500` list, which silently misses older rows.
+- [x] Restrict candidates by identity before similarity: a known subject must match exactly, and an unknown subject must not match a known subject.
+- [x] Automatic extraction, by case:
   - Normalized exact text (NFKC, casefold, collapsed whitespace, trailing punctuation removed) with the same subject and the same creator: reuse the row without changing its wording. **Cross-creator** reuse of a null-subject fact is enabled only with phase 2a's source links, because otherwise the second author's `/forgetme` would miss it.
   - Above the similarity threshold but not exact, same identity: discard the candidate and count `skipped_near_duplicate`. Keep the existing row. Automatic extraction never updates a fact; a missed automatic correction is safer than a wrong one, and a person can still correct it explicitly.
   - Otherwise insert. Conflicting facts below the threshold can coexist; the saved date on each lets the model weigh them, and quality runs measure stale-current answers.
-- [ ] Explicit writes, by case: normalized exact match echoes "already saved as #id" with no change. A similar row inserts the new fact and the echo names the similar row and how to replace it. Never overwrite silently. This removes the current "Updated memory" path in `_MemoryActionHandler`; rewrite the tests that pin it (`test_memory.py` around lines 192 and 612–686) as a deliberate change.
-- [ ] Exercise vector and no-search paths and prove a duplicate cannot bypass identity checks through the fallback.
+- [x] Explicit writes, by case: normalized exact match echoes "already saved as #id" with no change. A similar row inserts the new fact and the echo names the similar row and how to replace it. Never overwrite silently. This removes the current "Updated memory" path in `_MemoryActionHandler`; rewrite the tests that pin it (`test_memory.py` around lines 192 and 612–686) as a deliberate change.
+- [x] Exercise vector and no-search paths and prove a duplicate cannot bypass identity checks through the fallback.
 
 **Explicit replacement**
 
-- [ ] Add optional `replaces` (memory ID) to `remember`, with an argument description. The server-created payload records the target and its `updated_at` as the expected version; the summary shows old and new text. Commit deletes the target and inserts the new fact in one transaction, keeping the target's subject unless `about` is supplied. Reject a missing or changed target without deleting anything.
-- [ ] The replacement inherits the `remember` and `forget` policy, including confirmation after untrusted content. No gate changes, because anyone in the chat can already do both operations. The echo includes the old text so undo works as today.
-- [ ] Rewrite `MEMORY_INSTRUCTIONS` for `replaces` and remove the "wording update" language, within the 800-character cap. Update `ARCHITECTURE.md` §3c, whose near-duplicate rule ("Bob is now vegan" replaces "Bob is vegetarian") this reverses.
+- [x] Add optional `replaces` (memory ID) to `remember`, with an argument description. The server-created payload records the target and its `updated_at` as the expected version; the summary shows old and new text. Commit deletes the target and inserts the new fact in one transaction, keeping the target's subject unless `about` is supplied. Reject a missing or changed target without deleting anything.
+- [x] The replacement inherits the `remember` and `forget` policy, including confirmation after untrusted content. No gate changes, because anyone in the chat can already do both operations. The echo includes the old text so undo works as today.
+- [x] Rewrite `MEMORY_INSTRUCTIONS` for `replaces` and remove the "wording update" language, within the 800-character cap. Update `ARCHITECTURE.md` §3c, whose near-duplicate rule ("Bob is now vegan" replaces "Bob is vegetarian") this reverses.
 
 ### Phase 2a: sources and safe erasure
 
 **Files:** add migration `0003_memory_sources.sql`, core migration `0010_privacy_erasures.sql` (check the number) and core `store/evidence.py` if needed; modify `repository.py`, `plugin.py`, `service.py`, core `plugin.py`, `privacy.py`, `tools/registry.py`, `agent.py`, `store/es.py`; add `tests/test_memory_privacy.py` and coverage in `packages/core/tests/test_p_privacy.py`.
 
-- [ ] Implement the schema in §6. Save a fact and its source links in one transaction. Validate source existence, chat and human authorship against the canonical message log on that transaction's connection.
-- [ ] Sources by origin, using the §5 turn origin for automatic facts. For explicit writes, add optional trusted origin metadata to the request context and copy it into the server-created pending payload; validate chat and origin again at commit. If the request message replies to a human message, link the replied message as `statement` and the request as `request`. Otherwise link only the request. Tool arguments can never choose source IDs. Do not invent a source for non-message invocation.
-- [ ] Bound support to 32 links per fact. At the cap, keep the existing set and report that further support was not attached. This list is not a complete history of corroboration.
-- [ ] Enable cross-creator reuse of null-subject exact facts, adding a `statement` link for each new author.
-- [ ] Implement the fencing protocol in §7.2, the erasure rules in §7.3, the journal in §7.4 and index deletion in §7.5.
-- [ ] Add the §7.6 tests.
+- [x] Implement the schema in §6. Save a fact and its source links in one transaction. Validate source existence, chat and human authorship against the canonical message log on that transaction's connection.
+- [x] Sources by origin, using the §5 turn origin for automatic facts. For explicit writes, add optional trusted origin metadata to the request context and copy it into the server-created pending payload; validate chat and origin again at commit. If the request message replies to a human message, link the replied message as `statement` and the request as `request`. Otherwise link only the request. Tool arguments can never choose source IDs. Do not invent a source for non-message invocation.
+- [x] Bound support to 32 links per fact. At the cap, keep the existing set and report that further support was not attached. This list is not a complete history of corroboration.
+- [x] Enable cross-creator reuse of null-subject exact facts, adding a `statement` link for each new author.
+- [x] Implement the fencing protocol in §7.2, the erasure rules in §7.3, the journal in §7.4 and index deletion in §7.5.
+- [x] Add the §7.6 tests.
 
 ### Phase 2b: evidence lookup
 

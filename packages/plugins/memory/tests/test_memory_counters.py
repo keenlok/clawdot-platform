@@ -99,6 +99,7 @@ async def test_max_tokens_failure_and_success_counters_fire():
     )
     plugin = MemoryPlugin(embedder=FakeEmbedder(), provider=provider)
     first = message("A sufficiently long message that receives max tokens.")
+    await stores.repo.log_message(first)
     await plugin.after_turn(first, first.text, stores)
     for text in (
         "A second sufficiently long message for facts.",
@@ -106,6 +107,7 @@ async def test_max_tokens_failure_and_success_counters_fire():
         "A fourth sufficiently long message for facts.",
     ):
         msg = message(text)
+        await stores.repo.log_message(msg)
         await plugin.after_turn(msg, msg.text, stores)
     assert await counter_value(stores, "extract_attempted") == 4
     assert await counter_value(stores, "extract_skipped_max_tokens") == 1
@@ -224,6 +226,10 @@ async def test_counter_names_and_ttl_are_fixed():
         "fact_dropped_sensitive",
         "fact_saved",
         "index_write_failed",
+        "fact_rejected_source",
+        "fact_rejected_epoch",
+        "fact_sources_capped",
+        "extract_skipped_erasure",
     }
     assert set(COUNTER_NAMES) == expected
     assert COUNTER_TTL_S == 40 * 86400
