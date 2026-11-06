@@ -4,7 +4,7 @@
 
 **Goal:** Generate one on-demand Cantonese, Mandarin Chinese or Japanese pronunciation clip at normal speed; provide a slower clip only when the learner explicitly asks.
 
-**Status (2026-11-05):** Framework implementation shipped in v0.3.0 and remains disabled by default. The owner accepted a native Cantonese normal-speed sample and authorized that voice; PR #14 prepares its model-route correction and v0.5.1. Publication and downstream activation remain pending. Other language/pace qualification is separate. The original implementation approval and qualification contract below are retained as the design record; later evidence and corrections are recorded at the end.
+**Status (2026-11-06):** Framework implementation shipped in v0.3.0. PR #14 released the Cantonese model-route correction in v0.5.1, and deployment PR #16 enabled the accepted native Cantonese voice alongside configured Mandarin and Japanese voices. The feature is live with limited qualification; other language/pace qualification remains separate. This PR corrects natural audio-request routing. The original implementation approval and qualification contract below are retained as the design record; later evidence and corrections are recorded at the end.
 
 **Architecture:** The tutor plugin owns the provider client, usage limits, optional local slowdown and tool instructions. A small optional voice protocol supports direct Telegram delivery. Downstream applications own their wiring, image dependencies, credentials, platform release pins and activation.
 
@@ -221,11 +221,11 @@ credentials, account controls and activation records remain operator-owned. The 
 ships disabled by default, supports partial language configuration, and requires qualification
 for each downstream language/pace that is enabled.
 
-[PR #14](https://github.com/keenlok/clawdot-platform/pull/14) prepares the narrow fixed-model route
+[PR #14](https://github.com/keenlok/clawdot-platform/pull/14) prepared the narrow fixed-model route
 and v0.5.1 after merging current v0.5.0 main, preserving its Google document features unchanged.
-No permission, dependency or migration change is introduced by this patch. The release workflow
+No permission, dependency or migration change was introduced by that patch. The release workflow
 publishes an immutable tag only after the reviewed version bump reaches main and both CI and
-scaffold jobs pass. This record does not claim a published v0.5.1 tag or a deployed application.
+scaffold jobs pass.
 Codex executed and self-reviewed this update; Claude final review is unavailable because its CLI
 is signed out, so the documented unavailable-model fallback applies. Independent review and CI
 remain required before merge.
@@ -236,3 +236,26 @@ changed-file formatting and secret scan passed. Required Postgres suite: **3,758
 fails the exact mock request assertion while Mandarin/Japanese pass; the fixed speech suite passes
 all 24 tests. Full formatting reports 14 pre-existing Markdown failures, each byte-identical to
 current main. No live provider request was used for these checks.
+
+## Natural audio-request routing follow-up (2026-11-06)
+
+Production turns after activation showed that “voice pls” and “i want sound clip” did not offer the
+pronunciation tool. Their tutor-skill embedding scores were 0.39–0.40, below the configured 0.5
+admission threshold; the tool is only available while `language_tutor` is active. The existing
+keywords covered `pronounce`, `pronunciation`, `aloud`, and a few language terms, but not those
+ordinary audio requests. The bot then incorrectly claimed TTS was unavailable.
+
+Acceptance criteria for this follow-up:
+
+- “how to sound”, “voice pls”, and “i want sound clip” activate the tutor skill with the audio tool.
+- Ordinary tutoring, translation-only behavior, language selection, normal-by-default pace, and
+  the existing per-turn speech controls remain unchanged.
+- Common Cantonese, Mandarin and Japanese requests to hear/read a phrase aloud route to the same
+  skill when the phrases are in those languages.
+- Active tutor instructions state that voice/audio/sound-clip requests are pronunciation requests;
+  no claim should be made that TTS is unavailable when the tool is available in the active skill.
+
+This approved feature-plan amendment changes only tutor-skill examples, keywords and instructions
+plus routing regression coverage. It does not change the speech provider, supported languages,
+permissions, quotas, deployment credentials or delivery behavior. The follow-up PR and release
+receipt will be recorded here after verification.

@@ -37,9 +37,9 @@ LANGUAGE_TUTOR_INSTRUCTIONS = (
     "translation + romanisation, no lesson. Otherwise help normally in explanation language."
 )
 PRONUNCIATION_INSTRUCTIONS = (
-    "For an explicit request to hear Cantonese, Mandarin Chinese or Japanese, call "
-    "pronounce_tutor_text once with the phrase and Jyutping, tone-marked Pinyin or kana. Select "
-    "Cantonese or Mandarin explicitly. Use slow only on request; clip comes before text."
+    "Voice/audio/sound clip or hear aloud means pronunciation. For Cantonese, Mandarin or "
+    "Japanese, call pronounce_tutor_text once with phrase and Jyutping, tone-marked Pinyin or "
+    "kana; specify Cantonese or Mandarin. Normal default; slow on request; clip first."
 )
 _ACTIVE_LANGUAGE_TUTOR_INSTRUCTIONS = (
     "Use for practice, questions and translation; ignore passing mentions. Explain in the profile "
@@ -387,14 +387,31 @@ class TutorPlugin(BasePlugin):
         if self.pronunciation_available:
             instructions = _ACTIVE_LANGUAGE_TUTOR_INSTRUCTIONS
             instructions += " " + PRONUNCIATION_INSTRUCTIONS
-            examples += ("say this phrase aloud in Japanese",)
+            examples += ("send me a voice clip of this phrase",)
             keywords += (
                 "pronunciation",
                 "pronounce",
                 "aloud",
+                "how to sound",
+                "voice pls",
+                "voice please",
+                "voice clip",
+                "sound clip",
+                "audio clip",
+                "send audio",
+                "play audio",
+                "hear this phrase",
                 "jyutping",
                 "tones",
                 "听发音",
+                "读给我听",
+                "讀畀我聽",
+                "讀出聲",
+                "请读给我听",
+                "朗读",
+                "音声で聞きたい",
+                "音声で聞かせて",
+                "読み上げ",
                 "発音",
             )
         return [

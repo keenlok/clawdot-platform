@@ -109,7 +109,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 
 | Plan | Status | PR | Notes |
 | --- | --- | --- | --- |
-| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Shipped inactive | [#13](https://github.com/keenlok/clawdot-platform/pull/13), [#14](https://github.com/keenlok/clawdot-platform/pull/14) | Default-disabled pronunciation shipped in v0.3.0. Owner accepted a native Cantonese normal sample; v0.5.1 route correction is in review. Publication and downstream activation remain pending; other language/pace qualification is separate |
+| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Live, limited | [#13](https://github.com/keenlok/clawdot-platform/pull/13), [#14](https://github.com/keenlok/clawdot-platform/pull/14), [deploy #16](https://github.com/keenlok/clawdot-deployments/pull/16) | v0.5.1 route correction is released and all three configured voices are live. Native Cantonese normal sample accepted; Mandarin/Japanese and slow-pace qualification remain limited. This PR fixes natural audio-request routing |
 | [skill-layer.md](skill-layer.md) | Live, limited | history #14 | Design. `SKILLS_MODE=on` only for the owner's test chats; other chats use the legacy prompt |
 | [skill-layer-astra-review.md](skill-layer-astra-review.md) | Record | history #14 | Independent design review |
 | [tool-descriptions.md](tool-descriptions.md) | Live | history #17 | Stage 0a |
