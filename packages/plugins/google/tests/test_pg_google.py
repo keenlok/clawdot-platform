@@ -135,7 +135,13 @@ async def test_edit_reservation_journal_is_atomic_replay_safe_and_retained_until
     await repo.update_edit_result(
         "fake:edit", "action-2", phase="destination_created", destination_id="other-copy"
     )
-    await repo.update_edit_result("fake:edit", "action-2", phase="partial", failed_stage="edit")
+    await repo.update_edit_result(
+        "fake:edit",
+        "action-2",
+        phase="partial",
+        failed_stage="verification",
+        error_category="formatting_unverified",
+    )
 
     old = datetime.now(UTC) - timedelta(days=10)
     await google_db.execute(
@@ -152,7 +158,10 @@ async def test_edit_reservation_journal_is_atomic_replay_safe_and_retained_until
     )
     await repo.purge_older_than(datetime.now(UTC) + timedelta(seconds=1))
     assert (await repo.edit_result("fake:edit", "action-1"))["phase"] == "uncertain"
-    assert (await repo.edit_result("fake:edit", "action-2"))["phase"] == "partial"
+    partial = await GoogleRepository(google_db).edit_result("fake:edit", "action-2")
+    assert partial["phase"] == "partial"
+    assert partial["failed_stage"] == "verification"
+    assert partial["error_category"] == "formatting_unverified"
     await repo.purge_older_than(
         datetime.now(UTC) + timedelta(seconds=1),
         unresolved_before=datetime.now(UTC) - timedelta(days=1),
