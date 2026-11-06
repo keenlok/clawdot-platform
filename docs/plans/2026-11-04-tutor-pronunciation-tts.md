@@ -259,3 +259,9 @@ This approved feature-plan amendment changes only tutor-skill examples, keywords
 plus routing regression coverage. It does not change the speech provider, supported languages,
 permissions, quotas, deployment credentials or delivery behavior. The follow-up PR and release
 receipt will be recorded here after verification.
+
+[PR #18](https://github.com/keenlok/clawdot-platform/pull/18) contains the trigger correction and
+v0.5.3 version bump. Local verification passed: **3,711 passed, 59 skipped, 26 deselected**, Ruff
+lint, explainer generation, locked sync and changed-file formatting. The full-repository format
+check still reports 14 unchanged Markdown files. Pull request CI and publication of v0.5.3 are
+pending; the downstream pin and deployment will follow the immutable release.
