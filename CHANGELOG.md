@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-11-07
+
+### Changed
+
+- Telegram voice-delivery failures now log a bounded, allowlisted reason category, so live tutor
+  TTS failures can be traced without logging Bot API descriptions or caption contents.
+
 ## [0.5.5] - 2026-11-07
 
 ### Fixed
@@ -151,7 +158,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/keenlok/clawdot-platform/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/keenlok/clawdot-platform/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/keenlok/clawdot-platform/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/keenlok/clawdot-platform/compare/v0.5.2...v0.5.3
