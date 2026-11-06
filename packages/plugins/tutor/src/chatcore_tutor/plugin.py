@@ -397,6 +397,7 @@ class TutorPlugin(BasePlugin):
                 "voice please",
                 "voice clip",
                 "sound clip",
+                "sound please",
                 "audio clip",
                 "send audio",
                 "play audio",
