@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import pytest
 from chatcore.access import AccessPolicy
 from chatcore.app import BotApp
 from chatcore.conversation import ConversationPlugin, ConversationStore
@@ -286,6 +287,64 @@ async def test_erasure_for_same_chat_is_queued_then_promoted():
     assert done
     outstanding = await app.stores.repo.list_erasures(GROUP)
     assert outstanding == []
+
+
+async def test_new_erasure_queues_behind_queued_operation_and_promotes_in_order():
+    repo = MemoryCoreRepo()
+    first = await repo.create_erasure("op-a", GROUP, "user", "fake:a")
+    second = await repo.create_erasure("op-b", GROUP, "user", "fake:b")
+    assert (first["status"], second["status"]) == ("active", "queued")
+    # A finished and was deleted, but B has not been promoted yet (or promotion crashed).
+    await repo.delete_erasure("op-a")
+
+    third = await repo.create_erasure("op-c", GROUP, "user", "fake:c")
+
+    assert third["status"] == "queued"
+    assert (await repo.promote_erasure(GROUP))["operation_id"] == "op-b"
+    assert await repo.promote_erasure(GROUP) is None
+    await repo.delete_erasure("op-b")
+    assert (await repo.promote_erasure(GROUP))["operation_id"] == "op-c"
+
+
+@pytest.mark.parametrize("kind", ["forgetme", "purgechat"])
+async def test_new_erasure_behind_unpromoted_queue_runs_older_first_and_completes(kind):
+    calls = []
+
+    class OrderPlugin(BasePlugin):
+        name = "order"
+
+        async def purge_user(self, chat, user_ref, stores):
+            calls.append(("user", user_ref.key))
+
+        async def purge_chat(self, chat, stores):
+            calls.append(("chat", chat.key))
+
+    alice = user("alice")
+    privacy = PrivacyPlugin([OrderPlugin()], provider_label="AI")
+    stores = Stores(repo=MemoryCoreRepo(), cache=MemoryCache(prefix=f"privacy-order-{kind}:"))
+    await stores.repo.create_erasure("op-a", GROUP, "user", "fake:first")
+    await stores.repo.create_erasure("op-b", GROUP, "user", "fake:queued")
+    await stores.repo.delete_erasure("op-a")
+    action = PendingAction.create(
+        chat=GROUP,
+        requester=alice.ref,
+        plugin="privacy",
+        kind=kind,
+        payload={"chats": [GROUP.key]} if kind == "forgetme" else {"chat": GROUP.key},
+        summary="delete",
+    )
+    ctx = CommandContext(GROUP, alice, False, kind == "purgechat", FakePlatform(), stores)
+
+    result = (
+        await privacy._forgetme(action, ctx)
+        if kind == "forgetme"
+        else await privacy._purgechat(action, ctx)
+    )
+
+    assert "incomplete" not in result.lower()
+    expected_new = ("user", alice.ref.key) if kind == "forgetme" else ("chat", GROUP.key)
+    assert calls == [("user", "fake:queued"), expected_new]
+    assert await stores.repo.list_erasures(GROUP) == []
 
 
 async def test_recovery_promotes_queued_operation_after_promotion_crash():

@@ -187,6 +187,24 @@ async def test_core_repo_round_trip_and_pending_single_use(db):
     assert await repo.claim_pending(GROUP, expired.id) is None
 
 
+async def test_new_erasure_queues_behind_queued_operation_and_promotes_in_order(db):
+    await migrations.apply(db, CORE)
+    repo = PgCoreRepo(db)
+    first = await repo.create_erasure("op-a", GROUP, "user", "fake:a")
+    second = await repo.create_erasure("op-b", GROUP, "user", "fake:b")
+    assert (first["status"], second["status"]) == ("active", "queued")
+    # A finished and was deleted, but B has not been promoted yet (or promotion crashed).
+    await repo.delete_erasure("op-a")
+
+    third = await repo.create_erasure("op-c", GROUP, "user", "fake:c")
+
+    assert third["status"] == "queued"
+    assert (await repo.promote_erasure(GROUP))["operation_id"] == "op-b"
+    assert await repo.promote_erasure(GROUP) is None
+    await repo.delete_erasure("op-b")
+    assert (await repo.promote_erasure(GROUP))["operation_id"] == "op-c"
+
+
 async def test_display_time_service_persists_preferences_and_scopes_resets_and_purges(db):
     await migrations.apply(db, CORE)
     first = DisplayTimeService(PgDisplayTimeStore(db))

@@ -62,6 +62,7 @@ class MemoryRepo(Protocol):
     async def index_work(
         self, chat: ChatRef | None = None, *, due_only: bool = True
     ) -> list[dict[str, Any]]: ...
+    async def enqueue_index_work(self, chat: ChatRef, memory_id: int | None, op: str) -> int: ...
     async def finish_index_work(self, work_id: int) -> None: ...
     async def finish_index_work_for(
         self, chat: ChatRef, memory_id: int | None, op: str
@@ -88,7 +89,7 @@ class MemoryMemoryRepo:
     async def erasure_active(self, chat: ChatRef) -> bool:
         return self.erasure_ids.get(chat.key) is not None
 
-    def _add_work(self, chat: ChatRef, memory_id: int | None, op: str) -> None:
+    def _add_work(self, chat: ChatRef, memory_id: int | None, op: str) -> int:
         self._work_id += 1
         self._work.append(
             {
@@ -98,6 +99,10 @@ class MemoryMemoryRepo:
                 "op": op,
             }
         )
+        return self._work_id
+
+    async def enqueue_index_work(self, chat: ChatRef, memory_id: int | None, op: str) -> int:
+        return self._add_work(chat, memory_id, op)
 
     async def index_work(
         self, chat: ChatRef | None = None, *, due_only: bool = True
@@ -551,6 +556,17 @@ class PostgresMemoryRepo:
             due_only,
         )
         return [dict(row) for row in rows]
+
+    async def enqueue_index_work(self, chat: ChatRef, memory_id: int | None, op: str) -> int:
+        return int(
+            await self.db.fetchval(
+                "INSERT INTO memory_index_work (chat_key,memory_id,op) VALUES ($1,$2,$3) "
+                "RETURNING id",
+                chat.key,
+                memory_id,
+                op,
+            )
+        )
 
     async def finish_index_work(self, work_id: int) -> None:
         await self.db.execute("DELETE FROM memory_index_work WHERE id=$1", work_id)

@@ -107,9 +107,10 @@ class PgCoreRepo:
     async def create_erasure(self, operation_id, chat, scope, target_user_key):
         async with self.db.transaction() as tx:
             await tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", chat.key)
-            active = await tx.fetchval(
+            # Any active or queued operation blocks: a new request never overtakes older ones.
+            blocked = await tx.fetchval(
                 "SELECT EXISTS (SELECT 1 FROM privacy_erasures "
-                "WHERE chat_key=$1 AND status='active')",
+                "WHERE chat_key=$1 AND status IN ('active','queued'))",
                 chat.key,
             )
             row = await tx.fetchrow(
@@ -119,7 +120,7 @@ class PgCoreRepo:
                 chat.key,
                 scope,
                 target_user_key,
-                "queued" if active else "active",
+                "queued" if blocked else "active",
             )
             return dict(row)
 

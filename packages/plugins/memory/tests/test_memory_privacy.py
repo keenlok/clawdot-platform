@@ -572,6 +572,68 @@ async def test_erasure_between_commit_and_index_removes_late_document(path):
     assert await plugin._repo(stores).index_work(chat, due_only=False) == []
 
 
+@pytest.mark.parametrize("path", ["forget", "forgetme", "purgechat"])
+async def test_late_index_after_cleanup_ran_stays_queued_when_writer_delete_fails(path):
+    chat = ChatRef("fake", f"late-index-{path}")
+    search = MemorySearchFake()
+    stores = Stores(repo=MemoryCoreRepo(), cache=MemoryCache(), search=search)
+    actor = user("alice")
+    request = message("Remember the Friday meeting", sender=actor, chat=chat)
+    await stores.repo.log_message(request)
+    plugin = MemoryPlugin(embedder=FakeEmbedder())
+    entered_index, resume_index = asyncio.Event(), asyncio.Event()
+    original_index = plugin._index
+
+    async def paused_index(chat_ref, row, stores_arg, *, vector=None):
+        entered_index.set()
+        await resume_index.wait()
+        await original_index(chat_ref, row, stores_arg, vector=vector)
+
+    plugin._index = paused_index
+    saving = asyncio.create_task(
+        plugin._save(
+            chat,
+            "The group meets Fridays",
+            stores,
+            source="explicit",
+            pinned=False,
+            created_by=actor.ref,
+            epoch=0,
+            source_ids=[(request.message_id, "request")],
+            provenance="request_only",
+        )
+    )
+    await entered_index.wait()
+    memory_id = int((await plugin._repo(stores).list(chat))[0]["id"])
+    if path == "forget":
+        await plugin._delete_memory(chat, memory_id, stores)
+    else:
+        scope = "user" if path == "forgetme" else "chat"
+        target = actor.ref.key if scope == "user" else None
+        await plugin.begin_erasure(chat, f"late-index-{path}", scope, target, stores)
+        if path == "forgetme":
+            await plugin.purge_user(chat, actor.ref, stores)
+        else:
+            await plugin.purge_chat(chat, stores)
+        await plugin.finish_erasure(chat, f"late-index-{path}", success=True, stores=stores)
+    # Cleanup runs while the writer is still paused and clears the writer's verify row.
+    await plugin.process_index_work(stores)
+    assert await plugin.pending_cleanup(chat, stores) == 0
+
+    search.fail_delete = True
+    resume_index.set()
+    await saving
+
+    assert await plugin._repo(stores).list(chat) == []
+    assert len(search.docs) == 1
+    assert await plugin.pending_cleanup(chat, stores) >= 1
+
+    search.fail_delete = False
+    await plugin.process_index_work(stores)
+    assert search.docs == {}
+    assert await plugin.pending_cleanup(chat, stores) == 0
+
+
 async def test_failed_index_delete_stays_queued_and_retry_removes_document():
     chat = ChatRef("fake", "delete-retry")
     search = MemorySearchFake()

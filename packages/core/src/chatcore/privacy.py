@@ -281,7 +281,7 @@ class PrivacyPlugin(BasePlugin):
                     notes.append(f"Deletion could not start for {chat.key}; please try again.")
                     continue
             try:
-                done, count = await self._process_erasure(operation, ctx.stores, force=True)
+                done, count = await self._run_erasure(operation, ctx.stores)
             except Exception as exc:
                 log.error("privacy erasure=%s error=%s", operation_id, type(exc).__name__)
                 done, count = False, 0
@@ -338,7 +338,7 @@ class PrivacyPlugin(BasePlugin):
             if operation is None:
                 return f"Deletion could not start for {chat.key}; please try again."
         try:
-            done, count = await self._process_erasure(operation, ctx.stores, force=True)
+            done, count = await self._run_erasure(operation, ctx.stores)
         except Exception as exc:
             log.error("privacy erasure=%s error=%s", operation_id, type(exc).__name__)
             done, count = False, 0
@@ -367,7 +367,42 @@ class PrivacyPlugin(BasePlugin):
                     )
         return count
 
-    async def _process_erasure(self, operation, stores: Stores, *, force: bool = False):
+    async def _run_erasure(self, operation, stores: Stores):
+        """Run a newly created erasure, first running older queued ones in order.
+
+        A new operation is queued behind any active or queued one. When nothing is active,
+        promote and run the oldest queued operations one at a time until this one runs.
+        If another operation stays active (running elsewhere or failed), this one stays
+        queued for recovery.
+        """
+        chat = ChatRef.parse(operation["chat_key"])
+        operation_id = operation["operation_id"]
+        while True:
+            current = next(
+                (
+                    row
+                    for row in await stores.repo.list_erasures(chat)
+                    if row["operation_id"] == operation_id
+                ),
+                None,
+            )
+            if current is None:
+                return False, 0
+            if current["status"] == "active":
+                return await self._process_erasure(current, stores, force=True)
+            async with stores.cache.lock(f"erasure:{chat.key}", ttl_s=120):
+                promoted = await stores.repo.promote_erasure(chat)
+            if promoted is None:
+                return False, 0
+            if promoted["operation_id"] == operation_id:
+                return await self._process_erasure(promoted, stores, force=True)
+            done, _ = await self._process_erasure(promoted, stores, force=True, chain=False)
+            if not done:
+                return False, 0
+
+    async def _process_erasure(
+        self, operation, stores: Stores, *, force: bool = False, chain: bool = True
+    ):
         chat = ChatRef.parse(operation["chat_key"])
         promoted = None
         async with stores.cache.lock(f"erasure:{chat.key}", ttl_s=120):
@@ -504,7 +539,7 @@ class PrivacyPlugin(BasePlugin):
                     last_error_code=errors[0] if errors else None,
                 )
                 result = (False, total)
-        if promoted is not None:
+        if promoted is not None and chain:
             try:
                 await self._process_erasure(promoted, stores, force=True)
             except Exception as exc:

@@ -129,8 +129,9 @@ class MemoryCoreRepo:
         return next((m for m in self._messages[chat.key] if m.message_id == message_id), None)
 
     async def create_erasure(self, operation_id, chat, scope, target_user_key):
-        active = any(
-            row["chat_key"] == chat.key and row["status"] == "active"
+        # Any active or queued operation blocks: a new request never overtakes older ones.
+        blocked = any(
+            row["chat_key"] == chat.key and row["status"] in {"active", "queued"}
             for row in self._erasures.values()
         )
         row = {
@@ -138,7 +139,7 @@ class MemoryCoreRepo:
             "chat_key": chat.key,
             "scope": scope,
             "target_user_key": target_user_key,
-            "status": "queued" if active else "active",
+            "status": "queued" if blocked else "active",
             "completed_steps": [],
             "attempts": 0,
             "next_attempt_at": datetime.now(UTC),
@@ -173,7 +174,7 @@ class MemoryCoreRepo:
                 for row in self._erasures.values()
                 if row["chat_key"] == chat.key and row["status"] == "queued"
             ),
-            key=lambda row: row["created_at"],
+            key=lambda row: (row["created_at"], row["operation_id"]),
         )
         if not queued:
             return None

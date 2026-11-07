@@ -669,3 +669,104 @@ async def test_postgres_erasure_after_commit_before_indexing_cleans_late_documen
             await eraser_conn.close()
         await setup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         await setup.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _pg_available(), reason="Postgres is not reachable")
+@pytest.mark.parametrize("path", ["forgetme", "purgechat", "forget"])
+async def test_postgres_cleanup_before_late_index_keeps_failed_writer_delete_queued(
+    path, monkeypatch
+):
+    import asyncio
+
+    import asyncpg
+
+    schema = f"memory_late_index_{uuid4().hex[:12]}"
+    setup = await asyncpg.connect(_pg_dsn())
+    writer_conn = eraser_conn = None
+    try:
+        await _prepare_erasure_schema(setup, schema)
+        writer_conn = await asyncpg.connect(_pg_dsn())
+        eraser_conn = await asyncpg.connect(_pg_dsn())
+        await writer_conn.execute(f'SET search_path TO "{schema}"')
+        await eraser_conn.execute(f'SET search_path TO "{schema}"')
+        chat = ChatRef("test", f"late-{uuid4().hex[:8]}")
+        alice = UserRef("test", "alice")
+        writer_db, eraser_db = PgDatabase(writer_conn), PgDatabase(eraser_conn)
+        search = _RaceSearch()
+        cache = MemoryCache()
+        writer_stores = Stores(PgCoreRepo(writer_db), cache, writer_db, search)
+        eraser_stores = Stores(PgCoreRepo(eraser_db), cache, eraser_db, search)
+        memory = MemoryPlugin(embedder=FakeEmbedder())
+        privacy = PrivacyPlugin([memory], provider_label="test")
+        repo = memory._repo(writer_stores)
+        source_id = f"source-{uuid4().hex[:8]}"
+        await eraser_db.execute(
+            "INSERT INTO messages (chat_key,message_id,user_key,display_name,text,sent_at) "
+            "VALUES ($1,$2,$3,'Alice','request source',now())",
+            chat.key,
+            source_id,
+            alice.key,
+        )
+        indexed, resume = asyncio.Event(), asyncio.Event()
+        committed_rows = []
+        original = memory._index
+
+        async def pause_before_index(chat_arg, row, stores, *, vector=None):
+            committed_rows.append(dict(row))
+            indexed.set()
+            await resume.wait()
+            return await original(chat_arg, row, stores, vector=vector)
+
+        monkeypatch.setattr(memory, "_index", pause_before_index)
+        writer = asyncio.create_task(
+            memory._save(
+                chat,
+                "late fact must not survive erasure",
+                writer_stores,
+                source="explicit",
+                pinned=False,
+                created_by=alice,
+                provenance="request_only",
+                source_ids=[(source_id, "request")],
+            )
+        )
+        await indexed.wait()
+        if path == "forget":
+            await memory._delete_memory(chat, int(committed_rows[0]["id"]), eraser_stores)
+        else:
+            actor = User(alice, "Alice")
+            ctx = CommandContext(chat, actor, False, False, FakePlatform(), eraser_stores)
+            action = PendingAction.create(
+                chat=chat,
+                requester=alice,
+                plugin="privacy",
+                kind="forgetme" if path == "forgetme" else "purgechat",
+                payload={"chats": [chat.key]} if path == "forgetme" else {"chat": chat.key},
+                summary="delete",
+            )
+            if path == "forgetme":
+                await privacy._forgetme(action, ctx)
+            else:
+                await privacy._purgechat(action, ctx)
+        # Cleanup runs while the writer is paused and clears the writer's verify row.
+        await memory.process_index_work(eraser_stores)
+        assert await memory.pending_cleanup(chat, eraser_stores) == 0
+
+        search.fail_delete_attempt = search.delete_attempts + 1
+        resume.set()
+        await writer
+        assert await repo.list(chat) == []
+        assert len(search.documents) == 1
+        assert await memory.pending_cleanup(chat, eraser_stores) >= 1
+
+        await memory.process_index_work(eraser_stores)
+        assert search.documents == {}
+        assert await memory.pending_cleanup(chat, eraser_stores) == 0
+    finally:
+        if writer_conn is not None:
+            await writer_conn.close()
+        if eraser_conn is not None:
+            await eraser_conn.close()
+        await setup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await setup.close()

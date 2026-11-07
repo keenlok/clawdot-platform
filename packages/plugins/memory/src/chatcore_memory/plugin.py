@@ -383,8 +383,14 @@ class MemoryPlugin(BasePlugin):
             if stores.search is not None:
                 fresh = await repo.get(chat, int(row["id"]))
                 if fresh is None:
+                    # The fact was deleted while we indexed it. An erasure may already have
+                    # cleared its work, so record the cleanup durably before deleting the doc.
+                    work_id = await repo.enqueue_index_work(chat, int(row["id"]), "delete_doc")
+                    await self._finish_work(repo, chat, int(row["id"]), "verify_index")
                     await self._delete_index(chat, [int(row["id"])], stores)
-                await self._finish_work(repo, chat, int(row["id"]), "verify_index")
+                    await repo.finish_index_work(work_id)
+                else:
+                    await self._finish_work(repo, chat, int(row["id"]), "verify_index")
         except Exception as exc:
             await self._count(stores, "index_write_failed")
             logger.warning(
