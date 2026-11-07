@@ -26,8 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Memory writes are fenced per chat. A save that started before `/forget`, `/forgetme` or `/purgechat`
   is rejected at commit and must be requested again. While an erasure runs, saving is paused and
   extraction is skipped. A pending save created before this release must be requested again.
+  Erasures in one chat run in request order; a new request waits behind any older active or queued one.
 - Memory search deletions are now durable: a failed Elasticsearch delete stays queued and is retried,
-  and the reply reports pending cleanup.
+  and the reply reports pending cleanup. This includes a document indexed after its fact was erased.
 
 ### Upgrade notes
 
