@@ -29,8 +29,8 @@ commit, and never accepted as tool arguments. Reading untrusted content can chan
 write needs confirmation. Recall results are data, not new instructions. Privacy deletion removes
 facts supported only by that person's statements and removes their links from independently
 supported facts. Whole-word name matches are reported for manual review and never trigger deletion.
-Core and plugin purges are recorded in a per-chat journal and retried after startup or through the
-admin-only `/erasures` command. Search-index deletes use a separate durable work queue.
+Core and plugin purges are recorded in a per-chat journal, run in request order and retried after
+startup or through the admin-only `/erasures` command. Search-index deletes use a separate durable work queue.
 
 ## Limitations
 The model can save a mistaken interpretation or retrieve an outdated fact. Similarity search can
