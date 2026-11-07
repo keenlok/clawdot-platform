@@ -4,7 +4,7 @@
 
 **Goal:** Make per-chat memories attributable when written and when read, recoverable from supporting messages, safe to correct and erase, and measurable across new conversations.
 
-**Status:** Slices 0–2a implemented on branch `codex/memory-reliability`, not yet merged or released; revised 2026-11-06 after review. The owner approved implementation of slices 0–2a on 2026-11-06 with the D2 and D3 defaults. Slices 2b, 2c, 3 and 4 remain unapproved. Measures that need a live model run stay unmeasured; [the baseline](2026-11-05-memory-baseline.md) lists them.
+**Status:** Slices 0–2a implemented in [PR #22](https://github.com/keenlok/clawdot-platform/pull/22); revised 2026-11-06 after review. The owner approved implementation of slices 0–2a on 2026-11-06 with the D2 and D3 defaults. Slices 2b, 2c, 3 and 4 remain unapproved. Measures that need a live model run stay unmeasured; [the baseline](2026-11-05-memory-baseline.md) lists them.
 
 **Architecture:** Keep Postgres authoritative, Elasticsearch rebuildable, conversation state separate from durable facts, and every operation scoped to one chat. Improve the existing memory plugin incrementally rather than adopting a new memory backend. Evidence is read from the existing message log through core interfaces.
 
