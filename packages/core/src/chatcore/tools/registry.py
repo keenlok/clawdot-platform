@@ -66,6 +66,8 @@ class ToolContext:
     is_admin: bool = False
     command_form: Callable[[str], str] = plain_command_form
     """How to spell a slash command here (``/name@bot`` in mention-only groups), for errors."""
+    source_message_id: str | None = None
+    reply_to_message_id: str | None = None
 
     @property
     def capabilities(self) -> Capabilities:

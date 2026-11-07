@@ -54,6 +54,7 @@ async def test_migrations_apply_once_and_detect_edits(db, tmp_path):
         "chatcore/0007_display_time.sql",
         "chatcore/0008_message_attribution.sql",
         "chatcore/0009_budget_admin.sql",
+        "chatcore/0010_privacy_erasures.sql",
     ]
     assert await migrations.apply(db, CORE) == []
 
@@ -128,6 +129,7 @@ async def test_message_attribution_migration_upgrades_existing_rows(db, tmp_path
     assert await migrations.apply(db, CORE) == [
         "chatcore/0008_message_attribution.sql",
         "chatcore/0009_budget_admin.sql",
+        "chatcore/0010_privacy_erasures.sql",
     ]
     row = await db.fetchrow(
         "SELECT username,mentions FROM messages WHERE chat_key=$1 AND message_id=$2",

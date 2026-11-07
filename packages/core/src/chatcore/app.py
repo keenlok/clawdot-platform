@@ -50,12 +50,14 @@ from chatcore.routing import (
     prompt_text,
 )
 from chatcore.skills import DEFAULT_GENERAL_TOOLS, Skill, SkillSet
-from chatcore.store.base import Stores
+from chatcore.store.base import StoredMessage, Stores
 from chatcore.threads import (
     NEW_CONVERSATION_TTL_S,
     MultipartSender,
     ThreadSettings,
+    TurnOrigin,
     current_conversation,
+    current_turn_origin,
     new_conversation_key,
     resolve_conversation,
 )
@@ -473,6 +475,7 @@ class BotApp:
                 await self._run_command(message, ctx, parsed=prompt_command)
             case Route.RESPOND | Route.CHATMODE:
                 text = prompt_text(message, self.bot_name) if route is Route.RESPOND else ""
+                origin = TurnOrigin("direct", message.message_id)
                 if route is Route.RESPOND and not message.is_dm:
                     if not text.strip() and not message.attachments:
                         if message.reply_to is not None:
@@ -496,15 +499,20 @@ class BotApp:
                                 text = (
                                     "Please respond to the message I'm replying to (quoted above)."
                                 )
+                                origin = TurnOrigin("synthetic")
                             elif replied and replied.is_bot and replied.text.strip():
                                 text = (
                                     "Please continue from your earlier message that I'm "
                                     "replying to."
                                 )
+                                origin = TurnOrigin("synthetic")
                             else:
                                 text = ""
                         else:
-                            text = await self._bare_tag_request(message) or ""
+                            row = await self._bare_tag_request(message)
+                            text = row.text if row else ""
+                            if row:
+                                origin = TurnOrigin("bare_tag", row.message_id)
                         if not text:
                             await self.send(
                                 message.chat,
@@ -518,7 +526,7 @@ class BotApp:
                 ):
                     try:
                         if route is Route.RESPOND:
-                            await self._respond_locked(message, text)
+                            await self._respond_locked(message, text, origin=origin)
                         else:
                             await self.responder.consider(message, self)
                     except Exception as exc:
@@ -687,9 +695,16 @@ class BotApp:
         return False
 
     async def _respond_locked(
-        self, message: IncomingMessage, text: str, *, force_new: bool = False
+        self,
+        message: IncomingMessage,
+        text: str,
+        *,
+        force_new: bool = False,
+        origin: TurnOrigin | None = None,
     ) -> None:
+        origin = origin or TurnOrigin("direct", message.message_id)
         if self.conversation_threads is None or message.is_dm:
+            origin_token = current_turn_origin.set(origin)
             try:
                 await self.responder.respond(message, text, self)
             except Exception as exc:
@@ -700,6 +715,8 @@ class BotApp:
                     reply_to=message.ref,
                     thread_id=message.thread_id,
                 )
+            finally:
+                current_turn_origin.reset(origin_token)
             return
         store = self.conversation_plugin.store
         pending_key = self._pending_new_key(message)
@@ -730,6 +747,7 @@ class BotApp:
         if reopened:
             await self._reopen_compact(message, conversation, was_active)
         token = current_conversation.set(conversation)
+        origin_token = current_turn_origin.set(origin)
         try:
             try:
                 await self.responder.respond(message, text, self)
@@ -742,6 +760,7 @@ class BotApp:
                     thread_id=message.thread_id,
                 )
         finally:
+            current_turn_origin.reset(origin_token)
             current_conversation.reset(token)
 
     async def _reopen_compact(self, message, conversation, was_active) -> None:
@@ -834,7 +853,7 @@ class BotApp:
         if reply:
             await self.send(press.chat, reply, reply_to=press.message, thread_id=thread_id)
 
-    async def _bare_tag_request(self, message: IncomingMessage) -> str | None:
+    async def _bare_tag_request(self, message: IncomingMessage) -> StoredMessage | None:
         cutoff = message.sent_at - timedelta(seconds=BARE_TAG_LOOKBACK_S)
         rows = await self.stores.repo.recent_messages(
             message.chat, limit=20, thread_id=message.thread_id
@@ -854,7 +873,7 @@ class BotApp:
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda row: row.sent_at).text
+        return max(candidates, key=lambda row: row.sent_at)
 
     async def _restricted_notice(
         self,

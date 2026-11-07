@@ -98,6 +98,8 @@ class BasePlugin:
     """Heading for this plugin's commands in ``/help``; defaults to a title-cased ``name``."""
     migrations_package: str | None = None
     """Importable package holding the ``.sql`` files, e.g. ``"chatcore_expenses.migrations"``."""
+    purge_reads_messages: bool = False
+    erasure_blocks_writes: bool = False
 
     def migrations(self) -> Traversable | None:
         return resources.files(self.migrations_package) if self.migrations_package else None
@@ -139,3 +141,18 @@ class BasePlugin:
 
     async def purge_older_than(self, cutoff: datetime, stores: Stores) -> None:
         return None
+
+    async def begin_erasure(self, chat, operation_id, scope, target, stores) -> None:
+        return None
+
+    async def finish_erasure(self, chat, operation_id, *, success, stores) -> None:
+        return None
+
+    async def release_erasure(self, chat, operation_id, stores) -> None:
+        return None
+
+    async def erasure_notes(self, chat, user, stores) -> str | None:
+        return None
+
+    async def pending_cleanup(self, chat, stores) -> int:
+        return 0

@@ -5,6 +5,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Memory facts now show who they are about and when they were saved, in the agent's context, `recall`
+  and `/memory`. The new `MEMORY_CONTEXT_MAX_CHARS` setting (default 5000) bounds the injected section.
+- **Behaviour change:** similar wording no longer overwrites a saved memory. Automatic extraction
+  never changes an existing fact. An explicit save beside a similar fact inserts a new one and names
+  the similar fact, and `remember` takes an optional `replaces` memory ID for atomic corrections.
+- Automatic extraction skips bot-generated prompts, treats message bodies as untrusted data, and
+  drops third-party claims that it can't link to a verified mention.
+- Migration `0002_memory_control.sql` adds the `memory_control` table. No existing rows change.
+- **Behaviour change:** `/forgetme` and `/purgechat` now run through a durable journal. A failed step
+  is retried automatically with backoff (5 minutes up to 1 hour), including after a restart, and the
+  reply says when deletion is incomplete. Core messages are now deleted only after plugins that read
+  them to find purge targets have succeeded; other plugin failures no longer hold them back.
+- **Behaviour change:** `/forgetme` deletes memories the person is the subject of, contributed context
+  to, or is the only stated support for. A fact another person independently stated stays, without
+  this person's links. Surviving facts that contain their name as a whole word are listed for manual
+  `/forget`, and are not deleted by name match.
+- Memory writes are fenced per chat. A save that started before `/forget`, `/forgetme` or `/purgechat`
+  is rejected at commit and must be requested again. While an erasure runs, saving is paused and
+  extraction is skipped. A pending save created before this release must be requested again.
+- Memory search deletions are now durable: a failed Elasticsearch delete stays queued and is retried,
+  and the reply reports pending cleanup.
+
+### Upgrade notes
+
+- Migrations `0010_privacy_erasures.sql` (core) and `0003_memory_sources.sql` (memory) are additive.
+  They add `privacy_erasures`, `memory_sources`, `memory_index_work` and `memories.provenance`.
+  Existing facts are marked `legacy_unknown`. Source author keys and message IDs stay after a message
+  body expires, so erasure still finds them; operational journal rows hold no message text.
+- Custom `SearchIndex` implementations must accept `delete(..., refresh_first=False)` and a `terms`
+  query on `memory_id`. Custom `CoreRepo` implementations must add `create_erasure`, `list_erasures`,
+  `update_erasure`, `delete_erasure` and `promote_erasure`.
+- Plugins whose purge reads the message log to find targets must set `purge_reads_messages = True`.
+
+### Added
+
+- New memory facts record bounded links to the human messages behind them (up to 32 per fact), taken
+  only from trusted turn data, and never from model arguments.
+- Admin-only `/erasures` lists outstanding erasures. `/erasures retry <id>` forces a retry and
+  `/erasures release <id>` unblocks memory writes once the memory purge step has succeeded.
+- `BasePlugin` gains optional `begin_erasure`, `finish_erasure`, `release_erasure`, `erasure_notes`
+  and `pending_cleanup` hooks, plus `purge_reads_messages` and `erasure_blocks_writes` attributes.
+
+- Memory extraction now records daily counters for attempts, skips, failures and index-write
+  failures, with no message content. Admins can read them with `/memorystats`, which also lists the
+  current chat's automatic memories whose wording was later overwritten. The audit changes nothing.
+
 ## [0.5.6] - 2026-11-07
 
 ### Changed

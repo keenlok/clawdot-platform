@@ -71,7 +71,12 @@ class SearchIndex(Protocol):
         """BM25 when ``text`` is given, kNN when ``vector`` is; always filtered to ``chat``."""
 
     async def delete(
-        self, index: str, *, chat: ChatRef, query: Mapping[str, Any] | None = None
+        self,
+        index: str,
+        *,
+        chat: ChatRef,
+        query: Mapping[str, Any] | None = None,
+        refresh_first: bool = False,
     ) -> int: ...
 
 
@@ -139,6 +144,14 @@ class CoreRepo(Protocol):
 
     async def purge_older_than(self, cutoff: datetime, *, now: datetime | None = None) -> int:
         """Delete old messages and used or expired pending actions using the app clock."""
+
+    async def create_erasure(
+        self, operation_id: str, chat: ChatRef, scope: str, target_user_key: str | None
+    ) -> Row: ...
+    async def list_erasures(self, chat: ChatRef | None = None) -> list[Row]: ...
+    async def update_erasure(self, operation_id: str, **fields: Any) -> None: ...
+    async def delete_erasure(self, operation_id: str) -> None: ...
+    async def promote_erasure(self, chat: ChatRef) -> Row | None: ...
 
 
 @dataclass(slots=True)
