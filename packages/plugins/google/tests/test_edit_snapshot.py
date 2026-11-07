@@ -4,6 +4,7 @@ from chatcore_google.edit_snapshot import (
     doc_style_for_range,
     find_doc_match,
     flatten_doc_snapshot,
+    resolve_effective_doc_style,
 )
 
 
@@ -15,12 +16,34 @@ def doc(text, *, tab_id="tab-1"):
             {
                 "tabProperties": {"tabId": tab_id, "title": "Main"},
                 "documentTab": {
+                    "namedStyles": {
+                        "styles": [
+                            {
+                                "namedStyleType": "NORMAL_TEXT",
+                                "textStyle": {
+                                    "bold": True,
+                                    "italic": False,
+                                    "underline": False,
+                                    "strikethrough": False,
+                                    "smallCaps": False,
+                                    "backgroundColor": {},
+                                    "foregroundColor": {
+                                        "color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}
+                                    },
+                                    "baselineOffset": "NONE",
+                                    "fontSize": {"magnitude": 11, "unit": "PT"},
+                                    "weightedFontFamily": {"fontFamily": "Arial"},
+                                },
+                            }
+                        ]
+                    },
                     "body": {
                         "content": [
                             {
                                 "startIndex": 1,
                                 "endIndex": length + 2,
                                 "paragraph": {
+                                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                                     "elements": [
                                         {
                                             "startIndex": 1,
@@ -35,11 +58,11 @@ def doc(text, *, tab_id="tab-1"):
                                             "endIndex": length + 2,
                                             "textRun": {"content": "\n", "textStyle": {}},
                                         },
-                                    ]
+                                    ],
                                 },
                             }
                         ]
-                    }
+                    },
                 },
             }
         ],
@@ -52,6 +75,118 @@ def test_doc_snapshot_keeps_tab_revision_exact_text_and_style_spans():
     match = find_doc_match(snapshot, "😀")
     assert (match.start_index, match.end_index) == (4, 6)
     assert match.uniform_style == {"bold": True}
+    assert match.style_resolved is True
+    assert match.effective_style["fontSize"] == 11.0
+
+
+def test_effective_style_resolution_fails_closed_for_unknown_defaults_and_bad_shapes():
+    styles = doc("target")["tabs"][0]["documentTab"]["namedStyles"]["styles"]
+    incomplete = [{"namedStyleType": "NORMAL_TEXT", "textStyle": {"bold": True}}]
+    assert resolve_effective_doc_style({"bold": True}, incomplete, "NORMAL_TEXT")[1] is False
+    malformed = [
+        {
+            "namedStyleType": "NORMAL_TEXT",
+            "textStyle": {**styles[0]["textStyle"], "italic": "false"},
+        }
+    ]
+    assert resolve_effective_doc_style({"bold": True}, malformed, "NORMAL_TEXT")[1] is False
+    assert resolve_effective_doc_style({"bold": True}, styles, None)[1] is False
+
+
+def test_heading_style_inherits_normal_text_and_unspecified_baseline_offset():
+    normal = doc("target")["tabs"][0]["documentTab"]["namedStyles"]["styles"][0]["textStyle"]
+    named_styles = [
+        {"namedStyleType": "NORMAL_TEXT", "textStyle": normal},
+        {
+            "namedStyleType": "HEADING_1",
+            "textStyle": {
+                "bold": True,
+                "baselineOffset": "BASELINE_OFFSET_UNSPECIFIED",
+                "link": {"url": "https://ignored.example"},
+            },
+        },
+    ]
+    effective, resolved = resolve_effective_doc_style({}, named_styles, "HEADING_1")
+    assert resolved is True
+    assert effective["italic"] is False
+    assert effective["baselineOffset"] == "NONE"
+    assert effective["link"] is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("fontSize", {"magnitude": True, "unit": "PT"}),
+        ("weightedFontFamily", {"fontFamily": "Arial", "weight": True}),
+        (
+            "foregroundColor",
+            {"color": {"rgbColor": {"red": True, "green": 0, "blue": 0}}},
+        ),
+    ],
+)
+def test_style_resolver_rejects_boolean_numeric_shapes(field, value):
+    styles = doc("target")["tabs"][0]["documentTab"]["namedStyles"]["styles"]
+    styles = [
+        {
+            **styles[0],
+            "textStyle": {**styles[0]["textStyle"], field: value},
+        }
+    ]
+    assert resolve_effective_doc_style({}, styles, "NORMAL_TEXT")[1] is False
+
+
+def test_snapshot_uses_selected_tab_named_styles_and_paragraph_style_identity():
+    value = doc("target")
+    second = doc("other", tab_id="tab-2")["tabs"][0]
+    second["tabProperties"]["title"] = "Other"
+    second["documentTab"]["namedStyles"]["styles"][0]["textStyle"]["weightedFontFamily"] = {
+        "fontFamily": "Courier New"
+    }
+    value["tabs"].append(second)
+    snapshot = flatten_doc_snapshot(value, tab_id="tab-2", max_chars=100)
+    match = find_doc_match(snapshot, "other")
+    assert match.named_style_type == "NORMAL_TEXT"
+    assert match.effective_style["weightedFontFamily"]["fontFamily"] == "Courier New"
+
+
+def test_snapshot_does_not_borrow_first_tab_global_style_for_later_tab():
+    value = doc("first")
+    second = doc("target", tab_id="tab-2")["tabs"][0]
+    second["tabProperties"]["title"] = "Other"
+    second["documentTab"].pop("namedStyles")
+    value["namedStyles"] = value["tabs"][0]["documentTab"]["namedStyles"]
+    value["tabs"].append(second)
+
+    match = find_doc_match(flatten_doc_snapshot(value, tab_id="tab-2", max_chars=100), "target")
+
+    assert match.style_resolved is False
+
+
+@pytest.mark.parametrize("suggestion_field", ["paragraph", "named_styles"])
+def test_pending_paragraph_or_named_style_changes_leave_style_unresolved(suggestion_field):
+    value = doc("target")
+    tab = value["tabs"][0]["documentTab"]
+    if suggestion_field == "paragraph":
+        tab["body"]["content"][0]["paragraph"]["suggestedParagraphStyleChanges"] = {
+            "suggestion-1": {"paragraphStyle": {"namedStyleType": "HEADING_1"}}
+        }
+    else:
+        tab["suggestedNamedStylesChanges"] = {"suggestion-1": {"namedStyles": {}}}
+
+    match = find_doc_match(flatten_doc_snapshot(value, tab_id="tab-1", max_chars=100), "target")
+
+    assert match.style_resolved is False
+
+
+def test_global_named_style_suggestions_in_single_tab_leave_style_unresolved():
+    value = doc("target")
+    tab = value["tabs"][0]["documentTab"]
+    value["namedStyles"] = tab.pop("namedStyles")
+    value["suggestedNamedStylesChanges"] = {"suggestion-1": {"namedStyles": {}}}
+
+    match = find_doc_match(flatten_doc_snapshot(value, tab_id="tab-1", max_chars=100), "target")
+
+    assert match.style_resolved is False
 
 
 def test_doc_match_rejects_duplicate_absent_split_style_and_suggested_span():
@@ -149,6 +284,7 @@ def test_snapshot_finds_table_cell_text_and_maps_indices_from_text_runs():
     match = find_doc_match(snapshot, "inside")
     assert (match.start_index, match.end_index) == (10, 16)
     assert match.uniform_style == {"bold": False}
+    assert match.style_resolved is False
 
 
 def test_table_row_suggestion_is_propagated_into_its_cell_text():

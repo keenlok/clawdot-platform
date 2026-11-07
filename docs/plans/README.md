@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [Google Doc verification outcomes and inherited styles](2026-11-06-google-doc-verification-outcomes.md) | Live limited | [PR #20](https://github.com/keenlok/clawdot-platform/pull/20): v0.5.5 separates verified text from formatting warnings and resolves provable inheritance; reviewed implementation and downstream receipt on the associated PR |
 | [Current trip itinerary execution](2026-11-05-current-trip-itinerary-execution.md) | Live limited | [PR #17](https://github.com/keenlok/clawdot-platform/pull/17): v0.5.2 runtime and review evidence; downstream rollout receipt tracked on PR |
 | [Current trip itinerary targeting](2026-11-05-current-trip-itinerary.md) | Live limited | [PR #17](https://github.com/keenlok/clawdot-platform/pull/17): owner-approved same-Doc edits and confirmed current-itinerary advancement; requires downstream release pin |
 | [Google output follow-ups execution](2026-11-04-google-output-followups-execution.md) | Live limited | [PR #16](https://github.com/keenlok/clawdot-platform/pull/16): v0.5.0 implementation, Luna execution/Sol review; release and downstream installed receipts on PR |
@@ -112,7 +113,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 
 | Plan | Status | PR | Notes |
 | --- | --- | --- | --- |
-| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Live, limited | [#13](https://github.com/keenlok/clawdot-platform/pull/13), [#14](https://github.com/keenlok/clawdot-platform/pull/14), [#18](https://github.com/keenlok/clawdot-platform/pull/18), [deploy #16](https://github.com/keenlok/clawdot-deployments/pull/16) | v0.5.1 route correction is released and all three configured voices are live. PR #18 fixes natural audio-request routing for the existing limited trial |
+| [2026-11-04-tutor-pronunciation-tts.md](2026-11-04-tutor-pronunciation-tts.md) | Live, limited | [#13](https://github.com/keenlok/clawdot-platform/pull/13), [#14](https://github.com/keenlok/clawdot-platform/pull/14), [#18](https://github.com/keenlok/clawdot-platform/pull/18), [#19](https://github.com/keenlok/clawdot-platform/pull/19), [#21](https://github.com/keenlok/clawdot-platform/pull/21), [deploy #16](https://github.com/keenlok/clawdot-deployments/pull/16) | PR #21 adds private-safe Telegram voice failure categories to diagnose the live delivery error |
 | [skill-layer.md](skill-layer.md) | Live, limited | history #14 | Design. `SKILLS_MODE=on` only for the owner's test chats; other chats use the legacy prompt |
 | [skill-layer-astra-review.md](skill-layer-astra-review.md) | Record | history #14 | Independent design review |
 | [tool-descriptions.md](tool-descriptions.md) | Live | history #17 | Stage 0a |

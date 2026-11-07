@@ -699,6 +699,7 @@ async def test_enabled_router_handles_natural_audio_requests_and_sticky_slow_fol
         "Please say this aloud in Japanese",
         "how to sound",
         "voice pls",
+        "sound please",
         "i want sound clip",
         "please send an audio clip",
         "讀畀我聽",
@@ -707,7 +708,7 @@ async def test_enabled_router_handles_natural_audio_requests_and_sticky_slow_fol
     ):
         result = await router.route(phrase)
         assert "language_tutor" in [hit.skill for hit in result.hits], phrase
-    first = message("voice pls")
+    first = message("sound please")
     await stores.repo.log_message(first)
     await responder.respond(first, first.text, app)
     followup = message("slower please", sender=first.user)

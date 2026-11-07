@@ -310,12 +310,34 @@ async def test_trip_edit_confirm_updates_the_saved_native_doc_once(trip_files):
                 {
                     "tabProperties": {"tabId": "tab-1", "title": "Guangzhou"},
                     "documentTab": {
+                        "namedStyles": {
+                            "styles": [
+                                {
+                                    "namedStyleType": "NORMAL_TEXT",
+                                    "textStyle": {
+                                        "bold": False,
+                                        "italic": False,
+                                        "underline": False,
+                                        "strikethrough": False,
+                                        "smallCaps": False,
+                                        "backgroundColor": {},
+                                        "foregroundColor": {
+                                            "color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}
+                                        },
+                                        "baselineOffset": "NONE",
+                                        "fontSize": {"magnitude": 11, "unit": "PT"},
+                                        "weightedFontFamily": {"fontFamily": "Arial"},
+                                    },
+                                }
+                            ]
+                        },
                         "body": {
                             "content": [
                                 {
                                     "startIndex": 1,
                                     "endIndex": len(text) + 2,
                                     "paragraph": {
+                                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                                         "elements": [
                                             {
                                                 "startIndex": 1,
@@ -327,11 +349,11 @@ async def test_trip_edit_confirm_updates_the_saved_native_doc_once(trip_files):
                                                 "endIndex": len(text) + 2,
                                                 "textRun": {"content": "\n", "textStyle": {}},
                                             },
-                                        ]
+                                        ],
                                     },
                                 }
                             ]
-                        }
+                        },
                     },
                 }
             ],
@@ -596,12 +618,34 @@ async def test_verified_copy_advances_trip_primary_and_next_edit_uses_it(trip_fi
                 {
                     "tabProperties": {"tabId": "tab-1", "title": "Guangzhou"},
                     "documentTab": {
+                        "namedStyles": {
+                            "styles": [
+                                {
+                                    "namedStyleType": "NORMAL_TEXT",
+                                    "textStyle": {
+                                        "bold": False,
+                                        "italic": False,
+                                        "underline": False,
+                                        "strikethrough": False,
+                                        "smallCaps": False,
+                                        "backgroundColor": {},
+                                        "foregroundColor": {
+                                            "color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}
+                                        },
+                                        "baselineOffset": "NONE",
+                                        "fontSize": {"magnitude": 11, "unit": "PT"},
+                                        "weightedFontFamily": {"fontFamily": "Arial"},
+                                    },
+                                }
+                            ]
+                        },
                         "body": {
                             "content": [
                                 {
                                     "startIndex": 1,
                                     "endIndex": len(text) + 2,
                                     "paragraph": {
+                                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                                         "elements": [
                                             {
                                                 "startIndex": 1,
@@ -613,11 +657,11 @@ async def test_verified_copy_advances_trip_primary_and_next_edit_uses_it(trip_fi
                                                 "endIndex": len(text) + 2,
                                                 "textRun": {"content": "\n", "textStyle": {}},
                                             },
-                                        ]
+                                        ],
                                     },
                                 }
                             ]
-                        }
+                        },
                     },
                 }
             ],

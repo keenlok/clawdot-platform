@@ -6,7 +6,12 @@ import asyncio
 import time
 from dataclasses import dataclass
 
-from chatcore_google.edit_snapshot import doc_style_for_range, flatten_doc_snapshot
+from chatcore_google.edit_snapshot import (
+    doc_style_for_range,
+    flatten_doc_snapshot,
+    paragraph_style_for_range,
+    resolve_effective_doc_style,
+)
 
 
 @dataclass(frozen=True)
@@ -15,6 +20,8 @@ class DocVerification:
     category: str | None
     attempts: int
     snapshot: object | None = None
+    text_verified: bool = False
+    formatting_verified: bool = False
 
 
 async def verify_doc_readback(
@@ -37,6 +44,9 @@ async def verify_doc_readback(
     deadline = now() + deadline_s
     delays = (0.1, 0.4)
     category = "read_error"
+    last_text_verified = False
+    last_formatting_verified = False
+    last_snapshot = None
     for attempt in range(1, 4):
         remaining = deadline - now()
         if remaining <= 0:
@@ -47,6 +57,8 @@ async def verify_doc_readback(
             return DocVerification(False, "readback_deadline", attempt)
         except Exception:
             category = "read_error"
+            last_text_verified = last_formatting_verified = False
+            last_snapshot = None
         else:
             if now() >= deadline:
                 return DocVerification(False, "readback_deadline", attempt)
@@ -56,12 +68,20 @@ async def verify_doc_readback(
                 )
             except Exception:
                 category = "snapshot_error"
+                last_text_verified = last_formatting_verified = False
+                last_snapshot = None
             else:
                 if require_complete and not snapshot.complete:
                     category = "snapshot_error"
+                    last_text_verified = last_formatting_verified = False
+                    last_snapshot = None
                 elif snapshot.text != expected_text:
                     category = "text_mismatch"
+                    last_text_verified = last_formatting_verified = False
+                    last_snapshot = snapshot
                 elif match is not None and replacement:
+                    last_text_verified = True
+                    last_snapshot = snapshot
                     end = match.start_index + len(replacement.encode("utf-16-le")) // 2
                     try:
                         for paragraph in snapshot.paragraphs:
@@ -77,15 +97,25 @@ async def verify_doc_readback(
                                     "unsafe."
                                 )
                         style = doc_style_for_range(snapshot, match.start_index, end)
+                        named_style_type, supported_context = paragraph_style_for_range(
+                            snapshot, match.start_index, end
+                        )
+                        effective, resolved = resolve_effective_doc_style(
+                            style, snapshot.named_styles, named_style_type
+                        )
+                        if not supported_context or not resolved or not match.style_resolved:
+                            raise ValueError("The effective text style context is unresolved.")
                     except ValueError:
                         category = "style_coverage"
+                        last_formatting_verified = False
                     else:
-                        if style != match.uniform_style:
+                        if effective != match.effective_style:
                             category = "style_mismatch"
+                            last_formatting_verified = False
                         else:
-                            return DocVerification(True, None, attempt, snapshot)
+                            return DocVerification(True, None, attempt, snapshot, True, True)
                 else:
-                    return DocVerification(True, None, attempt, snapshot)
+                    return DocVerification(True, None, attempt, snapshot, True, True)
         if attempt == 3:
             break
         delay = delays[attempt - 1]
@@ -95,4 +125,11 @@ async def verify_doc_readback(
         await pause(min(delay, remaining))
         if now() >= deadline:
             return DocVerification(False, "readback_deadline", attempt)
-    return DocVerification(False, category, 3)
+    return DocVerification(
+        False,
+        category,
+        3,
+        last_snapshot,
+        last_text_verified,
+        last_formatting_verified,
+    )

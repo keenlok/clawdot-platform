@@ -247,7 +247,7 @@ ordinary audio requests. The bot then incorrectly claimed TTS was unavailable.
 
 Acceptance criteria for this follow-up:
 
-- “how to sound”, “voice pls”, and “i want sound clip” activate the tutor skill with the audio tool.
+- “how to sound”, “voice pls”, “sound please”, and “i want sound clip” activate the tutor skill with the audio tool.
 - Ordinary tutoring, translation-only behavior, language selection, normal-by-default pace, and
   the existing per-turn speech controls remain unchanged.
 - Common Cantonese, Mandarin and Japanese requests to hear/read a phrase aloud route to the same
@@ -258,10 +258,27 @@ Acceptance criteria for this follow-up:
 This approved feature-plan amendment changes only tutor-skill examples, keywords and instructions
 plus routing regression coverage. It does not change the speech provider, supported languages,
 permissions, quotas, deployment credentials or delivery behavior. The follow-up PR and release
-receipt will be recorded here after verification.
+receipt for v0.5.4 will be recorded here after verification.
 
-[PR #18](https://github.com/keenlok/clawdot-platform/pull/18) contains the trigger correction and
-v0.5.3 version bump. Local verification passed: **3,711 passed, 59 skipped, 26 deselected**, Ruff
-lint, explainer generation, locked sync and changed-file formatting. The full-repository format
-check still reports 14 unchanged Markdown files. Pull request CI and publication of v0.5.3 are
-pending; the downstream pin and deployment will follow the immutable release.
+[PR #18](https://github.com/keenlok/clawdot-platform/pull/18) contains the first trigger correction;
+v0.5.3 was published from commit `562f51f642e60030dba979ce557cffe917178256` and deployed by private
+rollout PR [#18](https://github.com/keenlok/clawdot-deployments/pull/18). After deployment, a live
+“sound please” turn still offered no skills (`source=none`, zero assistant steps); the prior list
+covered “sound clip” but not “sound please”. A follow-up regression now checks that exact phrase
+activates the tutor route and audio tool. The corresponding downstream routing corpus and rollout
+receipt are tracked in the private follow-up PR.
+
+## Live voice-delivery investigation (2026-11-07)
+
+After the v0.5.4 deployment, a live `sound please` turn selected
+`pronounce_tutor_text` (`source=keyword`, one assistant step). ElevenLabs did not log a
+synthesis failure; the tutor then logged a delivery `PlatformError`. The Telegram adapter's
+`send_voice` path converts Bot API errors to a generic `PlatformError`, so the deployed logs
+cannot distinguish a rejected audio payload from a caption, destination, or transport failure.
+The corresponding live message reported that no clip was sent.
+
+The next change will add only a small allowlisted Telegram rejection category at the voice-send
+boundary and a regression test that proves raw API descriptions remain out of logs. Use the next
+authorized live request to identify the rejected component, then fix and verify that specific
+cause. Do not infer that the TTS router or provider failed from a delivery error. Keep production
+audio enabled only when the diagnosed correction can be safely verified; preserve text tutoring.

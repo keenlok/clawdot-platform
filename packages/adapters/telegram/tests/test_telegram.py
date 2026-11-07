@@ -192,6 +192,28 @@ async def test_voice_rejects_bounds_and_sanitizes_one_ambiguous_send() -> None:
     assert bot.send_voice.await_count == 2
 
 
+async def test_voice_send_logs_only_allowlisted_rejection_category(caplog) -> None:
+    bot = AsyncMock()
+    platform = make_platform(bot)
+    chat = ChatRef("tg", "-100")
+    bot.send_voice.side_effect = BadRequest(
+        "Bad Request: voice file must be audio/ogg; private caption text"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="chatcore_telegram"):
+        with pytest.raises(PlatformError):
+            await platform.send_voice(
+                chat,
+                "pronunciation.mp3",
+                b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x64",
+                caption="private phrase",
+            )
+
+    assert "telegram voice delivery failed reason=media_rejected" in caplog.text
+    assert "private caption text" not in caplog.text
+    assert "private phrase" not in caplog.text
+
+
 @pytest.mark.parametrize("private", [False, True])
 async def test_current_group_title_maps_as_optional_chat_context(private) -> None:
     platform = make_platform()

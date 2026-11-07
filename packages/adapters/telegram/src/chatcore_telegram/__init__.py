@@ -595,13 +595,16 @@ class TelegramPlatform(VoicePlatform):
 
             if utf16_length(caption) > 1024:
                 raise PlatformError("CaptionTooLong")
-        msg = await self._safe(
-            self._application.bot.send_voice,
-            chat_id=chat.id,
-            voice=InputFile(data, filename=filename),
-            caption=caption,
-            message_thread_id=int(thread_id) if thread_id else None,
-        )
+        try:
+            msg = await self._application.bot.send_voice(
+                chat_id=chat.id,
+                voice=InputFile(data, filename=filename),
+                caption=caption,
+                message_thread_id=int(thread_id) if thread_id else None,
+            )
+        except TelegramError as exc:
+            logger.warning("telegram voice delivery failed reason=%s", _voice_error_category(exc))
+            raise PlatformError(type(exc).__name__) from None
         return MessageRef(chat, str(msg.message_id), thread_id)
 
     async def stop_poll(self, message: MessageRef) -> PollResult:
@@ -777,6 +780,28 @@ class TelegramPlatform(VoicePlatform):
         except TelegramError as exc:
             error_name = type(exc).__name__
         raise PlatformError(error_name or "TelegramError")
+
+
+def _voice_error_category(exc: TelegramError) -> str:
+    """Return a bounded diagnostic category without retaining Telegram's response text."""
+    description = str(exc).casefold()
+    if isinstance(exc, BadRequest):
+        if "voice" in description or "audio" in description or "file" in description:
+            return "media_rejected"
+        if "caption" in description or "entity" in description:
+            return "caption_rejected"
+        if "thread" in description or "topic" in description:
+            return "topic_rejected"
+        if "chat" in description:
+            return "destination_rejected"
+        return "request_rejected"
+    if isinstance(exc, Forbidden):
+        return "forbidden"
+    if isinstance(exc, RetryAfter):
+        return "rate_limited"
+    if isinstance(exc, (NetworkError, TimedOut)):
+        return "network_error"
+    return "telegram_error"
 
 
 # Imported last: bridge.py depends only on chatcore and chatcore_telegram.formatting.
