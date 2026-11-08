@@ -1,7 +1,7 @@
 # Expense split names: echo who shares, keep names as written
 
-Status: Implemented on `claude/expense-split-names` (owner approved 2026-11-09); not yet
-released.
+Status: Released in v0.6.2 (PR #25, owner approved 2026-11-09); downstream rollout tracked
+privately.
 
 ## Incident
 
