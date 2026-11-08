@@ -58,7 +58,7 @@ the original workspace; that app now belongs in private `bots/sb_bot`.
 | [phase2-wiring.md](phase2-wiring.md) | Live | — | Phase 2 |
 | [phase2-deploy.md](phase2-deploy.md) | Record | — | Original operator record preserved in private archive; platform stub retains references |
 | [memory-json-fix.md](memory-json-fix.md) | Live | history #1 | |
-| [Memory reliability and evidence](2026-11-05-memory-improvements.md) | Live limited | [PR #22](https://github.com/keenlok/clawdot-platform/pull/22) | Slices 0–2a only, approved 2026-11-06; slices 1 and 2a must ship together; 2b, 2c, 3 and 4 are not built and need separate approval; live-model measures remain unmeasured |
+| [Memory reliability and evidence](2026-11-05-memory-improvements.md) | Live limited | [PR #22](https://github.com/keenlok/clawdot-platform/pull/22): v0.6.0 | Slices 0–2a only, approved 2026-11-06; slices 1 and 2a must ship together; 2b, 2c, 3 and 4 are not built and need separate approval; live-model measures remain unmeasured |
 | [Memory framework comparison](2026-11-05-memory-framework-comparison.md) | Record | — | Research behind the memory reliability plan |
 | [Memory reliability slice 0 baseline](2026-11-05-memory-baseline.md) | Record | — | Synthetic and scripted behavioral baseline; no production quality run |
 | [telegram-formatting.md](telegram-formatting.md) | Live | — | |
