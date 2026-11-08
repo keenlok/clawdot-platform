@@ -104,6 +104,84 @@ class PgCoreRepo:
     def __init__(self, db: PgDatabase) -> None:
         self.db = db
 
+    async def create_erasure(self, operation_id, chat, scope, target_user_key):
+        async with self.db.transaction() as tx:
+            await tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", chat.key)
+            # Any active or queued operation blocks: a new request never overtakes older ones.
+            blocked = await tx.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM privacy_erasures "
+                "WHERE chat_key=$1 AND status IN ('active','queued'))",
+                chat.key,
+            )
+            row = await tx.fetchrow(
+                "INSERT INTO privacy_erasures (operation_id,chat_key,scope,target_user_key,status) "
+                "VALUES ($1,$2,$3,$4,$5) RETURNING *",
+                operation_id,
+                chat.key,
+                scope,
+                target_user_key,
+                "queued" if blocked else "active",
+            )
+            return dict(row)
+
+    async def list_erasures(self, chat: ChatRef | None = None) -> list[Row]:
+        rows = await self.db.fetch(
+            "SELECT * FROM privacy_erasures WHERE ($1::text IS NULL OR chat_key=$1) "
+            "ORDER BY created_at, operation_id",
+            chat.key if chat else None,
+        )
+        return [dict(row) for row in rows]
+
+    async def update_erasure(self, operation_id: str, **fields: Any) -> None:
+        allowed = {"status", "completed_steps", "attempts", "next_attempt_at", "last_error_code"}
+        if not allowed.intersection(fields):
+            return
+        await self.db.execute(
+            "UPDATE privacy_erasures SET "
+            "status=CASE WHEN $2 THEN $3 ELSE status END, "
+            "completed_steps=CASE WHEN $4 THEN $5 ELSE completed_steps END, "
+            "attempts=CASE WHEN $6 THEN $7 ELSE attempts END, "
+            "next_attempt_at=CASE WHEN $8 THEN $9 ELSE next_attempt_at END, "
+            "last_error_code=CASE WHEN $10 THEN $11 ELSE last_error_code END "
+            "WHERE operation_id=$1",
+            operation_id,
+            "status" in fields,
+            fields.get("status"),
+            "completed_steps" in fields,
+            fields.get("completed_steps"),
+            "attempts" in fields,
+            fields.get("attempts"),
+            "next_attempt_at" in fields,
+            fields.get("next_attempt_at"),
+            "last_error_code" in fields,
+            fields.get("last_error_code"),
+        )
+
+    async def delete_erasure(self, operation_id: str) -> None:
+        await self.db.execute("DELETE FROM privacy_erasures WHERE operation_id=$1", operation_id)
+
+    async def promote_erasure(self, chat: ChatRef) -> Row | None:
+        async with self.db.transaction() as tx:
+            await tx.execute("SELECT pg_advisory_xact_lock(hashtext($1))", chat.key)
+            active = await tx.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM privacy_erasures "
+                "WHERE chat_key=$1 AND status='active')",
+                chat.key,
+            )
+            if active:
+                return None
+            row = await tx.fetchrow(
+                "SELECT operation_id FROM privacy_erasures WHERE chat_key=$1 AND status='queued' "
+                "ORDER BY created_at, operation_id LIMIT 1 FOR UPDATE",
+                chat.key,
+            )
+            if row is None:
+                return None
+            return await tx.fetchrow(
+                "UPDATE privacy_erasures SET status='active' WHERE operation_id=$1 RETURNING *",
+                row["operation_id"],
+            )
+
     async def log_message(self, message: IncomingMessage) -> None:
         attachments = [
             {

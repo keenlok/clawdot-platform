@@ -28,7 +28,7 @@ from chatcore.skill_router import SkillRouter
 from chatcore.skill_turn import SkillSettings, SkillTurn, effective_mode
 from chatcore.skills import SkillsMode
 from chatcore.store.base import Stores
-from chatcore.threads import current_conversation
+from chatcore.threads import current_conversation, current_turn_origin
 from chatcore.tools.registry import ToolContext, ToolResult, TurnState, direct_write_allowed
 from chatcore.turn_metrics import TurnMetrics
 
@@ -924,6 +924,16 @@ class AgentResponder:
             platform=app.platform,
             stores=app.stores,
             thread_id=message.thread_id,
+            source_message_id=(
+                current_turn_origin.get().source_message_id
+                if current_turn_origin.get() and current_turn_origin.get().source_message_id
+                else message.message_id
+            ),
+            reply_to_message_id=(
+                message.reply_to.message_id
+                if message.reply_to and message.reply_to.chat == message.chat
+                else None
+            ),
             turn=TurnState(
                 downloads=downloads,
                 vision=turn_model.vision,

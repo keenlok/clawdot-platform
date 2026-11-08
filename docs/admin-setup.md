@@ -153,3 +153,19 @@ results and the original user and assistant turns retain their existing persiste
 `/forgetme` removes the requester's messages and linked turns, then clears normalized mention
 metadata from surviving messages, turns and pending history buffers in that chat. Other people's
 original message text and data in other chats remain unchanged.
+
+## Memory erasure and diagnostics
+
+`/forgetme` and `/purgechat` also delete long-term memories. `/forgetme` deletes facts supported
+only by the requester's own statements and removes the requester's links from facts other people
+also support. Facts saved before source links existed are kept; the reply lists surviving facts
+that mention the requester's name, for review with `/memory` and `/forget`. Each erasure is
+recorded in a per-chat journal; while it runs, memory saves in that chat are paused. Erasures in one chat run in request order. A failed step is retried
+automatically, and a failed search-index delete stays queued, so the reply may report pending
+cleanup.
+
+Administrators can inspect and manage this with `/erasures` (outstanding erasures and pending
+search cleanup), `/erasures retry <operation-id>` and `/erasures release <operation-id>` (resume
+memory saves and retry the remaining steps, after confirmation). `/memorystats` shows extraction
+counters and lists automatic memories whose wording was overwritten before this release. None of
+these commands show message or memory text.

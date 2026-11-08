@@ -15,6 +15,7 @@ from chatcore.plugin import BasePlugin
 from chatcore.skill_turn import SkillSettings, SkillTurn
 from chatcore.skills import Gate, GateState, Skill, SkillsMode, ToolGate
 from chatcore.testing import GROUP, FakePlatform, ScriptedProvider, memory_stores, message
+from chatcore.threads import TurnOrigin, current_turn_origin
 from chatcore.tools.registry import Tool, ToolResult
 from chatcore_memory.plugin import MemoryPlugin
 
@@ -168,6 +169,59 @@ async def test_on_mode_rejects_unoffered_registered_tool_before_handler():
     assert plugin.calls == 0
     assert "hidden_tool" not in [tool.name for tool in provider.calls[0]["tools"]]
     assert "Tool not available in this turn" in str(provider.calls[1]["messages"])
+
+
+async def test_tool_context_uses_bare_tag_origin_as_source_message_id():
+    class CaptureOriginPlugin(BasePlugin):
+        name = "origin_capture"
+
+        def __init__(self):
+            self.source_message_id = None
+
+        def tools(self):
+            async def capture(ctx):
+                self.source_message_id = ctx.source_message_id
+                return ToolResult("captured")
+
+            return [
+                Tool(
+                    "capture_origin",
+                    "Capture the trusted source",
+                    {"type": "object", "properties": {}},
+                    capture,
+                )
+            ]
+
+        def skills(self):
+            return [
+                Skill(
+                    "source_origin",
+                    "Capture a source",
+                    (
+                        "capture the source",
+                        "read the tagged source",
+                        "find original request",
+                        "inspect request origin",
+                    ),
+                    ("capture_origin",),
+                    keywords=("source", "tagged"),
+                )
+            ]
+
+    plugin = CaptureOriginPlugin()
+    provider = ScriptedProvider(
+        [
+            _completion("", [ToolCall("capture-id", "capture_origin", {})], "tool_use"),
+            _completion("done"),
+        ]
+    )
+    token = current_turn_origin.set(TurnOrigin("bare_tag", "original-request-42"))
+    try:
+        await _run(provider, plugin, text="capture the tagged source")
+    finally:
+        current_turn_origin.reset(token)
+
+    assert plugin.source_message_id == "original-request-42"
 
 
 async def test_unoffered_registered_tool_never_lifts_step_cap(monkeypatch):

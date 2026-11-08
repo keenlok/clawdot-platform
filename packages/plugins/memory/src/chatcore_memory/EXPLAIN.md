@@ -14,19 +14,23 @@ compaction, subject to the deployment's storage and deletion policy.
 An explicit remember request is resolved to a chat and optional subject, then stored. Recall searches
 the permitted chat's facts and returns relevant evidence. Configured automatic extraction proposes
 limited durable facts from human messages; it does not turn arbitrary tool/page text into authority.
-Contradictions need deliberate correction rather than assuming every recalled fact is current.
+Facts are rendered with the resolved subject or creator and saved date. Similar wording never overwrites a fact; explicit corrections use `remember` with the old memory ID as `replaces`.
 
 ## Storage
-The plugin's repository stores fact text, provenance and relevant ownership/subject metadata.
+The plugin repository stores fact text, creator/subject metadata, and up to 32 source author/message links. Legacy facts are marked `legacy_unknown`; no source links are inferred for them. A chat-scoped control row fences writes during deletion. An optional durable work table retries search-index updates and deletes.
 Persistent apps use Postgres; an optional search index supports similarity recall. Those derived
 documents complement the source facts and can fail or lag independently. Message retention,
 conversation reset and memory deletion are distinct operations.
 
 ## Safety
-Handlers scope reads/writes and apply the current immediate-write or confirmation policy. Reading
-untrusted content can change whether a memory write needs confirmation. Recall results are data,
-not new instructions. Privacy deletion removes the appropriate user's records; it does not authorize
-reading other groups or treating a member's unverified claim as fact about someone else.
+Handlers scope reads/writes and apply the current immediate-write or confirmation policy. Source IDs
+are attached by trusted turn context, validated against the chat's canonical human message log at
+commit, and never accepted as tool arguments. Reading untrusted content can change whether a memory
+write needs confirmation. Recall results are data, not new instructions. Privacy deletion removes
+facts supported only by that person's statements and removes their links from independently
+supported facts. Whole-word name matches are reported for manual review and never trigger deletion.
+Core and plugin purges are recorded in a per-chat journal, run in request order and retried after
+startup or through the admin-only `/erasures` command. Search-index deletes use a separate durable work queue.
 
 ## Limitations
 The model can save a mistaken interpretation or retrieve an outdated fact. Similarity search can
@@ -35,6 +39,9 @@ that a save occurred. Memory is not the accounting ledger and should not substit
 expense records, settings or source documents.
 
 ## Verification
-Inspect the save echo/reference, list saved memories and recall the specific fact. Use supported
-forget commands to remove it and explicitly save a corrected fact when appropriate. Verify a
+Inspect the save echo/reference, list saved memories and recall the specific fact. To correct a fact, use its ID as `replaces`; the echo includes the old text for undo. Use supported forget commands to remove it. Verify a
 setting through its own tool rather than assuming a remembered preference changed configuration.
+
+Administrators can use `/memorystats` to inspect daily and 14-day extraction counters and the
+current chat's IDs for legacy automatically written rows whose wording was later updated. New
+automatic writes never alter existing facts.

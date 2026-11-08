@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from chatcore.events import ChatRef
 from chatcore.store.es import EsSearchIndex, rrf_fuse
@@ -37,6 +39,9 @@ class FakeIndices:
         self.calls.append(("create", kwargs))
         self.created.add(kwargs["index"])
 
+    async def refresh(self, **kwargs):
+        self.calls.append(("refresh", kwargs))
+
 
 async def test_es_backend_scopes_every_query_and_write_to_required_chat() -> None:
     client = FakeClient()
@@ -50,6 +55,16 @@ async def test_es_backend_scopes_every_query_and_write_to_required_chat() -> Non
     assert all("tg:A" in str(call[1]) for call in client.calls)
     assert client.calls[1][1]["refresh"] is False
     assert client.calls[2][1]["query"]["bool"]["filter"][0] == {"term": {"chat_key": "tg:A"}}
+
+
+async def test_es_delete_can_refresh_before_delete_by_query():
+    client = FakeClient()
+    backend = EsSearchIndex(client=client, index_prefix="test-")
+
+    await backend.delete("memories", chat=ChatRef("tg", "A"), refresh_first=True)
+
+    assert client.calls[0] == ("refresh", {"index": "test-memories"})
+    assert client.calls[1][0] == "delete"
 
 
 def test_rrf_fusion_combines_ranks() -> None:
@@ -83,3 +98,45 @@ def test_es_backend_uses_settings_prefix_when_no_prefix_is_given(monkeypatch) ->
     backend = EsSearchIndex(client=FakeClient())
 
     assert backend.index_name("chunks") == "isolated-chunks"
+
+
+@pytest.mark.integration
+async def test_real_es_delete_refreshes_an_unrefreshed_document():
+    from elasticsearch import AsyncElasticsearch
+
+    client = AsyncElasticsearch("http://127.0.0.1:59200")
+    try:
+        try:
+            await client.info()
+        except Exception:
+            pytest.skip("Elasticsearch is not reachable")
+        prefix = f"memory-delete-{uuid4().hex[:12]}-"
+        backend = EsSearchIndex(client=client, index_prefix=prefix)
+        index = backend.index_name("memories")
+        await client.indices.create(
+            index=index,
+            mappings={
+                "properties": {
+                    "chat_key": {"type": "keyword"},
+                    "memory_id": {"type": "integer"},
+                    "text": {"type": "text"},
+                }
+            },
+        )
+        chat = ChatRef("test", uuid4().hex)
+        try:
+            await backend.index("memories", "1", {"memory_id": 1, "text": "ephemeral"}, chat=chat)
+            deleted = await backend.delete(
+                "memories",
+                chat=chat,
+                query={"term": {"memory_id": 1}},
+                refresh_first=True,
+            )
+            assert deleted == 1
+            await client.indices.refresh(index=index)
+            response = await client.search(index=index, query={"term": {"memory_id": 1}})
+            assert response["hits"]["total"]["value"] == 0
+        finally:
+            await client.indices.delete(index=index, ignore_unavailable=True)
+    finally:
+        await client.close()
