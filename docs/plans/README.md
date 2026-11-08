@@ -186,3 +186,5 @@ its detail:
 - [2026-11-01-google-workspace.md](2026-11-01-google-workspace.md) — Live for native Docs/Sheets and CSV via history PR #47; owner OAuth production setup and native API checks passed. Revised design #39 was included in #47.
 - [2026-11-01-itinerary-tools.md](2026-11-01-itinerary-tools.md) — Live, limited via history PR #47; configured and API-verified, full chat workflow validation pending. Revised design #40 was included in #47.
 - [2026-11-02-google-itinerary-implementation.md](2026-11-02-google-itinerary-implementation.md) — Record; implementation, self-review and checks for history PR #47, with owner-authorized merge before Google setup.
+
+- [Telegram download timeout](2026-11-09-telegram-download-timeout.md) — Shipped, inactive; v0.6.1 implements the owner-approved 30-second download budget; downstream release adoption and automatic rollout receipts follow on the associated PRs.

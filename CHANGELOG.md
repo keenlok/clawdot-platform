@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Expense echoes now name the people sharing a split and describe participant or amount changes.
   Expense and trip tools also tell the model to pass member names as written.
 
+## [0.6.1] - 2026-11-09
+
+### Fixed
+
+- Telegram attachment downloads now use a configurable 30-second total timeout per download
+  invocation, including retries, and pass the same timeout to both Bot API download stages.
+  Set `TELEGRAM_DOWNLOAD_TIMEOUT_S` to a value greater than 0 and at most 120 seconds to adjust it.
+
 ## [0.6.0] - 2026-11-09
 
 ### Changed
@@ -214,7 +222,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/keenlok/clawdot-platform/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/keenlok/clawdot-platform/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/keenlok/clawdot-platform/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/keenlok/clawdot-platform/compare/v0.5.4...v0.5.5
