@@ -623,6 +623,125 @@ async def test_download_refuses_known_attachment_size_without_fetch() -> None:
     bot.get_file.assert_not_awaited()
 
 
+async def test_download_forwards_timeout_to_both_telegram_stages():
+    bot = AsyncMock()
+    file = SimpleNamespace(file_size=2, download_as_bytearray=AsyncMock(return_value=b"ok"))
+    bot.get_file.return_value = file
+    platform = make_platform(bot)
+
+    assert (
+        await platform.download(
+            Attachment("f", "document"), chat=ChatRef("tg", "-100"), max_bytes=10
+        )
+        == b"ok"
+    )
+
+    bot.get_file.assert_awaited_once_with("f", connect_timeout=30.0, read_timeout=30.0)
+    file.download_as_bytearray.assert_awaited_once_with(connect_timeout=30.0, read_timeout=30.0)
+
+
+@pytest.mark.parametrize("stalled_stage", ["get_file", "download"])
+async def test_download_total_deadline_cancels_stalled_stage_safely(stalled_stage):
+    bot = AsyncMock()
+    entered = asyncio.Event()
+
+    async def stall(*_args, **_kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    file = SimpleNamespace(file_size=2, download_as_bytearray=AsyncMock(side_effect=stall))
+    if stalled_stage == "get_file":
+        bot.get_file.side_effect = stall
+    else:
+        bot.get_file.return_value = file
+    platform = make_platform(bot)
+    platform._settings.download_timeout_s = 0.02
+
+    with pytest.raises(PlatformError, match="^TimedOut$"):
+        await asyncio.wait_for(
+            platform.download(
+                Attachment("f", "document"), chat=ChatRef("tg", "-100"), max_bytes=10
+            ),
+            timeout=1,
+        )
+    assert entered.is_set()
+
+
+async def test_download_deadline_includes_retry_sleep(monkeypatch):
+    bot = AsyncMock()
+    bot.get_file.side_effect = TimedOut("private token-bearing details")
+    sleep_started = asyncio.Event()
+
+    async def stall_sleep(_delay):
+        sleep_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("chatcore_telegram.asyncio.sleep", stall_sleep)
+    platform = make_platform(bot)
+    platform._settings.download_timeout_s = 0.02
+    with pytest.raises(PlatformError, match="^TimedOut$") as error:
+        await asyncio.wait_for(
+            platform.download(
+                Attachment("f", "document"), chat=ChatRef("tg", "-100"), max_bytes=10
+            ),
+            timeout=1,
+        )
+    assert sleep_started.is_set()
+    assert bot.get_file.await_count == 1
+    assert "private token-bearing details" not in str(error.value)
+
+
+async def test_download_external_cancellation_propagates():
+    bot = AsyncMock()
+    entered = asyncio.Event()
+
+    async def stall(*_args, **_kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    bot.get_file.side_effect = stall
+    platform = make_platform(bot)
+    platform._settings.download_timeout_s = 30
+    task = asyncio.create_task(
+        platform.download(Attachment("f", "document"), chat=ChatRef("tg", "-100"), max_bytes=10)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def test_download_preserves_inner_timeout_error():
+    bot = AsyncMock()
+    bot.get_file.side_effect = TimeoutError("inner operation timeout")
+    platform = make_platform(bot)
+    with pytest.raises(TimeoutError, match="inner operation timeout"):
+        await platform.download(
+            Attachment("f", "document"), chat=ChatRef("tg", "-100"), max_bytes=10
+        )
+
+
+@pytest.mark.parametrize("timeout", [0, -0.1, 120.1])
+def test_download_timeout_setting_must_be_within_bounds(timeout):
+    with pytest.raises(ValueError):
+        TelegramSettings(bot_token=SecretStr("fake-token"), download_timeout_s=timeout)
+
+
+def test_download_timeout_setting_defaults_to_thirty_seconds():
+    settings = TelegramSettings(bot_token=SecretStr("fake-token"))
+    assert settings.download_timeout_s == 30
+
+
+def test_download_timeout_setting_reads_telegram_environment_alias(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_DOWNLOAD_TIMEOUT_S", "42")
+    settings = TelegramSettings(bot_token=SecretStr("fake-token"))
+    assert settings.download_timeout_s == 42
+
+
 @pytest.mark.parametrize("failure", [TimedOut("timeout"), NetworkError("offline")])
 async def test_download_retries_temporary_transport_errors(monkeypatch, failure) -> None:
     bot = AsyncMock()

@@ -79,6 +79,9 @@ class TelegramSettings(BaseSettings):
     download_backoff_s: float = Field(
         default=0.5, ge=0, le=5, validation_alias="TELEGRAM_DOWNLOAD_BACKOFF_S"
     )
+    download_timeout_s: float = Field(
+        default=30.0, gt=0, le=120, validation_alias="TELEGRAM_DOWNLOAD_TIMEOUT_S"
+    )
 
 
 class TelegramPlatform(VoicePlatform):
@@ -684,14 +687,29 @@ class TelegramPlatform(VoicePlatform):
         limit = min(max(max_bytes, 0), MAX_FILE_BYTES)
         if attachment.size_bytes is not None and attachment.size_bytes > limit:
             raise PlatformError("FileTooLarge")
+        deadline = asyncio.timeout(self._settings.download_timeout_s)
+        try:
+            async with deadline:
+                return await self._download_with_retry(attachment, limit=limit)
+        except TimeoutError:
+            if deadline.expired():
+                raise PlatformError("TimedOut") from None
+            raise
+
+    async def _download_with_retry(self, attachment: Attachment, *, limit: int) -> bytes:
         slept = 0.0
         retries = self._settings.download_retries
+        timeout = self._settings.download_timeout_s
         for attempt in range(retries + 1):
             try:
-                file = await self._application.bot.get_file(attachment.id)
+                file = await self._application.bot.get_file(
+                    attachment.id, connect_timeout=timeout, read_timeout=timeout
+                )
                 if file.file_size is not None and file.file_size > limit:
                     raise PlatformError("FileTooLarge")
-                content = bytes(await file.download_as_bytearray())
+                content = bytes(
+                    await file.download_as_bytearray(connect_timeout=timeout, read_timeout=timeout)
+                )
                 if len(content) > limit:
                     raise PlatformError("FileTooLarge")
                 return content
