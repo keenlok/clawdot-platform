@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Expense echoes now name the people sharing a split and describe participant or amount changes.
+  Expense and trip tools also tell the model to pass member names as written.
+
 ## [0.6.1] - 2026-11-09
 
 ### Fixed
