@@ -1,6 +1,6 @@
 # Private identifier pre-commit check
 
-Status: Planned. Owner approval required before code.
+Status: Approved by the owner on 2026-11-09; implemented on branch `claude/private-identifier-hook`.
 
 ## Why
 

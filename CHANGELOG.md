@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A maintainer-facing pre-commit check catches real-looking Telegram identifiers and optional
+  personal denylist terms in staged additions and commit messages without printing matched text.
+  Re-run `uv run pre-commit install` to install the new `commit-msg` hook; keep personal terms in
+  `~/.config/clawdot/private-denylist.txt` (or `$CLAWDOT_PRIVATE_DENYLIST`), outside the repository.
+
 ## [0.6.1] - 2026-11-09
 
 ### Fixed
