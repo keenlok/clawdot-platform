@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Re-run `uv run pre-commit install` to install the new `commit-msg` hook; keep personal terms in
   `~/.config/clawdot/private-denylist.txt` (or `$CLAWDOT_PRIVATE_DENYLIST`), outside the repository.
 
+## [0.6.2] - 2026-11-09
+
+### Changed
+
+- Expense echoes now name the people sharing a split and describe participant or amount changes.
+  Expense and trip tools also tell the model to pass member names as written.
+
 ## [0.6.1] - 2026-11-09
 
 ### Fixed
@@ -224,7 +231,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/keenlok/clawdot-platform/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/keenlok/clawdot-platform/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/keenlok/clawdot-platform/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/keenlok/clawdot-platform/compare/v0.5.5...v0.5.6

@@ -48,20 +48,53 @@ from .split import split_amount
 
 logger = logging.getLogger(__name__)
 GroupResolver = Callable[[ToolContext], Awaitable[ChatRef | None]]
+MEMBER_NAME_DESCRIPTION = (
+    "Name as the user wrote it (display name, @username, or me). Don't convert a name into an "
+    "@username the user didn't type."
+)
+
+
+def _member_names(keys, labels: dict[str, str]) -> str:
+    names = [labels.get(key, key) for key in keys]
+    if len(names) > 8:
+        names = [*names[:8], f"+{len(names) - 8} more"]
+    return ", ".join(names)
+
+
+def _split_change_text(
+    before: dict[str, int], after: dict[str, int], labels: dict[str, str]
+) -> str:
+    before_keys = list(before)
+    after_keys = list(after)
+    before_set = set(before_keys)
+    after_set = set(after_keys)
+    added = [key for key in after_keys if key not in before_set]
+    removed = [key for key in before_keys if key not in after_set]
+    if added or removed:
+        changes = []
+        if added:
+            changes.append(f"added {_member_names(added, labels)}")
+        if removed:
+            changes.append(f"removed {_member_names(removed, labels)}")
+        text = "split: " + "; ".join(changes)
+        if len(before_keys) != len(after_keys):
+            text += f" ({len(before_keys)} ways → {len(after_keys)} ways)"
+        return text
+    return f"split amounts changed ({_member_names(after_keys, labels)})"
 
 
 # Default behaviour text for the `expenses` skill; apps may add to or override it.
 EXPENSES_INSTRUCTIONS = (
-    "Expenses default to SGD. Add, edit, delete, restore and undo actions apply "
-    "immediately with a bot echo; trip member changes are immediate too. Never repeat the "
-    "echo or ask to save. For expense undo, call undo_expense_change. Ask only for "
+    "Expenses default to SGD. Expense and trip-member writes apply immediately with an "
+    "echo; never repeat it or ask to save. For expense undo, call undo_expense_change. "
+    "Ask only for "
     "genuinely missing details. Omit split_with to split equally among trip members, "
     "including the payer. Use the current/default active trip unless one is named; "
     "general=true selects the general ledger. For receipts, call read_receipt first, then "
     "add_expense with its total; if reading fails but the image is visible, read it "
     "yourself and proceed. Default payer is the sender, split among trip members, mention "
     "warnings, and item-level splits are unsupported. Use export_expenses when the whole "
-    "ledger is wanted."
+    "ledger is wanted. Pass people's names as written; never swap in a guessed @username."
 )
 
 # Default behaviour text for the `trips` skill; apps may add to or override it.
@@ -486,7 +519,9 @@ class ExpensesPlugin(BasePlugin):
             trip_label = f"({selected['name']})" if selected else "(general ledger)"
             names = {item.ref.key: item.display_name for item in await self._members(ctx, chat)}
             if split_type == "equal":
-                split_text = f"split {len(share_amounts)} ways"
+                split_text = (
+                    f"split {len(share_amounts)} ways: {_member_names(share_amounts, names)}"
+                )
             else:
                 split_text = "split: " + ", ".join(
                     f"{names.get(key, key)} {format_amount(value, currency)}"
@@ -768,9 +803,7 @@ class ExpensesPlugin(BasePlugin):
                     f"{labels.get(after['paid_by'], after['paid_by'])}"
                 )
             if expected["shares"] != after["shares"]:
-                changed.append(
-                    f"split {len(expected['shares'])} ways → {len(after['shares'])} ways"
-                )
+                changed.append(_split_change_text(expected["shares"], after["shares"], labels))
             if expected["spent_on"] != after["spent_on"]:
                 changed.append(f"date {expected['spent_on']} → {after['spent_on']}")
             if expected["trip_id"] != after["trip_id"]:
@@ -1831,13 +1864,13 @@ class ExpensesPlugin(BasePlugin):
                         },
                         "paid_by": {
                             "type": "string",
-                            "description": "@username, display name, or me.",
+                            "description": MEMBER_NAME_DESCRIPTION,
                         },
                         "split_with": {
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "description": "@username, display name, or me.",
+                                "description": MEMBER_NAME_DESCRIPTION,
                             },
                             "description": "People sharing the cost; "
                             "when omitted, trip members are used; explicit values override them.",
@@ -1850,7 +1883,9 @@ class ExpensesPlugin(BasePlugin):
                         },
                         "shares": {
                             "type": "object",
-                            "description": (
+                            "description": MEMBER_NAME_DESCRIPTION
+                            + " "
+                            + (
                                 'Use split_with names as keys: exact {name: "12.50"}; '
                                 "percentage {name: 25}; shares {name: 2}."
                             ),
@@ -1904,15 +1939,15 @@ class ExpensesPlugin(BasePlugin):
                             "type": "string",
                         },
                         "paid_by": {
-                            "description": "Payer username, display name, or me; omitted "
-                            "keeps the current payer.",
+                            "description": MEMBER_NAME_DESCRIPTION + " Omitted keeps the "
+                            "current payer.",
                             "type": "string",
                         },
                         "split_with": {
-                            "description": "People sharing cost; if omitted, keeps existing "
+                            "description": MEMBER_NAME_DESCRIPTION + " Omitted keeps existing "
                             "participants.",
                             "type": "array",
-                            "items": {"type": "string"},
+                            "items": {"type": "string", "description": MEMBER_NAME_DESCRIPTION},
                         },
                         "split_type": {
                             "description": "Shares without split_type use shares only when "
@@ -1989,14 +2024,14 @@ class ExpensesPlugin(BasePlugin):
                             "type": "string",
                         },
                         "add": {
-                            "description": "People to add by username or display name.",
+                            "description": MEMBER_NAME_DESCRIPTION,
                             "type": "array",
-                            "items": {"type": "string"},
+                            "items": {"type": "string", "description": MEMBER_NAME_DESCRIPTION},
                         },
                         "remove": {
-                            "description": "People to remove by username or display name.",
+                            "description": MEMBER_NAME_DESCRIPTION,
                             "type": "array",
-                            "items": {"type": "string"},
+                            "items": {"type": "string", "description": MEMBER_NAME_DESCRIPTION},
                         },
                     },
                 },
@@ -2032,11 +2067,11 @@ class ExpensesPlugin(BasePlugin):
                     "properties": {
                         "from_user": {
                             "type": "string",
-                            "description": "@username, display name, or me.",
+                            "description": MEMBER_NAME_DESCRIPTION,
                         },
                         "to_user": {
                             "type": "string",
-                            "description": "@username, display name, or me.",
+                            "description": MEMBER_NAME_DESCRIPTION,
                         },
                         "amount": {
                             "type": "string",
@@ -2122,8 +2157,8 @@ class ExpensesPlugin(BasePlugin):
                         "end_date": {"type": "string", "description": "YYYY-MM-DD, informational."},
                         "members": {
                             "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Initial trip members by name or username.",
+                            "items": {"type": "string", "description": MEMBER_NAME_DESCRIPTION},
+                            "description": MEMBER_NAME_DESCRIPTION,
                         },
                     },
                     "required": ["name", "countries", "settle_mode"],
@@ -2465,7 +2500,7 @@ class _CommitHandler(PendingActionHandler):
         if action.kind == "add_expense":
             shares = snapshot["shares"]
             if action.payload.get("split_type") == "equal":
-                split_text = f"split {len(shares)} ways"
+                split_text = f"split {len(shares)} ways: {_member_names(shares, users)}"
             else:
                 split_text = "split: " + ", ".join(
                     f"{users.get(key, key)} {format_amount(value, snapshot['currency'])}"
@@ -2498,7 +2533,7 @@ class _CommitHandler(PendingActionHandler):
                 f"{users.get(snapshot['paid_by'], snapshot['paid_by'])}"
             )
         if expected["shares"] != snapshot["shares"]:
-            changed.append(f"split {len(expected['shares'])} ways → {len(snapshot['shares'])} ways")
+            changed.append(_split_change_text(expected["shares"], snapshot["shares"], users))
         if expected["spent_on"] != snapshot["spent_on"]:
             changed.append(f"date {expected['spent_on']} → {snapshot['spent_on']}")
         if expected["trip_id"] != snapshot["trip_id"]:

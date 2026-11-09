@@ -87,7 +87,119 @@ async def test_add_without_split_uses_trip_members_including_payer(context):
         context.user.ref.key: 1500,
         friend.ref.key: 1500,
     }
-    assert "split 2 ways" in result.pending_action.payload["echo"]
+    assert "split 2 ways: Alice, Bob" in result.pending_action.payload["echo"]
+
+
+@pytest.mark.asyncio
+async def test_equal_split_add_echo_names_members_and_truncates_long_lists(context):
+    ledger = MemoryLedgerRepo()
+    users = [context.user]
+    await context.stores.repo.upsert_member(context.chat, context.user)
+    for index in range(1, 10):
+        person = User(UserRef("fake", f"member-{index}"), f"Member {index}", f"m{index}")
+        users.append(person)
+        await context.stores.repo.upsert_member(context.chat, person)
+    plugin = ExpensesPlugin(ledger=ledger)
+    result = await next(t for t in plugin.tools() if t.name == "add_expense").handler(
+        context,
+        description="Dinner",
+        amount="90",
+        paid_by="me",
+        split_with=["me", *[person.display_name for person in users[1:]]],
+    )
+    assert result.pending_action
+    assert (
+        "split 10 ways: Alice, Member 1, Member 2, Member 3, Member 4, Member 5, "
+        "Member 6, Member 7, +2 more" in result.pending_action.payload["echo"]
+    )
+    committed = await plugin.action_handlers()["add_expense"].commit(result.pending_action, context)
+    assert (
+        "split 10 ways: Alice, Member 1, Member 2, Member 3, Member 4, Member 5, "
+        "Member 6, Member 7, +2 more" in committed
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_split_echo_names_members_added_and_removed(context):
+    from chatcore.tools.registry import ToolRegistry
+
+    ledger = MemoryLedgerRepo()
+    await context.stores.repo.upsert_member(context.chat, context.user)
+    bob = User(UserRef("fake", "bob"), "Bob", "bob")
+    carol = User(UserRef("fake", "carol"), "Carol", "carol")
+    await context.stores.repo.upsert_member(context.chat, bob)
+    await context.stores.repo.upsert_member(context.chat, carol)
+    plugin = ExpensesPlugin(ledger=ledger)
+    registry = ToolRegistry(plugin.tools())
+    added = await registry.call(
+        "add_expense",
+        {"description": "Dinner", "amount": "10", "paid_by": "me", "split_with": ["me", "Bob"]},
+        context,
+    )
+    assert added.pending_action
+    await plugin.action_handlers()["add_expense"].commit(added.pending_action, context)
+    expense = (await ledger.expenses(context.chat))[0]
+
+    update = await registry.call(
+        "update_expense",
+        {"expense_id": expense["id"], "split_with": ["me", "Carol"]},
+        context,
+    )
+    assert update.pending_action
+    echo = update.pending_action.payload["echo"]
+    assert "split: added Carol; removed Bob" in echo
+    assert "2 ways → 2 ways" not in echo
+    committed = await plugin.action_handlers()["update_expense"].commit(
+        update.pending_action, context
+    )
+    assert "split: added Carol; removed Bob" in committed
+    assert "2 ways → 2 ways" not in committed
+
+    count_change = await registry.call(
+        "update_expense",
+        {"expense_id": expense["id"], "split_with": ["me", "Carol", "Bob"]},
+        context,
+    )
+    assert count_change.pending_action
+    assert "split: added Bob (2 ways → 3 ways)" in count_change.pending_action.payload["echo"]
+
+
+@pytest.mark.asyncio
+async def test_update_split_echo_names_people_when_amounts_change(context):
+    from chatcore.tools.registry import ToolRegistry
+
+    ledger = MemoryLedgerRepo()
+    await context.stores.repo.upsert_member(context.chat, context.user)
+    bob = User(UserRef("fake", "bob"), "Bob", "bob")
+    await context.stores.repo.upsert_member(context.chat, bob)
+    plugin = ExpensesPlugin(ledger=ledger)
+    registry = ToolRegistry(plugin.tools())
+    added = await registry.call(
+        "add_expense",
+        {"description": "Dinner", "amount": "10", "paid_by": "me", "split_with": ["me", "Bob"]},
+        context,
+    )
+    assert added.pending_action
+    await plugin.action_handlers()["add_expense"].commit(added.pending_action, context)
+    expense = (await ledger.expenses(context.chat))[0]
+
+    update = await registry.call(
+        "update_expense",
+        {
+            "expense_id": expense["id"],
+            "split_with": ["me", "Bob"],
+            "split_type": "shares",
+            "shares": {"me": "3", "Bob": "1"},
+        },
+        context,
+    )
+    assert update.pending_action
+    echo = update.pending_action.payload["echo"]
+    assert "split amounts changed (Alice, Bob)" in echo
+    committed = await plugin.action_handlers()["update_expense"].commit(
+        update.pending_action, context
+    )
+    assert "split amounts changed (Alice, Bob)" in committed
 
 
 @pytest.mark.asyncio
