@@ -168,6 +168,8 @@ def test_main_staged_dispatch_handles_multiple_staged_files(tmp_path, monkeypatc
         )
 
     git("init", "-b", "main")
+    git("config", "user.name", "Placeholder")
+    git("config", "user.email", "placeholder@example.invalid")
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"
     first.write_text("safe\n", encoding="utf-8")
@@ -201,6 +203,8 @@ def test_main_commit_message_dispatch_scans_message_not_staged_diff(tmp_path, mo
         )
 
     git("init", "-b", "main")
+    git("config", "user.name", "Placeholder")
+    git("config", "user.email", "placeholder@example.invalid")
     target = tmp_path / "note.txt"
     target.write_text("safe\n", encoding="utf-8")
     git("add", "note.txt")
