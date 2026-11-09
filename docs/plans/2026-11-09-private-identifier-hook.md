@@ -1,6 +1,6 @@
 # Private identifier pre-commit check
 
-Status: Approved by the owner on 2026-11-09; implemented on branch `claude/private-identifier-hook`.
+Status: Live limited. Approved by the owner on 2026-11-09; delivered in [PR #27](https://github.com/keenlok/clawdot-platform/pull/27). Maintainers opt in with `uv run pre-commit install`.
 
 ## Why
 
