@@ -19,6 +19,7 @@ PACKAGES = (
     "search",
     "stocks",
     "tutor",
+    "voice",
     "web",
 )
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,6 @@ def test_all_builtin_topic_aliases_are_unique():
             )
         )
     catalog = ExplainerCatalog(documents)
-    assert len(catalog.documents()) == 13
+    assert len(catalog.documents()) == 14
     assert catalog.resolve("trips").spec.topic == "expenses"
     assert catalog.resolve("google_docs").spec.topic == "google"
