@@ -2,7 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
-| [Voice narration](2026-11-09-voice-narration.md) | Shipped inactive | Implemented on branch `claude/voice-narration-plan` (PR pending), disabled by default; activation gate not run. A `voice` plugin with `narrate_text` that works outside tutor mode, shared ElevenLabs client in core, ElevenLabs subscription-usage preflight, news narration as an app composite |
+| [Voice narration](2026-11-09-voice-narration.md) | Shipped inactive | [PR #28](https://github.com/keenlok/clawdot-platform/pull/28), disabled by default; activation gate not run. A `voice` plugin with `narrate_text` that works outside tutor mode, shared ElevenLabs client in core, ElevenLabs subscription-usage preflight, news narration as an app composite |
 | [Expense split names](2026-11-09-expense-split-names.md) | Live limited | [PR #25](https://github.com/keenlok/clawdot-platform/pull/25), released in v0.6.2: echo who shares each split and what changed on update; keep member names as the user wrote them (2026-11-09 wrong-member split incident) |
 | [Google Doc verification outcomes and inherited styles](2026-11-06-google-doc-verification-outcomes.md) | Live limited | [PR #20](https://github.com/keenlok/clawdot-platform/pull/20): v0.5.5 separates verified text from formatting warnings and resolves provable inheritance; reviewed implementation and downstream receipt on the associated PR |
 | [Current trip itinerary execution](2026-11-05-current-trip-itinerary-execution.md) | Live limited | [PR #17](https://github.com/keenlok/clawdot-platform/pull/17): v0.5.2 runtime and review evidence; downstream rollout receipt tracked on PR |
