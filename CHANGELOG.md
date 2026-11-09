@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   personal denylist terms in staged additions and commit messages without printing matched text.
   Re-run `uv run pre-commit install` to install the new `commit-msg` hook; keep personal terms in
   `~/.config/clawdot/private-denylist.txt` (or `$CLAWDOT_PRIVATE_DENYLIST`), outside the repository.
+- New optional **`chatcore-voice`** plugin (`VoicePlugin`, `VoiceSettings`). It reads a passage
+  the bot wrote aloud as one voice message, such as a narrated news summary, through the
+  `narrate_text` tool and a `read_aloud` skill. It doesn't depend on tutor mode. It is disabled
+  by default; enable it with `VOICE_TTS_ENABLED=true`, a dedicated `VOICE_ELEVENLABS_API_KEY`
+  and `VOICE_TTS_VOICES` (`English=<voice id>,…`).
+- Before each narration the plugin checks the ElevenLabs subscription usage
+  (`GET /v1/user/subscription`). It refuses when the account is inactive, when the remaining
+  allowance would drop below `VOICE_TTS_PROVIDER_RESERVE_CHARS`, or when overage billing is
+  possible and `VOICE_TTS_ALLOW_OVERAGE` is false.
+  - `VOICE_TTS_USAGE_CHECK=required` (the default) stops narration whenever usage can't be
+    read, so the key needs user-read permission.
+  - Local caps: `VOICE_TTS_MAX_CHARS_PER_REQUEST` (3,000), `VOICE_TTS_MAX_CHARS_PER_USER_HOUR`
+    (10,000) and `VOICE_TTS_MAX_CHARS_PER_DAY` (50,000).
+  - Admins can run `/voice usage` to see local and provider usage.
+- `chatcore.tts`: a shared ElevenLabs speech request, MP3 validation and subscription-usage reader.
+
+### Changed
+
+- The tutor's pronunciation speech now goes through `chatcore.tts`. Behaviour, limits, request
+  shape and log messages are unchanged.
 
 ## [0.6.2] - 2026-11-09
 

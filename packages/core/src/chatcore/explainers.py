@@ -30,6 +30,7 @@ BUILTIN_PLUGINS = (
     "search",
     "stocks",
     "tutor",
+    "voice",
     "web",
 )
 

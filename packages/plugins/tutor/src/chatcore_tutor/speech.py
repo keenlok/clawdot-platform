@@ -10,8 +10,9 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 
 import httpx
+from chatcore import tts
 
-from chatcore_tutor.audio import MAX_AUDIO_BYTES, valid_mp3, valid_tutor_text
+from chatcore_tutor.audio import MAX_AUDIO_BYTES, valid_tutor_text
 from chatcore_tutor.settings import TutorSettings
 
 log = logging.getLogger("chatcore_tutor")
@@ -44,13 +45,7 @@ class SpeechService:
         from chatcore_tutor.slow_audio import ffmpeg_available, slow_mp3
 
         self.settings = settings
-        self._client = (
-            client
-            if client is not None
-            else httpx.AsyncClient(
-                timeout=httpx.Timeout(30, connect=5), follow_redirects=False, trust_env=False
-            )
-        )
+        self._client = client if client is not None else tts.new_client(30)
         self._owns_client = client is None
         self._monotonic, self._utcnow = monotonic, utcnow
         self._slow_processor = slow_processor or slow_mp3
@@ -161,36 +156,18 @@ class SpeechService:
                 self._active -= 1
 
     async def _request(self, text: str, voice: str, language: str, model: str, key: str) -> bytes:
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
         try:
-            async with self._client.stream(
-                "POST",
-                url,
-                params={"output_format": "mp3_44100_128"},
-                headers={"xi-api-key": key, "accept": "audio/mpeg"},
-                json={"text": text, "model_id": model, "language_code": language},
-            ) as response:
-                if response.status_code != 200:
-                    raise SpeechError("provider")
-                if response.headers.get("content-type", "").split(";", 1)[0].lower() not in {
-                    "audio/mpeg",
-                    "audio/mp3",
-                }:
-                    raise SpeechError("invalid_audio")
-                chunks, size = [], 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > MAX_AUDIO_BYTES:
-                        raise SpeechError("invalid_audio")
-                    chunks.append(chunk)
-                audio = b"".join(chunks)
-                if not valid_mp3(audio):
-                    raise SpeechError("invalid_audio")
-                return audio
-        except (SpeechError, asyncio.CancelledError):
-            raise
-        except httpx.TimeoutException:
-            raise SpeechError("timeout") from None
-        except Exception as exc:
-            log.warning("tutor speech request failed error=%s", type(exc).__name__)
-            raise SpeechError("provider") from None
+            return await tts.synthesize(
+                self._client,
+                key=key,
+                text=text,
+                voice=voice,
+                model=model,
+                output_format="mp3_44100_128",
+                max_bytes=MAX_AUDIO_BYTES,
+                language_code=language,
+            )
+        except tts.TTSError as exc:
+            if exc.detail is not None:
+                log.warning("tutor speech request failed error=%s", exc.detail)
+            raise SpeechError(exc.code) from None
