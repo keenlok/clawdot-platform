@@ -15,4 +15,5 @@ Generated from maintained plugin documentation.
 - [Chat history and attachments](https://github.com/keenlok/clawdot-platform/wiki/Plugin-search) — Search stored messages and supported attachments within authorized chat scope.
 - [Stored stock analysis](https://github.com/keenlok/clawdot-platform/wiki/Plugin-stocks) — Read stored analysis from the configured service; these are not live trading tools.
 - [Language tutor preferences](https://github.com/keenlok/clawdot-platform/wiki/Plugin-tutor) — Saved profiles and topic settings guide model-generated practice and corrections.
+- [Voice narration](https://github.com/keenlok/clawdot-platform/wiki/Plugin-voice) — Reads a passage the bot has written aloud as one voice message, such as a news summary.
 - [Web search and page fetching](https://github.com/keenlok/clawdot-platform/wiki/Plugin-web) — Search discovers sources; fetching reads bounded content from permitted URLs.

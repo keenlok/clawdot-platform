@@ -26,6 +26,7 @@ members = [
     "chatcore-stocks",
     "chatcore-telegram",
     "chatcore-tutor",
+    "chatcore-voice",
     "chatcore-web",
     "clawdot-platform-workspace",
     "example-bot",
@@ -876,6 +877,17 @@ requires-dist = [
 name = "chatcore-tutor"
 version = "0.1.0"
 source = { editable = "packages/plugins/tutor" }
+dependencies = [
+    { name = "chatcore" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "chatcore", editable = "packages/core" }]
+
+[[package]]
+name = "chatcore-voice"
+version = "0.1.0"
+source = { editable = "packages/plugins/voice" }
 dependencies = [
     { name = "chatcore" },
 ]

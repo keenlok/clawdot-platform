@@ -17,7 +17,7 @@ def test_wiki_generation_is_deterministic_and_contains_exact_source_sections(tmp
 
     generator = api()
     pages = generator["generate_pages"](ROOT, "v0.2.0")
-    assert len(pages) == 14
+    assert len(pages) == 15
     source = ROOT / "packages/plugins/expenses/src/chatcore_expenses/EXPLAIN.md"
     doc = parse_explainer(
         source.read_text(), package="chatcore_expenses", owner="expenses", tools=()
