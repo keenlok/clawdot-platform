@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A maintainer-facing pre-commit check catches real-looking Telegram identifiers and optional
+  personal denylist terms in staged additions and commit messages without printing matched text.
+  Re-run `uv run pre-commit install` to install the new `commit-msg` hook; keep personal terms in
+  `~/.config/clawdot/private-denylist.txt` (or `$CLAWDOT_PRIVATE_DENYLIST`), outside the repository.
 - New optional **`chatcore-voice`** plugin (`VoicePlugin`, `VoiceSettings`). It reads a passage
   the bot wrote aloud as one voice message, such as a narrated news summary, through the
   `narrate_text` tool and a `read_aloud` skill. It doesn't depend on tutor mode. It is disabled

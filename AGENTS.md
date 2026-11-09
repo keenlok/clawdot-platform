@@ -144,6 +144,7 @@ behaviour-neutral unless the PR says otherwise.
 ## Working rules
 
 - Secrets never go in code, tests or logs. Gitleaks runs in pre-commit.
+- The private identifier pre-commit hook scans staged additions and commit messages; maintainers may keep personal terms in `~/.config/clawdot/private-denylist.txt` or `$CLAWDOT_PRIVATE_DENYLIST`.
 - Don't add dependencies without saying so in the PR.
 - Don't edit an applied migration.
 - Follow the execution rules below for who plans, writes and reviews the code.

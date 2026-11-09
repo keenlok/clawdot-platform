@@ -1,4 +1,5 @@
 # Install once with: uv run pre-commit install
+default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.28.0
@@ -10,3 +11,20 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+  - repo: local
+    hooks:
+      - id: private-identifiers
+        name: check for private identifiers
+        entry: python .github/scripts/check_private_identifiers.py
+        language: python
+        stages: [pre-commit]
+        args: [--staged]
+        pass_filenames: false
+        always_run: true
+      - id: private-identifiers-commit-msg
+        name: check commit message for private identifiers
+        entry: python .github/scripts/check_private_identifiers.py
+        language: python
+        stages: [commit-msg]
+        args: [--commit-msg]
+        always_run: true
