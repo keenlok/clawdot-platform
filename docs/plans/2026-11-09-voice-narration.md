@@ -4,7 +4,7 @@
 
 **Goal:** Let any bot read a passage it has written aloud, such as a news summary, as one Telegram voice message, without depending on tutor mode. Make the spending limits provider-aware by checking ElevenLabs' own usage figures before each paid request.
 
-**Status (2026-11-09):** Implemented and disabled by default (see the implementation record at the end). The live activation gate hasn't been run.
+**Status (2026-11-09):** Released in v0.7.0 (PR #28) and disabled by default (see the implementation record at the end). The live activation gate hasn't been run.
 
 **Architecture:** A framework speech client in core (`chatcore.tts`) owns the ElevenLabs HTTP call, MP3 checks and a provider usage reader. A new `voice` plugin owns the `narrate_text` tool, its budgets, gate and skill. The tutor plugin keeps its pronunciation tool and limits, and moves onto the shared client without changing behaviour. A news narration that combines web tools with `narrate_text` is an app composite. Downstream apps own keys, voices, caps and activation.
 
