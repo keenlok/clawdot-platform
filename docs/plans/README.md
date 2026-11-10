@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [Expense speaker context](2026-11-10-expense-speaker-context.md) | Planned | Follow-up to expense split names: list_expenses shows participants, new read-only member_expenses tool for one person's history, similar names get handles, core states who "you" is |
 | [Private identifier pre-commit check](2026-11-09-private-identifier-hook.md) | Live limited | [PR #27](https://github.com/keenlok/clawdot-platform/pull/27): pre-commit and commit-msg check for real-looking Telegram IDs/links plus an optional personal denylist kept outside the repo; each maintainer opts in with `uv run pre-commit install`; not run in CI |
 | [Voice narration](2026-11-09-voice-narration.md) | Shipped inactive | [PR #28](https://github.com/keenlok/clawdot-platform/pull/28), disabled by default; activation gate not run. A `voice` plugin with `narrate_text` that works outside tutor mode, shared ElevenLabs client in core, ElevenLabs subscription-usage preflight, news narration as an app composite |
 | [Expense split names](2026-11-09-expense-split-names.md) | Live limited | [PR #25](https://github.com/keenlok/clawdot-platform/pull/25), released in v0.6.2: echo who shares each split and what changed on update; keep member names as the user wrote them (2026-11-09 wrong-member split incident) |
