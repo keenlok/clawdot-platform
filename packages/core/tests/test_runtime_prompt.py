@@ -61,7 +61,9 @@ async def test_prompt_context_tracks_chat_kind_and_authorized_tools(dm, admin, t
     system, _, _, _attachments = await responder._context(
         incoming, "hi", app, responder._store(app), "test-tag"
     )
-    context = json.loads(system.split("Current application context:\n", 1)[1])
+    context, _end = json.JSONDecoder().raw_decode(
+        system.split("Current application context:\n", 1)[1]
+    )
     expected = {
         "bot_account": "routing_account",
         "conversation_type": "private" if dm else "group",

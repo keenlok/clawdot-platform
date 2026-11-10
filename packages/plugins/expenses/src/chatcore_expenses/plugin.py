@@ -6,9 +6,10 @@ import html
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections import Counter
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -54,11 +55,51 @@ MEMBER_NAME_DESCRIPTION = (
 )
 
 
+def _member_labels(members: Iterable[User], keys: Iterable[str] | None = None) -> dict[str, str]:
+    """Display names by user key, with ``(@username)`` for similar names among ``keys``.
+
+    Two listed members whose display names share a case-insensitive prefix of 3+
+    characters are told apart by username; unrelated names stay unchanged.
+    """
+    by_key = {member.ref.key: member for member in members}
+    listed = (
+        by_key
+        if keys is None
+        else {key: by_key[key] for key in dict.fromkeys(keys) if key in by_key}
+    )
+
+    def prefix(member: User) -> str:
+        return member.display_name.strip().casefold()[:3]
+
+    counts = Counter(prefix(m) for m in listed.values() if len(prefix(m)) == 3)
+    labels = {key: member.display_name for key, member in by_key.items()}
+    for key, member in listed.items():
+        if member.username and counts[prefix(member)] > 1:
+            labels[key] = f"{member.display_name} (@{member.username})"
+    return labels
+
+
 def _member_names(keys, labels: dict[str, str]) -> str:
     names = [labels.get(key, key) for key in keys]
     if len(names) > 8:
         names = [*names[:8], f"+{len(names) - 8} more"]
     return ", ".join(names)
+
+
+def _shares_text(expense: dict, labels: dict[str, str]) -> str:
+    """Who shares an expense: names for an equal split, per-person amounts otherwise."""
+    shares = {share["user_key"]: int(share["amount"]) for share in expense["shares"]}
+    if not shares:
+        return "split: none"
+    if max(shares.values()) - min(shares.values()) <= 1:
+        return "split: " + _member_names(shares, labels)
+    items = [
+        f"{labels.get(key, key)} {format_amount(value, expense['currency'])}"
+        for key, value in shares.items()
+    ]
+    if len(items) > 8:
+        items = [*items[:8], f"+{len(items) - 8} more"]
+    return "split: " + ", ".join(items)
 
 
 def _split_change_text(
@@ -85,16 +126,16 @@ def _split_change_text(
 
 # Default behaviour text for the `expenses` skill; apps may add to or override it.
 EXPENSES_INSTRUCTIONS = (
-    "Expenses default to SGD. Expense and trip-member writes apply immediately with an "
-    "echo; never repeat it or ask to save. For expense undo, call undo_expense_change. "
-    "Ask only for "
-    "genuinely missing details. Omit split_with to split equally among trip members, "
-    "including the payer. Use the current/default active trip unless one is named; "
-    "general=true selects the general ledger. For receipts, call read_receipt first, then "
-    "add_expense with its total; if reading fails but the image is visible, read it "
-    "yourself and proceed. Default payer is the sender, split among trip members, mention "
-    "warnings, and item-level splits are unsupported. Use export_expenses when the whole "
-    "ledger is wanted. Pass people's names as written; never swap in a guessed @username."
+    "Expenses default to SGD. Writes apply immediately with an echo; don't repeat it or ask "
+    "to save. Undo: undo_expense_change. Ask only for missing details. Omit split_with to "
+    "split equally among trip members, payer included. Use the current trip unless one "
+    "is named; general=true is the general ledger. Receipts: read_receipt, then "
+    "add_expense with its total; if it fails, read a visible image yourself. Payer defaults "
+    "to sender; mention warnings; no item-level splits. export_expenses: whole "
+    "ledger. Pass people's names as written; never swap in a guessed @username. Members "
+    "with similar names are different people; never suggest merging them. Answer who shares "
+    "an expense from list_expenses, not earlier replies. To explain one person's balance or "
+    "history, call member_expenses; never guess shares."
 )
 
 # Default behaviour text for the `trips` skill; apps may add to or override it.
@@ -203,6 +244,7 @@ class ExpensesPlugin(BasePlugin):
                     "delete_expense",
                     "list_expenses",
                     "get_balances",
+                    "member_expenses",
                     "settle_up",
                     "export_expenses",
                     "read_receipt",
@@ -517,7 +559,7 @@ class ExpensesPlugin(BasePlugin):
                 payload["trip_settle_mode"] = selected["settle_mode"]
                 payload["trip_settle_currency"] = selected["settle_currency"].upper()
             trip_label = f"({selected['name']})" if selected else "(general ledger)"
-            names = {item.ref.key: item.display_name for item in await self._members(ctx, chat)}
+            names = _member_labels(await self._members(ctx, chat), [payer.ref.key, *share_amounts])
             if split_type == "equal":
                 split_text = (
                     f"split {len(share_amounts)} ways: {_member_names(share_amounts, names)}"
@@ -529,7 +571,8 @@ class ExpensesPlugin(BasePlugin):
                 )
             payload["echo"] = (
                 f"Added: {description} {format_amount(amount_minor, currency)}, "
-                f'paid by {payer.display_name}, {split_text} {trip_label}. Say "undo" to revert.'
+                f"paid by {names.get(payer.ref.key, payer.display_name)}, {split_text} "
+                f'{trip_label}. Say "undo" to revert.'
             )
             payload["split_type"] = split_type
             if (
@@ -787,7 +830,10 @@ class ExpensesPlugin(BasePlugin):
                 after["fx_rate_to_settle"] = expected["fx_rate_to_settle"]
             if expected == after:
                 return ToolResult.error("Nothing to change.")
-            labels = {member.ref.key: member.display_name for member in members}
+            labels = _member_labels(
+                members,
+                [expected["paid_by"], after["paid_by"], *expected["shares"], *after["shares"]],
+            )
             new_trip = await ledger.trip(chat, after["trip_id"]) if after.get("trip_id") else None
             changed = []
             if expected["description"] != after["description"]:
@@ -907,9 +953,7 @@ class ExpensesPlugin(BasePlugin):
             removed = [key for key in remove_keys if key in old_keys]
             final_keys = [key for key in selected.get("members", []) if key not in removed]
             final_keys.extend(key for key in added if key not in final_keys)
-            labels = {
-                member.ref.key: member.display_name for member in await self._members(ctx, chat)
-            }
+            labels = _member_labels(await self._members(ctx, chat), [*final_keys, *added, *removed])
             details = []
             if added:
                 details.append("added " + ", ".join(labels.get(key, key) for key in added))
@@ -1127,7 +1171,7 @@ class ExpensesPlugin(BasePlugin):
                     f"{end.isoformat() if end else 'Not set'}"
                 )
             if resolved_members:
-                member_names = {m.ref.key: m.display_name for m in await self._members(ctx, chat)}
+                member_names = _member_labels(await self._members(ctx, chat), resolved_members)
                 lines.append(
                     "Members: " + ", ".join(member_names.get(key, key) for key in resolved_members)
                 )
@@ -1408,11 +1452,14 @@ class ExpensesPlugin(BasePlugin):
             return ToolResult.error(str(exc))
         if not rows:
             return ToolResult("No expenses found.")
-        names = {member.ref.key: member.display_name for member in await self._members(ctx, chat)}
+        names = _member_labels(
+            await self._members(ctx, chat),
+            [key for r in rows for key in (r["paid_by"], *(s["user_key"] for s in r["shares"]))],
+        )
         content = "\n".join(
             f"#{str(r['id']).replace('-', '')[:8]} {r['description']}: "
             f"{format_amount(r['amount'], r['currency'])} "
-            f"(paid by {names.get(r['paid_by'], r['paid_by'])})"
+            f"(paid by {names.get(r['paid_by'], r['paid_by'])}; {_shares_text(r, names)})"
             for r in rows
         )
         return ToolResult(content)
@@ -1438,6 +1485,185 @@ class ExpensesPlugin(BasePlugin):
         except ValueError as exc:
             return ToolResult.error(str(exc))
         return ToolResult(await self._balance_text(ctx, ledger, chat, selected))
+
+    async def _member_expenses(
+        self,
+        ctx: ToolContext,
+        *,
+        member: str,
+        trip: str | None = None,
+        general: bool = False,
+    ) -> ToolResult:
+        chat = await self._chat(ctx)
+        if chat is None:
+            return ToolResult.error(
+                "I can’t identify your group from this DM. "
+                "Please use the group chat or say which group."
+            )
+        ledger = self._ledger(ctx.stores)
+        try:
+            if trip is not None and general:
+                raise ValueError("Choose a trip or the general ledger, not both.")
+            selected = (
+                await _resolve_trip(ledger, chat, trip)
+                if trip is not None
+                else (None if general else await _current_trip(ledger, chat))
+            )
+            person = await self._resolve_member(ctx, chat, member)
+        except ValueError as exc:
+            return ToolResult.error(str(exc))
+        return ToolResult(await self._member_history_text(ctx, ledger, chat, selected, person))
+
+    async def _member_history_text(
+        self, ctx: ToolContext, ledger: LedgerRepo, chat: ChatRef, trip: dict | None, person: User
+    ) -> str:
+        scope = dict(trip_id=trip["id"] if trip else None, general_only=trip is None)
+        expenses = await ledger.expenses(chat, **scope, limit=None)
+        settlements = await ledger.settlements(chat, **scope)
+        # Net comes from the exact code path get_balances uses, so the two always agree.
+        groups, _unconverted = ledger_balances(trip, expenses, settlements)
+        key = person.ref.key
+        mine = [
+            e
+            for e in expenses
+            if e["paid_by"] == key or any(s["user_key"] == key for s in e["shares"])
+        ]
+        my_settlements = sorted(
+            (s for s in settlements if key in (s["from_user"], s["to_user"])),
+            key=lambda s: s.get("created_at") or 0,
+            reverse=True,
+        )
+        labels = _member_labels(
+            await self._members(ctx, chat),
+            [
+                key,
+                *(e["paid_by"] for e in mine),
+                *(u for s in my_settlements for u in (s["from_user"], s["to_user"])),
+            ],
+        )
+        name = labels.get(key, person.display_name)
+        convert = bool(trip and trip["settle_mode"] == "convert")
+        settle = trip["settle_currency"].upper() if convert else None
+        scope_label = (
+            f"{trip['name']}" + (f", balances in {settle}" if convert else ", per currency")
+            if trip
+            else "general ledger, per currency"
+        )
+
+        def to_settle(minor: int, expense: dict) -> Decimal:
+            scale = Decimal(10) ** (
+                currency_exponent(settle) - currency_exponent(expense["currency"])
+            )
+            return Decimal(minor) * Decimal(str(expense["fx_rate_to_settle"])) * scale
+
+        def rounded(value: Decimal) -> int:
+            return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
+
+        totals: dict[str, dict[str, Decimal]] = {}
+
+        def add(currency: str, field: str, value: Decimal | int) -> None:
+            bucket = totals.setdefault(
+                currency, {f: Decimal(0) for f in ("paid", "share", "sent", "received")}
+            )
+            bucket[field] += Decimal(value)
+
+        rows = []
+        missing_rate = 0
+        for e in mine:
+            share = sum(int(s["amount"]) for s in e["shares"] if s["user_key"] == key)
+            paid = int(e["amount"]) if e["paid_by"] == key else 0
+            share_text = format_amount(share, e["currency"]) if share else "none"
+            if convert and e["currency"].upper() != settle:
+                if e.get("fx_rate_to_settle") is None:
+                    missing_rate += 1
+                    share_text += " (no FX rate; not in totals)"
+                else:
+                    share_text += f" (≈ {format_amount(rounded(to_settle(share, e)), settle)})"
+                    add(settle, "paid", to_settle(paid, e))
+                    add(settle, "share", to_settle(share, e))
+            elif convert and e.get("fx_rate_to_settle") is None:
+                missing_rate += 1
+                share_text += " (no FX rate; not in totals)"
+            else:
+                currency = settle if convert else e["currency"]
+                factor = to_settle(1, e) if convert else Decimal(1)
+                add(currency, "paid", paid * factor)
+                add(currency, "share", share * factor)
+            spent = e.get("spent_on")
+            spent_text = f"{spent.isoformat() if hasattr(spent, 'isoformat') else spent} "
+            rows.append(
+                f"#{str(e['id']).replace('-', '')[:8]} {spent_text if spent else ''}"
+                f"{e['description']}: {format_amount(e['amount'], e['currency'])}, paid by "
+                f"{labels.get(e['paid_by'], e['paid_by'])}; {name}'s share {share_text}"
+            )
+        settlement_rows = []
+        for s in my_settlements:
+            counted = not convert or s["currency"].upper() == settle
+            if counted:
+                add(
+                    settle if convert else s["currency"],
+                    "sent" if s["from_user"] == key else "received",
+                    int(s["amount"]),
+                )
+            settlement_rows.append(
+                f"- {labels.get(s['from_user'], s['from_user'])} paid "
+                f"{labels.get(s['to_user'], s['to_user'])} "
+                f"{format_amount(s['amount'], s['currency'])}"
+                + ("" if counted else f" (not counted: balances are in {settle})")
+            )
+
+        cap = 100
+        lines = [
+            f"{name} — {scope_label}: {len(mine)} expense(s) they paid or share, "
+            f"{len(my_settlements)} settlement(s). Expenses they're not in are left out."
+        ]
+        lines.extend(rows[:cap])
+        if len(rows) > cap:
+            lines.append(f"{len(rows) - cap} older expense(s) not shown; totals include them.")
+        if settlement_rows:
+            lines.append("Settlements:")
+            lines.extend(settlement_rows[:cap])
+            if len(settlement_rows) > cap:
+                lines.append(
+                    f"{len(settlement_rows) - cap} older settlement(s) not shown; "
+                    "totals include them."
+                )
+        if missing_rate:
+            lines.append(
+                f"{missing_rate} expense(s) have no FX rate and aren't in the totals; "
+                "use set_fx_rate."
+            )
+        currencies = sorted(set(totals) | {c for c, v in groups.items() if v.get(key)})
+        if convert:
+            currencies = [settle]
+        if not currencies:
+            lines.append(f"Totals: nothing recorded; net: {name} is settled.")
+        for currency in currencies:
+            bucket = totals.get(currency) or {
+                f: Decimal(0) for f in ("paid", "share", "sent", "received")
+            }
+            net = groups.get(currency, {}).get(key, 0)
+            parts = {field: rounded(value) for field, value in bucket.items()}
+            if net > 0:
+                net_text = f"{name} is owed {format_amount(net, currency)}"
+            elif net < 0:
+                net_text = f"{name} owes {format_amount(-net, currency)}"
+            else:
+                net_text = f"{name} is settled"
+            line = (
+                f"Totals in {currency}: paid {format_amount(parts['paid'], currency)}; "
+                f"own share {format_amount(parts['share'], currency)}; settlements sent "
+                f"{format_amount(parts['sent'], currency)}, received "
+                f"{format_amount(parts['received'], currency)}; net: {net_text} "
+                "(same as get_balances)."
+            )
+            drift = net - (parts["paid"] - parts["share"] + parts["sent"] - parts["received"])
+            if drift:
+                line += (
+                    f" Net includes a {format_amount(abs(drift), currency)} rounding adjustment."
+                )
+            lines.append(line)
+        return "\n".join(lines)
 
     async def _trip(self, ctx: ToolContext, *, trip: str | None = None) -> ToolResult:
         chat = await self._chat(ctx)
@@ -1502,7 +1728,7 @@ class ExpensesPlugin(BasePlugin):
         keys = trip.get("members") or []
         if not keys:
             return "Members: none set"
-        names = {member.ref.key: member.display_name for member in await self._members(ctx, chat)}
+        names = _member_labels(await self._members(ctx, chat), keys)
         return "Members: " + ", ".join(names.get(key, key) for key in keys)
 
     async def _balance_text(
@@ -2278,6 +2504,30 @@ class ExpensesPlugin(BasePlugin):
                 self._balances,
             ),
             Tool(
+                "member_expenses",
+                "One member's expense history: every expense they paid or share, with their "
+                "share, plus settlements and a net that matches get_balances. Use to explain "
+                "one person's balance.",
+                {
+                    **obj,
+                    "required": ["member"],
+                    "properties": {
+                        "member": {"description": MEMBER_NAME_DESCRIPTION, "type": "string"},
+                        "trip": {
+                            "description": "Trip name or ID from list_trips; omitted uses the "
+                            "default or sole active trip; if none is active, uses the general "
+                            "ledger. Specify a trip if several are active.",
+                            "type": "string",
+                        },
+                        "general": {
+                            "description": "Use the general ledger outside trips.",
+                            "type": "boolean",
+                        },
+                    },
+                },
+                self._member_expenses,
+            ),
+            Tool(
                 "export_expenses",
                 "Send the full expense ledger as a CSV file for spreadsheet review.",
                 {
@@ -2481,10 +2731,15 @@ class _CommitHandler(PendingActionHandler):
 
     async def _expense_echo(self, action, ctx, ledger, row: dict) -> str:
         snapshot = _expense_snapshot(row)
-        users = {
-            user.ref.key: user.display_name
-            for user in await ctx.stores.repo.find_members(action.chat)
-        }
+        expected = action.payload.get("expected") or {}
+        users = _member_labels(
+            await ctx.stores.repo.find_members(action.chat),
+            [
+                snapshot["paid_by"],
+                *snapshot["shares"],
+                *([expected["paid_by"], *expected["shares"]] if expected else []),
+            ],
+        )
         trip = await ledger.trip(action.chat, snapshot["trip_id"]) if snapshot["trip_id"] else None
         trip_label = f"({trip['name']})" if trip else "(general ledger)"
         amount = format_amount(snapshot["amount"], snapshot["currency"])
@@ -2519,7 +2774,6 @@ class _CommitHandler(PendingActionHandler):
             ):
                 text += " FX: no rate found yet; set one with set_fx_rate."
             return text
-        expected = action.payload["expected"]
         changed = []
         if expected["description"] != snapshot["description"]:
             changed.append(f"description {expected['description']} → {snapshot['description']}")

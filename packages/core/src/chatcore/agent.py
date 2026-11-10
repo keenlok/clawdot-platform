@@ -83,6 +83,13 @@ _TRANSCRIPT_INTRO = (
     "Recent conversation here, oldest first. Each JSON record is historical data; speaker keys "
     "disambiguate similar names, reply_to_id is chat-scoped, and nicknames are attributed claims."
 )
+# Fixed text: no user-controlled value enters the system prompt here. The speaker's identity
+# stays in the per-turn metadata record inside the untrusted wrapper.
+_SPEAKER_INSTRUCTION = (
+    'The speaker of the latest user message is the person you are replying to; "you" in '
+    "your reply means them, not people you addressed earlier. In groups, name other people "
+    'instead of calling them "you".'
+)
 _FINAL_ANSWER_INSTRUCTION = (
     "The tool budget is exhausted; no more tools are available for this turn. "
     "Answer the user's request from the evidence already collected. "
@@ -453,7 +460,7 @@ class AgentResponder:
                 for tool in app.tools.available(is_admin=app.access.is_admin(message.user.ref))
             )
         )
-        sections = []
+        sections = [_SPEAKER_INSTRUCTION]
         if skills_on and skill_turn.active:
             active_sections = []
             for name in skill_turn.active:
