@@ -96,7 +96,8 @@ async def test_equal_split_add_echo_names_members_and_truncates_long_lists(conte
     users = [context.user]
     await context.stores.repo.upsert_member(context.chat, context.user)
     for index in range(1, 10):
-        person = User(UserRef("fake", f"member-{index}"), f"Member {index}", f"m{index}")
+        # No usernames: "Member N" names are similar, and this test covers truncation only.
+        person = User(UserRef("fake", f"member-{index}"), f"Member {index}")
         users.append(person)
         await context.stores.repo.upsert_member(context.chat, person)
     plugin = ExpensesPlugin(ledger=ledger)

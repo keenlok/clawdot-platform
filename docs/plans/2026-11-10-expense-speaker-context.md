@@ -1,6 +1,6 @@
 # Expense speaker context: who shares, who's asking, who's distinct
 
-Status: Planned. Owner approval required before code.
+Status: Implemented, awaiting release (v0.6.3). Owner approved on 2026-11-11.
 
 ## Incident
 
@@ -151,6 +151,18 @@ Postgres-backed tests may skip in the Codex sandbox; Claude re-runs them locally
 
 ## Execution
 
-Claude planned; Codex executes and reviews with `gpt-6-luna` at high reasoning effort
-(owner's request); Claude does the final review. Release (v0.6.3) and the downstream re-pin
-follow the same path as v0.6.2.
+Claude planned. The owner approved the plan on 2026-11-11 and chose to have it implemented in
+a Claude session via implement-project, self-reviewed, replacing the Codex execution and
+review this section first named. Release (v0.6.3) and the downstream re-pin follow the same
+path as v0.6.2.
+
+Implementation notes:
+
+- `gates.py` needed no edit: `build_gates` gives every tool in `plugin.tools()` the same
+  `linked` gate, so `member_expenses` gets exactly `list_expenses`' policy.
+- Settle-currency expenses in a convert trip with no stored rate are left out of totals, as
+  `get_balances` leaves them out. `member_expenses` takes its net from `ledger_balances`, the
+  function `get_balances` uses, and notes any one-unit rounding adjustment between the
+  rounded per-row totals and that net.
+- `list_expenses` doesn't store a split type, so it treats shares within one minor unit of
+  each other as an equal split (names only) and shows per-person amounts otherwise.
