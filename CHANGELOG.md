@@ -5,6 +5,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-11
+
+### Added
+
+- New read-only expenses tool **`member_expenses`** in the `expenses` skill. For one member
+  of a trip or the general ledger it lists every expense they paid or share, with their
+  share (converted in convert trips), their settlements, and paid/share/net totals. The net
+  is the same figure `get_balances` reports. It uses the same chat resolution and gate as
+  `list_expenses`.
+
+### Changed
+
+- `list_expenses` rows now end with who shares each expense, for example
+  `(paid by Alice; split: Alice, Bob)`, or per-person amounts for uneven splits. The `#id`
+  prefix is unchanged.
+- Expense and trip outputs (trip `Members:` lines, `list_expenses`, add/update echoes) add
+  `(@username)` to members whose display names share a 3+ character prefix, so similar names
+  read as different people. Other names are unchanged.
+- The `expenses` skill instructions are reworded to fit three new rules: similar names are
+  different people, who shares an expense comes from `list_expenses`, and one person's
+  balance is explained with `member_expenses`. Apps that test their resulting skill prompt
+  should refresh those expectations.
+- Core's system prompt gains one fixed sentence: the speaker of the latest user message is
+  who "you" means in the reply. Apps with agent request snapshots will see that sentence added.
+
 ## [0.7.0] - 2026-11-09
 
 ### Added
@@ -28,29 +53,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     (10,000) and `VOICE_TTS_MAX_CHARS_PER_DAY` (50,000).
   - Admins can run `/voice usage` to see local and provider usage.
 - `chatcore.tts`: a shared ElevenLabs speech request, MP3 validation and subscription-usage reader.
-- New read-only expenses tool **`member_expenses`** in the `expenses` skill. For one member
-  of a trip or the general ledger it lists every expense they paid or share, with their
-  share (converted in convert trips), their settlements, and paid/share/net totals. The net
-  is the same figure `get_balances` reports. It uses the same chat resolution and gate as
-  `list_expenses`.
-
 ### Changed
 
 - The tutor's pronunciation speech now goes through `chatcore.tts`. Behaviour, limits, request
   shape and log messages are unchanged.
-- `list_expenses` rows now end with who shares each expense, for example
-  `(paid by Alice; split: Alice, Bob)`, or per-person amounts for uneven splits. The `#id`
-  prefix is unchanged.
-- Expense and trip outputs (trip `Members:` lines, `list_expenses`, add/update echoes) add
-  `(@username)` to members whose display names share a 3+ character prefix, so similar names
-  read as different people. Other names are unchanged.
-- The `expenses` skill instructions are reworded to fit three new rules: similar names are
-  different people, who shares an expense comes from `list_expenses`, and one person's
-  balance is explained with `member_expenses`. Apps that test their resulting skill prompt
-  should refresh those expectations.
-- Core's system prompt gains one fixed sentence: the speaker of the latest user message is
-  who "you" means in the reply. Apps with agent request snapshots will see that sentence added.
-
 ## [0.6.2] - 2026-11-09
 
 ### Changed
@@ -270,7 +276,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/keenlok/clawdot-platform/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/keenlok/clawdot-platform/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/keenlok/clawdot-platform/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/keenlok/clawdot-platform/compare/v0.6.0...v0.6.1

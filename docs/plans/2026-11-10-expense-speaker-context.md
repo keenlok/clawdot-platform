@@ -1,6 +1,7 @@
 # Expense speaker context: who shares, who's asking, who's distinct
 
-Status: Implemented, awaiting release (v0.6.3). Owner approved on 2026-11-11.
+Status: Released in v0.8.0 (PR #30, owner approved 2026-11-11); downstream rollout tracked
+privately.
 
 ## Incident
 
@@ -153,7 +154,7 @@ Postgres-backed tests may skip in the Codex sandbox; Claude re-runs them locally
 
 Claude planned. The owner approved the plan on 2026-11-11 and chose to have it implemented in
 a Claude session via implement-project, self-reviewed, replacing the Codex execution and
-review this section first named. Release (v0.6.3) and the downstream re-pin follow the same
+review this section first named. Release (v0.8.0) and the downstream re-pin follow the same
 path as v0.6.2.
 
 Implementation notes:
