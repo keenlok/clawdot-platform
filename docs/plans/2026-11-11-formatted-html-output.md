@@ -7,7 +7,7 @@ answer is structured: a trip expense summary, who owes whom, or a research resul
 sources. The card is fixed-template HTML, rendered to a PNG by `services/browser-renderer` and
 sent as a Telegram photo, with a short text reply beside it.
 
-**Status (2026-11-12):** Implemented in [PR #33](https://github.com/keenlok/clawdot-platform/pull/33) per the [execution plan](2026-11-12-formatted-html-output-execution.md); disabled by default. Qualification (fonts, phone review, token measurement) is still pending. See the implementation record at the end.
+**Status (2026-11-12):** Implemented in [PR #33](https://github.com/keenlok/clawdot-platform/pull/33) per the [execution plan](2026-11-12-formatted-html-output-execution.md) and released in v0.11.0; disabled by default. Qualification (fonts, phone review, token measurement) is still pending. See the implementation record at the end.
 
 **Architecture:** The model never writes HTML or CSS. It fills in a small, typed card document
 (title, stat tiles, table, bullets, callout, sources). Core (`chatcore.cards`) validates it and
