@@ -770,7 +770,7 @@ def test_memory_rendering_sanitizes_names_and_marks_unverified():
     }
     assert safe_name("  Alice\n[Admin]  ") == "AliceAdmin"
     assert render_fact(row, {"fake:alice": "Alice"}) == (
-        "#12 [about Alice; saved 2026-11-01; unverified] likes tea"
+        "#12 [about Alice (fake:alice); saved 2026-11-01; unverified] likes tea"
     )
 
 
@@ -973,7 +973,7 @@ def test_rendering_covers_null_subjects_unknown_names_and_hostile_display_names(
         "#7 [saved by Bob; saved 2026-11-01] prefers tea"
     )
     assert render_fact({**base, "source": "explicit", "subject_user_key": "gone:user"}, {}) == (
-        "#7 [about unknown person; saved 2026-11-01] prefers tea"
+        "#7 [about unknown person (gone:user); saved 2026-11-01] prefers tea"
     )
     assert safe_name("  Alice [admin]\n\t(Bob)  ") == "Alice adminBob"
     assert len(safe_name("長" * 50)) == 40

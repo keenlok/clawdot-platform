@@ -100,8 +100,9 @@ async def test_transcript_caps_human_and_bot_entries_and_keeps_newest_lines():
     _, turns, *_ = await context(responder, app, store)
     transcript = next(item.text for item in turns if "Recent conversation here" in item.text)
     payload = transcript.split(">", 1)[1].rsplit("</untrusted-", 1)[0]
-    assert "x" * 1500 + "\\u2026[truncated]" in payload
-    assert "y" * 1500 + "\\u2026[truncated]" in payload
+    assert "x" * 1500 + "…[truncated]" in payload
+    assert "y" * 1500 + "…[truncated]" in payload
+    assert "(this bot)" in payload and "(you)" not in payload
 
     stores, _, responder, app, store = setup(settings=AgentSettings())
     for idx in range(8):
@@ -197,7 +198,7 @@ async def test_replied_to_old_bot_message_is_wrapped_even_after_reset_and_log_wi
         for part in provider.calls[0]["messages"]
         if "Replying to your earlier message" in part.text
     )
-    assert "old bot \\u2026[truncated]" in reply_block
+    assert "old bot …[truncated]" in reply_block
     assert "plus hidden remainder" not in reply_block
     assert reply_block.startswith("<untrusted-") and reply_block.endswith(">")
 
@@ -296,7 +297,10 @@ async def test_prompt_records_keep_historical_speakers_mentions_and_reply_edges(
     assert f'"reply_to_id":"{bridge.message_id}"' in prompt
     assert f'"message_id":"{current.message_id}"' in prompt
     assert '"role":"user"' in prompt
-    assert turns[-1].text == "who calls whom Captain, Alex?"
+    final = turns[-1].text
+    assert final.startswith("<untrusted-testtag>Message from Alex (@carol_old, fake:carol)")
+    assert final.split("</untrusted-testtag>", 1)[1] == "\nwho calls whom Captain, Alex?"
+    assert final.count("<untrusted-") == 1
     assert not any(item.text.startswith("Alex: who calls") for item in turns)
 
 
@@ -323,7 +327,40 @@ async def test_current_sender_metadata_survives_many_mentions():
     assert f'"message_id":"{current.message_id}"' in current_metadata
     assert '"user_key":"fake:alice"' in current_metadata
     assert '"reply_to_id":"parent-message"' in current_metadata
-    assert turns[-1].text == "Who said this?"
+    final = turns[-1].text
+    assert final.split("</untrusted-testtag>", 1)[1] == "\nWho said this?"
+    assert final.count("<untrusted-") == 1
+    assert "replying to parent-message" in turns[-1].text
+
+
+async def test_reply_to_another_members_bot_answer_has_provenance_and_handover():
+    stores, _, responder, app, store = setup()
+    member_a = replace(user("alice"), display_name="Member A")
+    member_b = replace(user("bob"), display_name="Member B")
+    original = message("Please split it", sender=member_a)
+    await stores.repo.log_message(original)
+    await stores.repo.upsert_member(GROUP, member_a)
+    await stores.repo.upsert_member(GROUP, member_b)
+    await stores.repo.log_bot_message(
+        GROUP, "bot-answer", "Member A paid this", thread_id=None, reply_to_id=original.message_id
+    )
+    conversation = await store.create_conversation(GROUP, None, member_a.ref)
+    await stores.repo.log_message(message("Member B present", sender=member_b))
+    current = replace(
+        message("please fix the split", sender=member_b, reply_to_bot=True),
+        reply_to=MessageRef(GROUP, "bot-answer"),
+    )
+    token = current_conversation.set(conversation)
+    try:
+        _, turns, *_ = await responder._context(current, current.text, app, store, "testtag")
+    finally:
+        current_conversation.reset(token)
+
+    prompt = "\n".join(item.text for item in turns)
+    assert "which answered Member A (fake:alice)" in prompt
+    assert '"you" in it means them, not the current speaker.' in prompt
+    assert "Member B is joining a conversation started by Member A" in prompt
+    assert "The summary and earlier turns were written for them." in prompt
 
 
 async def test_chat_compaction_keeps_historical_speakers_and_marks_legacy_unknown():
@@ -350,7 +387,7 @@ async def test_chat_compaction_keeps_historical_speakers_and_marks_legacy_unknow
     assert '"reply_to_id":"' + first.message_id + '"' in transcript
     assert "I call Bob Captain" in transcript and "Bob calls Alice Ace" in transcript
     assert '"display_name":"unknown speaker"' in transcript
-    assert "Treat a nickname as an attributed claim" in provider.calls[0]["system"]
+    assert "You write internal notes about a chat" in provider.calls[0]["system"]
 
 
 async def test_conversation_compaction_summary_reopens_with_attribution_guidance():
@@ -397,7 +434,7 @@ async def test_conversation_compaction_summary_reopens_with_attribution_guidance
     transcript = provider.calls[0]["messages"][0].text
     assert '"user_key":"fake:alice"' in transcript and '"username":"alice_old"' in transcript
     assert '"user_key":"fake:bob"' in transcript and '"username":"bob_old"' in transcript
-    assert "Treat a nickname as an attributed claim" in provider.calls[0]["system"]
+    assert "You write internal notes about a chat" in provider.calls[0]["system"]
 
     token = current_conversation.set(conversation)
     try:

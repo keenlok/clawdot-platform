@@ -120,7 +120,7 @@ async def test_another_member_can_recover_full_docx_after_a_clipped_history_answ
         item for item in provider.calls[3]["messages"] if item.tool_call_id == "find-source"
     )
     assert "original-human-post" in history.text and '"next_offset":' in history.text
-    assert "…[truncated]" not in history.text  # The marker is safely JSON-escaped.
+    assert "…[truncated]" in history.text  # Unicode is readable; the JSON remains bounded.
     reread = next(item for item in provider.calls[5]["messages"] if item.tool_call_id == "reread")
     assert not reread.is_error and "D8 destination 8" in reread.text
     assert client.media.await_count == 2

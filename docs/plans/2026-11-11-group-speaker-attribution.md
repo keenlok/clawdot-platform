@@ -1,6 +1,8 @@
 # Group speaker attribution: who the bot is answering
 
-Status: Planned (awaiting owner approval). Predecessor:
+Status: Approved by the owner 2026-11-11 (all of A–F, including F; B2 as written).
+Implemented in PR #36 (Codex executed, Codex and Claude reviewed); not yet released. The live
+eval baseline and results are still to be recorded. Predecessor:
 [Expense speaker context](2026-11-10-expense-speaker-context.md) (v0.8.0, PR #30), whose
 part B added the fixed `_SPEAKER_INSTRUCTION`.
 
@@ -250,8 +252,27 @@ before A.
   requests in a topic, a different member's new question is answered without the first
   member's name or nickname.
 
-## Open questions for the owner
+## Owner decisions (2026-11-11)
 
-1. Approve F (readable Unicode rendering) in this PR, or defer it?
-2. B2 joins the replied-to conversation with a handover note. Is that acceptable, or do you
-   want a different person's reply to start a new conversation?
+1. F (readable Unicode rendering) ships in this PR.
+2. B2 as written: a reply from a different person joins the replied-to conversation, with a
+   handover note.
+
+## Notes for the executor
+
+- Compaction is called from `agent.py` (after a turn), `app.py` (reopen compaction) and the
+  `/compact` command in `conversation.py`. All of them use `SUMMARY_SYSTEM_PROMPT` after C.
+  Keep the `system` parameter of `compact`/`compact_conversation` working for other callers,
+  but don't pass the chat prompt from these call sites.
+- The eval builds its chat provider with `chatcore.llm.factory.LLMSettings` and
+  `build_provider`, reading the environment the same way the bot does; look at
+  `evals/receipts/run_eval.py` for the style. It must import cleanly without a key, and it
+  must print rates only (no prompt or reply text).
+- Placeholder data only, everywhere: names like "Member A", IDs like `tg:111111111`. The
+  private-identifier hook runs on commit.
+- Regenerate the snapshot with `UPDATE_SNAPSHOT=1 uv run pytest -q
+  packages/core/tests/test_agent_request_snapshot.py`, then explain its diff in the report.
+- Update existing tests that assert the old wording (`test_speaker_instruction.py`,
+  attribution and transcript tests); don't delete coverage.
+- Add a `CHANGELOG.md` `Unreleased` entry (Changed: request shape, summary prompt, record
+  rendering; note that downstream request snapshots change).

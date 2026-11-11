@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,23 @@ MAX_USERNAME = 64
 MAX_ID = 128
 MAX_OFFSET = 1_000_000
 TRUNCATION_MARKER = "…[truncated]"
+
+
+def escape_invisible(value: str) -> str:
+    """Escape invisible Unicode as valid JSON-style escapes, including surrogate pairs."""
+
+    def escape(char: str) -> str:
+        codepoint = ord(char)
+        if not (unicodedata.category(char) in {"Cc", "Cf", "Cs"} or char in "\u2028\u2029"):
+            return char
+        if codepoint <= 0xFFFF:
+            return f"\\u{codepoint:04x}"
+        offset = codepoint - 0x10000
+        high = 0xD800 + (offset >> 10)
+        low = 0xDC00 + (offset & 0x3FF)
+        return f"\\u{high:04x}\\u{low:04x}"
+
+    return "".join(escape(char) for char in value)
 
 
 def _valid_key(value: object) -> str | None:
@@ -198,10 +216,16 @@ def user_turn_content(message: IncomingMessage, text: str) -> dict[str, Any]:
     }
 
 
-def message_record(row: StoredMessage) -> dict[str, Any]:
+def message_record(row: StoredMessage, *, bot_name: str | None = None) -> dict[str, Any]:
     """Create a safe, stable record from the identity snapshot on a logged row."""
     speaker = (
-        {"user_key": _valid_key(row.user.key), "display_name": "(you)", "username": None}
+        {
+            "user_key": _valid_key(row.user.key),
+            "display_name": (
+                f"{_bounded_string(bot_name, MAX_DISPLAY_NAME - 11) or 'Assistant'} (this bot)"
+            ),
+            "username": None,
+        }
         if row.is_bot
         else {
             "user_key": _valid_key(row.user.key),
@@ -308,12 +332,8 @@ def _normalise_record(record: object) -> dict[str, Any] | None:
 
 
 def _serialize(record: dict[str, Any]) -> str:
-    return (
-        json.dumps(record, ensure_ascii=True, separators=(",", ":"))
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-    )
+    rendered = escape_invisible(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+    return rendered.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def render_record(record: dict, *, max_chars: int) -> str:
