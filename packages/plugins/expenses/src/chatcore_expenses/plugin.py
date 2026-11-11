@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from chatcore.cards import CardError, CardRenderClient, can_deliver_cards, send_card_pages
 from chatcore.events import ChatRef, User, UserRef
 from chatcore.files import FilePlatform
 from chatcore.images import ImageUnavailable, is_image
@@ -26,6 +27,7 @@ from chatcore.store.base import Stores
 from chatcore.tools.registry import Tool, ToolContext, ToolResult
 
 from .balances import ledger_balances, simplify_balances
+from .cards import balance_card, trip_summary_card
 from .currency import (
     currency_exponent,
     currency_for_country,
@@ -252,7 +254,8 @@ class ExpensesPlugin(BasePlugin):
                     "update_expense",
                     "restore_expense",
                     "undo_expense_change",
-                ),
+                )
+                + (("send_balance_card", "send_trip_summary_card") if self.cards else ()),
                 keywords=("expense", "balance", "费用", "账单"),
                 max_steps=5,
                 instructions=EXPENSES_INSTRUCTIONS,
@@ -282,7 +285,8 @@ class ExpensesPlugin(BasePlugin):
                     "reopen_trip",
                     "set_default_trip",
                     "update_trip_members",
-                ),
+                )
+                + (("send_balance_card", "send_trip_summary_card") if self.cards else ()),
                 keywords=("trip", "travel", "旅行", "旅费"),
                 max_steps=4,
                 instructions=TRIPS_INSTRUCTIONS,
@@ -301,6 +305,8 @@ class ExpensesPlugin(BasePlugin):
         receipt_reader: ReceiptReader | None = None,
         receipt_settings: ReceiptSettings | None = None,
         limits: Limits | None = None,
+        cards: CardRenderClient | None = None,
+        cards_theme: str = "light",
     ) -> None:
         self.group_for_dm = group_for_dm
         self.ledger = ledger
@@ -308,6 +314,8 @@ class ExpensesPlugin(BasePlugin):
         self.receipt_reader = receipt_reader
         self.receipt_settings = receipt_settings or ReceiptSettings()
         self.limits = limits
+        self.cards = cards
+        self.cards_theme = cards_theme
 
     def _ledger(self, stores: Stores) -> LedgerRepo:
         if self.ledger is not None:
@@ -2041,9 +2049,97 @@ class ExpensesPlugin(BasePlugin):
             untrusted=True,
         )
 
+    async def _send_expense_card(
+        self, ctx: ToolContext, *, trip=None, general=False, summary=False
+    ) -> ToolResult:
+        if trip is not None and (not isinstance(trip, str) or not trip):
+            return ToolResult.error("Trip must be a non-empty string.")
+        if not isinstance(general, bool):
+            return ToolResult.error("General must be a boolean.")
+        if trip is not None and general:
+            return ToolResult.error("Choose a trip or the general ledger, not both.")
+        if not self.cards or ctx.turn.tool_attempts.get("expense_card"):
+            return ToolResult.error(
+                "An expense card is unavailable or was already attempted this turn."
+            )
+        if not can_deliver_cards(ctx.platform):
+            return ToolResult.error("Cards are unavailable here.")
+        ctx.turn.tool_attempts["expense_card"] = 1
+        chat = await self._chat(ctx)
+        if chat is None:
+            return ToolResult.error(
+                "I can’t identify your group from this DM. Please use the group chat or "
+                "say which group."
+            )
+        ledger = self._ledger(ctx.stores)
+        try:
+            selected = (
+                await _resolve_trip(ledger, chat, trip)
+                if trip is not None
+                else (None if general else await _current_trip(ledger, chat))
+            )
+        except ValueError as exc:
+            return ToolResult.error(str(exc))
+        scope = dict(trip_id=selected["id"] if selected else None, general_only=selected is None)
+        expenses = await ledger.expenses(chat, **scope, limit=None)
+        settlements = await ledger.settlements(chat, **scope)
+        groups, unconverted = ledger_balances(selected, expenses, settlements)
+        names = {member.ref.key: member.display_name for member in await self._members(ctx, chat)}
+        totals = {}
+        for expense in expenses:
+            code = expense["currency"]
+            amount = Decimal(int(expense["amount"])) / (10 ** currency_exponent(code))
+            totals[code] = totals.get(code, Decimal(0)) + amount
+        totals = {code: str(value) for code, value in totals.items()}
+        try:
+            builder = trip_summary_card if summary else balance_card
+            card = builder(
+                selected,
+                totals,
+                groups,
+                names,
+                expenses=expenses,
+                unconverted=unconverted,
+            )
+        except (CardError, ValueError):
+            return ToolResult.error(
+                "Too many entries for a card; here are the balances as text.\n"
+                + await self._balance_text(ctx, ledger, chat, selected)
+            )
+        try:
+            pages = await self.cards.render(card, theme=self.cards_theme)
+            try:
+                delivery_chat = await self._chat(ctx)
+            except Exception:
+                delivery_chat = None
+            if not can_deliver_cards(ctx.platform) or delivery_chat != chat:
+                return ToolResult.error("Card delivery is no longer allowed.")
+            await send_card_pages(
+                ctx.platform, ctx.chat, pages, caption="📋 " + card.title, thread_id=ctx.thread_id
+            )
+            return ToolResult(
+                "Card sent above the text reply. Now reply in 1–2 short lines with the "
+                "headline result."
+            )
+        except CardError as exc:
+            if exc.code in {"invalid", "too_large"}:
+                return ToolResult.error(
+                    "Too many entries for a card; here are the balances as text.\n"
+                    + await self._balance_text(ctx, ledger, chat, selected)
+                )
+            return ToolResult.error("Couldn't make the card; answer in text.")
+        except ValueError:
+            return ToolResult.error("Couldn't make the card; answer in text.")
+
+    async def _send_balance_card(self, ctx, *, trip=None, general=False):
+        return await self._send_expense_card(ctx, trip=trip, general=general)
+
+    async def _send_trip_summary_card(self, ctx, *, trip=None):
+        return await self._send_expense_card(ctx, trip=trip, summary=True)
+
     def tools(self) -> list[Tool]:
         obj = {"type": "object"}
-        return (
+        tools = (
             [
                 Tool(
                     "read_receipt",
@@ -2626,6 +2722,33 @@ class ExpensesPlugin(BasePlugin):
                 writes=True,
             ),
         ]
+        if self.cards:
+            optional = {
+                **obj,
+                "properties": {
+                    "trip": {"type": "string", "description": "Trip name or ID."},
+                    "general": {"type": "boolean", "description": "Use the general ledger."},
+                },
+            }
+            tools.extend(
+                [
+                    Tool(
+                        "send_balance_card",
+                        "Send balances and who-pays-whom as one card image; figures come from the "
+                        "ledger. Use when someone asks for a card or picture of balances.",
+                        optional,
+                        self._send_balance_card,
+                    ),
+                    Tool(
+                        "send_trip_summary_card",
+                        "Send a trip summary card (balances plus spend by category or day); "
+                        "figures come from the ledger.",
+                        {**obj, "properties": {"trip": optional["properties"]["trip"]}},
+                        self._send_trip_summary_card,
+                    ),
+                ]
+            )
+        return tools
 
     def commands(self) -> list[Command]:
         return [

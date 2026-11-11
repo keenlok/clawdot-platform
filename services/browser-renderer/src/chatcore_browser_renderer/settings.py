@@ -18,3 +18,8 @@ class RendererSettings(BaseSettings):
     )
     browser_no_sandbox: bool = Field(default=False, alias="BROWSER_NO_SANDBOX")
     net_guard_extra_blocked: str = Field(default="", alias="NET_GUARD_EXTRA_BLOCKED")
+    card_max_html_bytes: int = Field(default=262_144, alias="CARD_MAX_HTML_BYTES", ge=1024)
+    card_timeout_s: float = Field(default=15, alias="CARD_TIMEOUT_S", gt=0, le=60)
+    card_max_pages: int = Field(default=4, alias="CARD_MAX_PAGES", ge=1, le=10)
+    card_page_css_px: int = Field(default=3600, alias="CARD_PAGE_CSS_PX", ge=1, le=3600)
+    card_max_png_bytes: int = Field(default=5 * 1024 * 1024, alias="CARD_MAX_PNG_BYTES", ge=1)

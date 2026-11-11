@@ -475,6 +475,21 @@ class SkillTurn:
             and available.offered
         }
 
+    def output_tokens(self, default: int, ceiling: int) -> int:
+        names = [*self.active, *self.loaded]
+        requested = [default]
+        for name in names:
+            skill = self._app.skills.get(name) if self._app is not None else None
+            available = self.availability.get(name)
+            if (
+                skill is not None
+                and skill.max_output_tokens is not None
+                and available is not None
+                and available.offered
+            ):
+                requested.append(skill.max_output_tokens)
+        return min(max(requested), max(default, ceiling))
+
     def _current_step_cap(self) -> int:
         capping_skills = self._capping_skills()
         if self._called_outside_capping_skill:

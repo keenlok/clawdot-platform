@@ -524,6 +524,8 @@ A basic baseline for a friends' bot on a home server, not an enterprise program.
 
 ### LLM-specific
 
+**Summary cards.** Card text is rendered by the local browser renderer; the resulting image is uploaded to the chat like a reply. Nothing new leaves the deployment.
+
 **Prompt injection.** Anything that isn't the current human's own message is **data, not instructions**: web pages, search results, attachments, chat history, recalled memories and stock API output.
 - Tool output goes into the prompt between delimiters with a per-turn random tag. The system prompt says that content inside them is never followed as instructions.
 - **Only humans start turns.** The agent runs only on a human message (group mention/bot-addressed `/ask`, or DM). Fetched content can't start a new turn, and the bot ignores messages from bots, including itself. There are no scheduled or autonomous agent runs.

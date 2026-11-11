@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Optional `chatcore-cards` plugin (disabled by default; configure `CARDS_*` settings) sends
+  validated summary cards through the local renderer. Expense balance and trip summary card tools
+  are available only when an app supplies a card renderer client.
+- Core `chatcore.cards` validates and renders structured cards through the local renderer's `/card`
+  endpoint, with `CARD_*` page, byte and timeout settings. `PhotoAlbumPlatform` adds Telegram
+  `send_photos`. `Skill.max_output_tokens` and `AgentSettings.max_tokens_ceiling` allow a skill to
+  raise per-step output limits within the configured ceiling.
+
+### Changed
+
+- Telegram renders blockquotes as native entities and aligns narrow Markdown tables. Direct photo
+  uploads now require readable dimensions within Telegram's size and aspect-ratio limits.
+
 ## [0.10.0] - 2026-11-12
 
 ### Changed

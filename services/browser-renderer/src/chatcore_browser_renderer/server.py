@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import time
@@ -8,7 +9,7 @@ from urllib.parse import urlsplit
 from aiohttp import web
 from chatcore.security.net_guard import BlockedURL, parse_https_destination
 
-from .engine import RendererEngine, RenderResult
+from .engine import CardRenderResult, RendererEngine, RenderResult
 from .settings import RendererSettings
 
 LOGGER = logging.getLogger("chatcore_browser_renderer")
@@ -25,7 +26,7 @@ def create_app(
 ) -> web.Application:
     config = settings or RendererSettings()
     renderer = engine or RendererEngine(config)
-    app = web.Application(client_max_size=MAX_REQUEST_BYTES)
+    app = web.Application(client_max_size=config.card_max_html_bytes + 1024)
     app[RENDERER_KEY] = renderer
 
     async def health(_request: web.Request) -> web.Response:
@@ -37,7 +38,10 @@ def create_app(
         if request.content_type != "application/json":
             return _blocked()
         try:
-            payload = await request.json(loads=json.loads)
+            raw = await request.read()
+            if len(raw) > MAX_REQUEST_BYTES:
+                raise web.HTTPBadRequest(text="Malformed request.")
+            payload = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError, web.HTTPRequestEntityTooLarge):
             raise web.HTTPBadRequest(text="Malformed request.") from None
         if (
@@ -69,8 +73,72 @@ def create_app(
         )
         return web.json_response(result.as_dict(), status=200, dumps=json.dumps)
 
+    async def card(request: web.Request) -> web.Response:
+        started = time.monotonic()
+        html_bytes = pages = png_bytes = 0
+        status = "invalid"
+        if request.content_type != "application/json":
+            return web.json_response({"status": "invalid"}, status=200, dumps=json.dumps)
+        try:
+            raw = await request.read()
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError, web.HTTPRequestEntityTooLarge):
+            payload = None
+        if (
+            isinstance(payload, dict)
+            and set(payload) == {"html", "theme", "width"}
+            and isinstance(payload["html"], str)
+            and isinstance(payload["theme"], str)
+            and payload["theme"] in {"light", "dark"}
+            and type(payload["width"]) is int
+            and payload["width"] == 400
+        ):
+            html_value = payload["html"]
+            html_bytes = len(html_value.encode("utf-8"))
+            if html_bytes <= config.card_max_html_bytes:
+                try:
+                    result = await renderer.render_card(html_value, payload["theme"])
+                except Exception:
+                    result = CardRenderResult("error", [])
+                if result is not None:
+                    status = result.status
+                    pages = len(result.pages)
+                    png_bytes = sum(map(len, result.pages))
+                    LOGGER.info(
+                        "card status=%s duration_ms=%d html_bytes=%d pages=%d png_bytes=%d",
+                        status,
+                        int((time.monotonic() - started) * 1000),
+                        html_bytes,
+                        pages,
+                        png_bytes,
+                    )
+                    if status == "ok":
+                        return web.json_response(
+                            {
+                                "status": "ok",
+                                "pages": [
+                                    base64.b64encode(p).decode("ascii") for p in result.pages
+                                ],
+                            },
+                            status=200,
+                            dumps=json.dumps,
+                        )
+                    return web.json_response({"status": status}, status=200, dumps=json.dumps)
+            else:
+                status = "too_large"
+        LOGGER.info(
+            "card status=%s duration_ms=%d html_bytes=%d pages=%d png_bytes=%d",
+            status,
+            int((time.monotonic() - started) * 1000),
+            html_bytes,
+            pages,
+            png_bytes,
+        )
+        return web.json_response({"status": status}, status=200, dumps=json.dumps)
+
     app.router.add_get("/healthz", health)
     app.router.add_post("/render", render)
+    app.router.add_post("/card", card)
     app.on_startup.append(lambda _app: renderer.start())
     app.on_cleanup.append(lambda _app: renderer.close())
     return app

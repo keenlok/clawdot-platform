@@ -26,4 +26,13 @@ def build_gates(plugin: ExpensesPlugin) -> dict[str, ToolGate]:
         )
 
     names = {tool.name for tool in plugin.tools()}
-    return {name: ToolGate(user=linked) for name in names}
+    gates = {name: ToolGate(user=linked) for name in names}
+    for name in {"send_balance_card", "send_trip_summary_card"} & names:
+
+        async def card_scope(chat, is_dm):
+            from chatcore.skills import GateState
+
+            return Gate(GateState.AVAILABLE if plugin.cards is not None else GateState.NOT_ALLOWED)
+
+        gates[name] = ToolGate(scope=card_scope, user=linked)
+    return gates

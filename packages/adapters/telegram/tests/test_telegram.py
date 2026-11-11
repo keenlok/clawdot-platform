@@ -41,8 +41,8 @@ from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import TypeHandler
 from telegram.request import BaseRequest
 
-PNG = b"\x89PNG\r\n\x1a\nimage"
-JPEG = b"\xff\xd8\xffimage"
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+JPEG = b"\xff\xd8\xff\xc0\x00\x07\x08\x00\x01\x00\x01\x01\xff\xd9"
 
 
 class FakeRequest(BaseRequest):
@@ -135,16 +135,52 @@ async def test_send_photo_rejects_invalid_data_size_and_caption():
         with pytest.raises(PlatformError, match="InvalidPhoto"):
             await platform.send_photo(chat, filename, data)
     with pytest.raises(PlatformError, match="PhotoTooLarge"):
-        await platform.send_photo(
-            chat, "image.png", b"\x89PNG\r\n\x1a\n" + b"x" * (MAX_PHOTO_BYTES - 7)
-        )
+        await platform.send_photo(chat, "image.png", PNG + b"x" * (MAX_PHOTO_BYTES - len(PNG) + 1))
     bot.send_photo.return_value = SimpleNamespace(message_id=20)
-    await platform.send_photo(
-        chat, "image.png", b"\x89PNG\r\n\x1a\n" + b"x" * (MAX_PHOTO_BYTES - 8)
-    )
+    await platform.send_photo(chat, "image.png", PNG + b"x" * (MAX_PHOTO_BYTES - len(PNG) - 1))
     assert bot.send_photo.await_count == 1
     with pytest.raises(PlatformError, match="CaptionTooLong"):
         await platform.send_photo(chat, "image.png", PNG, caption="😀" * 513)
+
+
+@pytest.mark.asyncio
+async def test_send_photos_sends_album_caption_once_and_thread():
+    from chatcore.files import PhotoAlbumPlatform
+
+    bot = AsyncMock()
+    bot.send_media_group.return_value = [
+        SimpleNamespace(message_id=31),
+        SimpleNamespace(message_id=32),
+    ]
+    platform = make_platform(bot)
+    chat = ChatRef("tg", "123")
+    photos = [("one.png", PNG), ("two.jpg", JPEG)]
+    result = await platform.send_photos(chat, photos, caption="Card", thread_id="9")
+    assert result.message_id == "31"
+    assert isinstance(platform, PhotoAlbumPlatform)
+    args = bot.send_media_group.await_args.kwargs
+    assert args["chat_id"] == "123" and args["message_thread_id"] == 9
+    assert len(args["media"]) == 2
+    assert args["media"][0].caption == "Card" and args["media"][1].caption is None
+
+
+@pytest.mark.asyncio
+async def test_photo_dimension_header_and_album_count_validation():
+    from chatcore_telegram import _image_size
+
+    bot = AsyncMock()
+    platform = make_platform(bot)
+    chat = ChatRef("tg", "123")
+    assert _image_size(PNG) == (1, 1)
+    assert _image_size(JPEG) == (1, 1)
+    unreadable = b"\x89PNG\r\n\x1a\n" + b"x" * 32
+    with pytest.raises(PlatformError, match="InvalidPhoto"):
+        await platform.send_photo(chat, "x.png", unreadable)
+    too_wide = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x03\xe9\x00\x00\x00\x01"
+    with pytest.raises(PlatformError, match="InvalidPhoto"):
+        await platform.send_photo(chat, "x.png", too_wide)
+    with pytest.raises(PlatformError, match="InvalidPhoto"):
+        await platform.send_photos(chat, [("x.png", PNG)])
 
 
 def make_platform(bot: object | None = None) -> TelegramPlatform:
@@ -1488,3 +1524,29 @@ async def test_plain_send_has_no_reply_markup() -> None:
     platform = make_platform(bot)
     await platform.send(ChatRef("tg", "-100"), "hi")
     assert "reply_markup" not in bot.send_message.await_args.kwargs
+
+
+@pytest.mark.parametrize("count,valid", [(1, False), (2, True), (10, True), (11, False)])
+@pytest.mark.asyncio
+async def test_send_photos_accepts_only_telegram_album_sizes(count, valid):
+    bot = AsyncMock()
+    bot.send_media_group.return_value = [SimpleNamespace(message_id=1)] * count
+    platform = make_platform(bot)
+    photos = [(f"image-{index}.png", PNG) for index in range(count)]
+    if valid:
+        await platform.send_photos(ChatRef("tg", "123"), photos)
+        bot.send_media_group.assert_awaited_once()
+    else:
+        with pytest.raises(PlatformError, match="InvalidPhoto"):
+            await platform.send_photos(ChatRef("tg", "123"), photos)
+        bot.send_media_group.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_photo_rejects_dimension_sum_over_telegram_limit():
+    from chatcore_telegram import _image_size
+
+    data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x13\x89\x00\x00\x13\x88"
+    assert _image_size(data) == (5001, 5000)
+    with pytest.raises(PlatformError, match="InvalidPhoto"):
+        await make_platform().send_photo(ChatRef("tg", "123"), "large.png", data)

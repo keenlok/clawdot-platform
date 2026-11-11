@@ -134,6 +134,9 @@ class FakePlatform:
     sent_files: list[SentFile] = field(default_factory=list)
     sent_voices: list[SentVoice] = field(default_factory=list)
     sent_photos: list[SentPhoto] = field(default_factory=list)
+    sent_albums: list[tuple[ChatRef, list[tuple[str, bytes]], str | None, str | None]] = field(
+        default_factory=list
+    )
     edits: list[tuple[MessageRef, str]] = field(default_factory=list)
     left: list[ChatRef] = field(default_factory=list)
     typing_calls: int = 0
@@ -199,6 +202,18 @@ class FakePlatform:
     ) -> MessageRef:
         ref = MessageRef(chat, f"b{next(self._ids)}", thread_id)
         self.sent_photos.append(SentPhoto(chat, filename, data, caption, thread_id, ref))
+        return ref
+
+    async def send_photos(
+        self,
+        chat: ChatRef,
+        photos: Sequence[tuple[str, bytes]],
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef:
+        ref = MessageRef(chat, f"b{next(self._ids)}", thread_id)
+        self.sent_albums.append((chat, list(photos), caption, thread_id))
         return ref
 
     async def edit(self, message: MessageRef, text: str) -> None:
