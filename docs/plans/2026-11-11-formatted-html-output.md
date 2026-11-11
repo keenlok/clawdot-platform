@@ -104,15 +104,34 @@ isolates removed):
 | `subtitle` | optional text | ≤ 120 |
 | `stats` | 1–4 tiles: `label`, `value`, optional `note`, optional `tone` | label ≤ 24, value ≤ 18, note ≤ 48 |
 | `heading` | text | ≤ 80 |
-| `paragraph` | text, `\n` for line breaks | ≤ 600 |
-| `bullets` | list of text | 1–8 items, ≤ 160 each |
-| `table` | `columns` (header, `align: start \| end`), `rows` of cells, optional `total` row | 1–5 columns, header ≤ 24, ≤ 25 rows, cell ≤ 60 |
-| `callout` | `tone` (`info`, `good`, `warning`, `critical`) and text | ≤ 240 |
-| `sources` | list of `{title, url}` | ≤ 6; title ≤ 100; `url` must be http(s); only the hostname is shown, computed in code |
+| `paragraph` | text, `\n` for line breaks | ≤ 1,000 |
+| `bullets` | list of text | 1–12 items, ≤ 200 each |
+| `table` | `columns` (header, `align: start \| end`), `rows` of cells, optional `total` row | 1–5 columns, header ≤ 24, ≤ 40 rows, cell ≤ 60 |
+| `callout` | `tone` (`info`, `good`, `warning`, `critical`) and text | ≤ 300 |
+| `sources` | list of `{title, url}` | ≤ 8; title ≤ 100; `url` must be http(s); only the hostname is shown, computed in code |
 
-At most 10 blocks after the title and 4,000 characters of text in total. `tone` is an enum; the
-model never chooses colours. The footer (bot name if configured, and the generation time in the
-chat's time zone) is built in code.
+At most 16 blocks after the title and 8,000 characters of text in total (`CARDS_MAX_TEXT_CHARS`,
+range 1,000–12,000). These limits are deliberately generous for v1; qualification measures real
+cards, and they can be lowered later without a schema change. `tone` is an enum; the model never
+chooses colours. The footer (bot name if configured, and the generation time in the chat's time
+zone) is built in code.
+
+**Output budget.** The agent's per-step output limit is `AgentSettings.max_tokens` (default
+2,048), and the global tool-step cap is `tool_steps` (8); a skill's `max_steps` can only lower the
+step cap. A card at 8,000 characters is about 2,000–2,700 tokens of tool arguments in English and
+up to about 9,000 in Chinese, so the default would cut the `send_card` call off. Rather than
+raising `max_tokens` for every turn of every app:
+
+- `Skill` gains an optional `max_output_tokens`. While a skill with it is active, the turn's
+  per-step limit is `max(AgentSettings.max_tokens, skill value)`, clamped to a new
+  `AgentSettings.max_tokens_ceiling` (default 12,288). No current skill sets it, so the request
+  snapshot is unchanged.
+- `visual_summary` sets `max_output_tokens=12288`; the ledger-backed expense cards don't need it
+  (their arguments are a trip name).
+- The existing truncated-tool-call handling in `agent.py` stays as the safety net: a truncated
+  `send_card` call is never executed.
+- The LLM provider's own output maximum for the configured model must be at least the ceiling;
+  the factory clamps to the provider maximum and logs once if it's lower.
 
 **Renderer of the document (`chatcore.cards.html`).**
 
@@ -124,6 +143,10 @@ chat's time zone) is built in code.
   style-src 'unsafe-inline'; img-src data:">` and no `<script>`, `<link>`, `<img>`, `<iframe>` or
   web font.
 - Output is a complete HTML string under 256 KiB.
+- Why the CSS isn't in the skill prompt for the model to use: it wouldn't fit the 800-character
+  instruction cap, it would cost input tokens on every active turn, HTML output costs 2–3× the
+  tokens of the same content as data, and model-written markup reopens injection and layout
+  drift. Code owns every tag and style.
 
 **Renderer endpoint (`services/browser-renderer`).** `POST /card` with body
 `{"html": str, "theme": "light" | "dark", "width": 400}`:
@@ -135,23 +158,29 @@ chat's time zone) is built in code.
 - `context.route("**/*", abort)` for every request, so even a crafted page can't load anything;
   the page is loaded with `page.set_content(html)`. No proxy lease is registered, so anything
   that did reach the egress proxy would be refused.
-- Screenshot `full_page=True`, PNG. Refuse with `too_large` if the page is taller than 4,000 CSS
-  px (aspect ratio 10:1, inside Telegram's 20:1) or the PNG exceeds 5 MiB. Timeout 10 s.
+- Screenshot PNG pages. Telegram requires width + height ≤ 10,000 **output** pixels, so at
+  1,000 px wide a page is at most 9,000 px, which is 3,600 CSS px. A taller card is split into
+  pages of at most 3,600 CSS px, cut between blocks (block bounding boxes come from Playwright's
+  element boxes, which don't need page JavaScript; a single block taller than a page, such as a
+  long table, is cut between rows). At most 4 pages; more is `too_large`. Each page PNG is at
+  most 5 MiB. Timeout 15 s.
+- Response: a small JSON envelope with the page count and base64 PNGs, or a fixed status word.
 - Shares the existing concurrency limit (2) and browser recycling; returns `busy` like `/render`.
-- Response: `image/png` bytes on success; JSON `{"status": ...}` with a fixed status word
-  otherwise. Logs status, duration, HTML bytes and PNG bytes only, never content.
+- Logs status, duration, page count, HTML bytes and PNG bytes only, never content.
 - The endpoint stays on the internal network only, like `/render`.
 
 **Client (`chatcore.cards.client.CardRenderClient`).** HTTPX, no redirects, no proxy inheritance,
-userinfo-free base URL (same checks as `RenderClient`), streamed response capped at 5 MiB, PNG
-magic bytes checked. `render(doc, theme) -> bytes` raises `CardError(code)` with codes `busy`,
+userinfo-free base URL (same checks as `RenderClient`), streamed response capped at 28 MiB, PNG
+magic bytes checked on every page. `render(doc, theme) -> list[bytes]` raises `CardError(code)` with codes `busy`,
 `too_large`, `timeout`, `unavailable`.
 
 **Photo capability (`chatcore.files.PhotoPlatform`).**
 `send_photo(chat, filename, data, *, caption=None, thread_id=None) -> MessageRef`. The direct
 Telegram adapter implements it with `bot.send_photo`, checking PNG/JPEG magic bytes, ≤ 10 MB,
 width + height ≤ 10,000 and ratio ≤ 20 from the PNG header, and a plain caption ≤ 1,024 UTF-16
-units. The bridge adapter and console don't implement it, so the gates hide card tools there.
+units. `send_photos(chat, photos, *, caption=None, thread_id=None)` sends 2–4 pages as one
+Telegram media group (`sendMediaGroup`, 2–10 items) with the caption on the first. The bridge
+adapter and console don't implement either, so the gates hide card tools there.
 
 ### Design spec the template must follow
 
@@ -235,7 +264,8 @@ skill's rules (one axis, fixed categorical order, validated palette, legend for 
   telling the model to answer in text.
 
 `visual_summary` skill: summary "Show a structured answer as a clean summary card", tools
-`("send_card",)`, `max_steps=3`, examples such as "make it a summary card", "show this as a
+`("send_card",)`, `max_steps=6` (room to gather with the web tools first; still clamped to the
+global cap of 8), `max_output_tokens=12288`, examples such as "make it a summary card", "show this as a
 table", "send a nice summary of the research", "整理成一张图", "can show as a picture or not",
 and keywords "summary card", "as a card", "as an image", "as a table", "做成图". Draft
 instructions (under 800 characters, written for any bot):
@@ -311,7 +341,7 @@ maintenance-reviewed file and is called out in the PR. No web fonts, ever.
 | Phase | Files |
 | --- | --- |
 | 1 | `packages/adapters/telegram/src/chatcore_telegram/formatting.py` and its tests |
-| 2 | New `packages/core/src/chatcore/cards/` (`__init__.py`, `models.py`, `html.py`, `client.py`); `packages/core/src/chatcore/files.py` (`PhotoPlatform`); `packages/core/src/chatcore/testing.py` (fake `send_photo`); `packages/adapters/telegram/src/chatcore_telegram/__init__.py` (`send_photo`); `services/browser-renderer/src/chatcore_browser_renderer/{server,engine,settings}.py` and tests; possibly `services/browser-renderer/Dockerfile` (fonts); core tests |
+| 2 | New `packages/core/src/chatcore/cards/` (`__init__.py`, `models.py`, `html.py`, `client.py`); `packages/core/src/chatcore/files.py` (`PhotoPlatform`); `packages/core/src/chatcore/skills.py` (`Skill.max_output_tokens`), `agent.py` and `skill_turn.py` (skill-scoped output budget, `max_tokens_ceiling`); `packages/core/src/chatcore/testing.py` (fake `send_photo`); `packages/adapters/telegram/src/chatcore_telegram/__init__.py` (`send_photo`); `services/browser-renderer/src/chatcore_browser_renderer/{server,engine,settings}.py` and tests; possibly `services/browser-renderer/Dockerfile` (fonts); core tests |
 | 3 | New `packages/plugins/cards/**` (`pyproject.toml`, `src/chatcore_cards/{__init__,plugin,gates,permissions,settings,service}.py`, `EXPLAIN.md`, tests); root `pyproject.toml` and `uv.lock` for the new workspace member; scaffold `.env.example` (disabled by default) |
 | 4 | `packages/plugins/expenses/src/chatcore_expenses/{plugin,gates}.py` and tests |
 | All | `CHANGELOG.md` (Unreleased), `ARCHITECTURE.md` §6a privacy line, `docs/plans/README.md` row, wiki page for the plugin |
@@ -332,14 +362,22 @@ Not touched: `/render` behaviour, the egress proxy, `seccomp.json`, other plugin
   `html.parser` and compare against an allowlist).
 - **Design tokens.** Contrast ratio of every text/surface and meaningful non-text pair in both
   themes meets 4.5:1 or 3:1; status colours pass the dataviz validator (recorded in the PR).
+- **Output budget.** With no skill setting `max_output_tokens`, request `max_tokens` is
+  unchanged (snapshot unchanged); with `visual_summary` active it's raised and clamped to the
+  ceiling; a maximum-size card in English and in Chinese serialises within the raised budget
+  (counted with the configured model's tokenizer during qualification, a conservative
+  chars-per-token estimate in unit tests); a truncated `send_card` call is not executed.
 - **Renderer `/card`** (unit tests with a fake browser, plus `-m browser` integration tests):
   JS disabled (a `<script>` that would change the title doesn't run), every network request
   aborted (a crafted `<img src=https://…>` and CSS `url()` make zero proxy connections), oversize
-  request refused, height cap gives `too_large`, timeout, busy, PNG returned, `/render` unchanged.
+  request refused, pages split between blocks (and between rows of a long table), each page
+  within width + height ≤ 10,000 px, more than 4 pages gives `too_large`, timeout, busy,
+  `/render` unchanged.
 - **Client.** Redirects not followed, size cap while streaming, non-PNG body refused, error codes
   mapped, no response text in exception messages.
-- **Telegram `send_photo`.** Magic bytes, 10 MB, dimension and ratio checks from the PNG header,
-  caption length, thread and reply metadata, through `FakeRequest`.
+- **Telegram `send_photo` / `send_photos`.** Magic bytes, 10 MB, dimension and ratio checks from
+  the PNG header, caption length, media group of 2–4 with the caption on the first, thread and
+  reply metadata, through `FakeRequest`.
 - **`cards` plugin.** Gate hidden when disabled, unconfigured or not a `PhotoPlatform`; user gate
   and call-time permission checks (DM, group, restricted user, namespace mismatch); one per turn
   including failures; hourly cap; permission rechecked before sending; errors leave the model a
@@ -376,14 +414,18 @@ Name any check that couldn't run (browser integration, Postgres) in the PR.
 3. Measure render latency (target p95 under 3 s on the deploy host) and PNG size (target under
    600 KB for a typical card).
 4. Send one card to a test chat and confirm Telegram's recompression keeps 13 px meta text
-   legible.
+   legible, and one multi-page card arrives as a single album.
+5. Record the output tokens of maximum-size English and Chinese `send_card` calls with the
+   configured model, and confirm they fit `max_output_tokens`; lower `CARDS_MAX_TEXT_CHARS` if
+   they don't.
 
 ## Done when
 
 - Phase 1: narrow tables and blockquotes render natively in Telegram, with no other formatting
   change.
 - Phase 2: `chatcore.cards` renders a validated document to escaped HTML; `/card` returns a PNG
-  with JS and network off; `PhotoPlatform.send_photo` works on direct Telegram.
+  pages with JS and network off; `PhotoPlatform.send_photo`/`send_photos` work on direct
+  Telegram; a skill can raise the turn's output budget up to the core ceiling.
 - Phase 3: `send_card` and `visual_summary` ship disabled by default, gated, one per turn, with
   a text fallback.
 - Phase 4: balance and trip-summary cards match `get_balances` exactly.
