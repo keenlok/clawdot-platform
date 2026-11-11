@@ -663,6 +663,20 @@ class AgentResponder:
             )
             if is_image(attachment)
         )
+        attachment_owners = tuple(
+            owner
+            for attachments, owner in (
+                (message.attachments, message.user.ref.key),
+                (
+                    replied.attachments if replied and not replied.is_bot else (),
+                    replied.user.key if replied and not replied.is_bot else "",
+                ),
+            )
+            for attachment in attachments
+            if is_image(attachment)
+        )
+        if tool_ctx is not None:
+            tool_ctx.turn.attachment_owners = attachment_owners
         images = await self._images(
             message, app, replied=replied, downloads=downloads, vision=vision
         )

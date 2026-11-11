@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 import httpx
 import openai
+from chatcore.llm.types import ImagePart
 
 from chatcore_image.settings import SIZES, ImageSettings
 
@@ -89,7 +90,14 @@ class ImageService:
                 "quality": self.settings.IMAGE_QUALITY,
             }
 
-    async def generate(self, prompt: str, size: str, *, user_key: str) -> bytes:
+    async def generate(
+        self,
+        prompt: str,
+        size: str,
+        *,
+        user_key: str,
+        reference: ImagePart | None = None,
+    ) -> bytes:
         async with self._lock:
             self._roll_day()
             if self._users[user_key] >= self.settings.IMAGE_MAX_PER_USER_DAY or (
@@ -105,15 +113,34 @@ class ImageService:
         try:
             try:
                 async with asyncio.timeout(130):
-                    response = await self._get_client().images.generate(
-                        model=self.settings.IMAGE_MODEL,
-                        prompt=prompt,
-                        size=SIZES[size],
-                        quality=self.settings.IMAGE_QUALITY,
-                        n=1,
-                        output_format="png",
-                        moderation=self.settings.IMAGE_MODERATION,
-                    )
+                    client = self._get_client()
+                    if reference is None:
+                        response = await client.images.generate(
+                            model=self.settings.IMAGE_MODEL,
+                            prompt=prompt,
+                            size=SIZES[size],
+                            quality=self.settings.IMAGE_QUALITY,
+                            n=1,
+                            output_format="png",
+                            moderation=self.settings.IMAGE_MODERATION,
+                        )
+                    else:
+                        extension = {
+                            "image/png": "png",
+                            "image/jpeg": "jpg",
+                            "image/webp": "webp",
+                        }.get(reference.media_type)
+                        if extension is None:
+                            raise ImageError("unavailable")
+                        response = await client.images.edit(
+                            model=self.settings.IMAGE_MODEL,
+                            image=(f"reference.{extension}", reference.data, reference.media_type),
+                            prompt=prompt,
+                            size=SIZES[size],
+                            quality=self.settings.IMAGE_QUALITY,
+                            n=1,
+                            output_format="png",
+                        )
             except openai.BadRequestError as exc:
                 body = getattr(exc, "body", None)
                 code = getattr(exc, "code", None)
@@ -125,18 +152,21 @@ class ImageService:
                     or code == "content_policy_violation"
                 ):
                     log.warning(
-                        "image generate failed code=%s",
+                        "image %s failed code=%s",
+                        "edit" if reference is not None else "generate",
                         getattr(exc, "status_code", None) or type(exc).__name__,
                     )
                     raise ImageError("refused") from None
                 log.warning(
-                    "image generate failed code=%s",
+                    "image %s failed code=%s",
+                    "edit" if reference is not None else "generate",
                     getattr(exc, "status_code", None) or type(exc).__name__,
                 )
                 raise ImageError("unavailable") from None
             except (openai.APIError, TimeoutError, httpx.HTTPError) as exc:
                 log.warning(
-                    "image generate failed code=%s",
+                    "image %s failed code=%s",
+                    "edit" if reference is not None else "generate",
                     getattr(exc, "status_code", None) or type(exc).__name__,
                 )
                 raise ImageError("unavailable") from None
@@ -148,7 +178,8 @@ class ImageService:
             if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) > MAX_IMAGE_BYTES:
                 raise ImageError("invalid_output")
             log.info(
-                "image generated model=%s size=%s bytes=%s ms=%s",
+                "image generated mode=%s model=%s size=%s bytes=%s ms=%s",
+                "edit" if reference is not None else "generate",
                 self.settings.IMAGE_MODEL,
                 size,
                 len(data),

@@ -13,6 +13,7 @@ class ImageSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", env_file=None, extra="ignore")
 
     IMAGE_ENABLED: bool = False
+    IMAGE_EDIT_ENABLED: bool = False
     IMAGE_OPENAI_API_KEY: SecretStr = SecretStr("")
     IMAGE_OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     IMAGE_MODEL: str = "gpt-image-2.5-flare"

@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-12
+
+### Added
+
+- Image references enable photo edits through `generate_image(reference=...)` when
+  `IMAGE_EDIT_ENABLED` is true (default off). `IMAGE_EDIT_PRIVACY_NOTE` is exported for app privacy
+  notices.
+
+### Changed
+
+- Core `TurnState` records the sender key for each current or replied-to image attachment.
+
 ## [0.11.0] - 2026-11-12
 
 ### Added
@@ -338,7 +350,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/keenlok/clawdot-platform/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/keenlok/clawdot-platform/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/keenlok/clawdot-platform/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/keenlok/clawdot-platform/compare/v0.8.2...v0.9.0
