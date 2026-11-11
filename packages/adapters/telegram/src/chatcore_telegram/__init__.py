@@ -25,7 +25,7 @@ from chatcore.events import (
     User,
     UserRef,
 )
-from chatcore.files import VoicePlatform
+from chatcore.files import PhotoPlatform, VoicePlatform
 from chatcore.images import error_label
 from chatcore.platform import Capabilities, EventHandler, PlatformError
 from chatcore.polls import PollLimits, PollResult, SentPoll
@@ -62,7 +62,9 @@ from chatcore_telegram.menu import fit_menu
 NAME = "tg"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_VOICE_BYTES = 8 * 1024 * 1024
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
 _VOICE_FILENAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\.mp3")
+_PHOTO_FILENAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\.(png|jpg|jpeg)")
 _COMMAND_NAME = re.compile(r"^[a-z0-9_]{1,32}$")
 logger = logging.getLogger(__name__)
 logging.getLogger("telegram").setLevel(logging.WARNING)
@@ -85,7 +87,7 @@ class TelegramSettings(BaseSettings):
     )
 
 
-class TelegramPlatform(VoicePlatform):
+class TelegramPlatform(VoicePlatform, PhotoPlatform):
     """Bridge Telegram updates and methods to the platform independent core."""
 
     name = NAME
@@ -616,6 +618,37 @@ class TelegramPlatform(VoicePlatform):
             raise PlatformError(type(exc).__name__) from None
         return MessageRef(chat, str(msg.message_id), thread_id)
 
+    async def send_photo(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef:
+        if (
+            not isinstance(filename, str)
+            or not _PHOTO_FILENAME.fullmatch(filename)
+            or not isinstance(data, bytes)
+            or not data
+            or not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"\xff\xd8\xff"))
+        ):
+            raise PlatformError("InvalidPhoto")
+        if len(data) > MAX_PHOTO_BYTES:
+            raise PlatformError("PhotoTooLarge")
+        if caption is not None and utf16_length(caption) > 1024:
+            raise PlatformError("CaptionTooLong")
+        msg = await self._send_with_retry(
+            self._application.bot.send_photo,
+            chat_id=chat.id,
+            photo=data,
+            filename=filename,
+            caption=caption,
+            message_thread_id=int(thread_id) if thread_id else None,
+        )
+        return MessageRef(chat, str(msg.message_id), thread_id)
+
     async def stop_poll(self, message: MessageRef) -> PollResult:
         poll = await self._safe(
             self._application.bot.stop_poll,
@@ -839,6 +872,7 @@ __all__ = [
     "BridgeDownloadSettings",
     "BridgeTelegramPlatform",
     "TelegramBridgeHTTPClient",
+    "MAX_PHOTO_BYTES",
     "TelegramPlatform",
     "TelegramSettings",
 ]

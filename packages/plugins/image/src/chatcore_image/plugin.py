@@ -1,0 +1,210 @@
+"""Image generation tool, usage command and skill."""
+
+from __future__ import annotations
+
+import logging
+import unicodedata
+
+from chatcore.access import AccessPolicy
+from chatcore.files import FilePlatform, PhotoPlatform
+from chatcore.platform import ChatPlatform
+from chatcore.plugin import BasePlugin, Command, CommandContext
+from chatcore.skills import Skill
+from chatcore.tools.registry import Tool, ToolContext, ToolResult
+
+from chatcore_image.permissions import may_generate
+from chatcore_image.service import ImageError, ImageService
+from chatcore_image.settings import SIZES, ImageSettings
+
+log = logging.getLogger("chatcore_image")
+TOOL = "generate_image"
+IMAGE_GENERATION_INSTRUCTIONS = (
+    "Generate only when the person explicitly asks for an image. Write one self-contained prompt "
+    "that restates the whole picture, resolving references from the conversation. Never put "
+    "private individuals' names or personal details in the prompt. Call generate_image once, "
+    "then reply in one or two sentences saying what was made. If it fails, say so and offer to "
+    "adjust the description."
+)
+_ERRORS = {
+    "quota": "Image limit reached for today.",
+    "busy": "Image generation is busy; suggest trying again shortly.",
+    "refused": "The image provider refused this prompt; offer to change the description.",
+    "unavailable": "Image generation is unavailable right now.",
+    "invalid_output": "The image provider returned an unusable image.",
+}
+
+
+def _has_control(text: str, *, allow_whitespace: bool) -> bool:
+    return any(
+        unicodedata.category(char) == "Cc" and not (allow_whitespace and char in "\n\t")
+        for char in text
+    )
+
+
+class ImagePlugin(BasePlugin):
+    name = "image"
+    explainer_package = "chatcore_image"
+    help_title = "Image generation"
+
+    def __init__(
+        self, access: AccessPolicy, platform: ChatPlatform, *, settings: ImageSettings | None = None
+    ):
+        self.access, self.platform = access, platform
+        self.settings = settings or ImageSettings()
+        self.service = ImageService(self.settings)
+
+    @property
+    def generation_available(self) -> bool:
+        return self.service.available and isinstance(self.platform, (PhotoPlatform, FilePlatform))
+
+    async def aclose(self) -> None:
+        await self.service.aclose()
+
+    def tools(self) -> list[Tool]:
+        return [self._generate_tool()] if self.generation_available else []
+
+    def tool_gates(self):
+        from chatcore_image.gates import build_gates
+
+        return build_gates(self)
+
+    def _generate_tool(self) -> Tool:
+        limit = self.settings.IMAGE_MAX_PROMPT_CHARS
+        schema = {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Self-contained description of the image to create: subject, "
+                    f"style, composition and any text it should show; 1–{limit} characters.",
+                },
+                "size": {"type": "string", "enum": list(SIZES), "description": "Image shape."},
+                "title": {
+                    "type": "string",
+                    "description": "Short plain title for the image caption; 1–120 characters.",
+                },
+            },
+            "required": ["prompt", "size", "title"],
+            "additionalProperties": False,
+        }
+
+        async def generate(ctx: ToolContext, *, prompt: str, size: str, title: str) -> ToolResult:
+            if ctx.turn.tool_attempts.get(TOOL):
+                return ToolResult.error("An image was already attempted this turn.")
+            if not isinstance(prompt, str):
+                return ToolResult.error(
+                    f"Prompt must be 1–{limit} characters without control characters."
+                )
+            if not isinstance(title, str):
+                return ToolResult.error(
+                    "Title must be 1–120 characters without newlines or control characters."
+                )
+            if not isinstance(size, str):
+                return ToolResult.error("Size must be square, portrait or landscape.")
+            prompt_clean, title_clean = prompt.strip(), title.strip()
+            if (
+                not prompt_clean
+                or len(prompt_clean) > limit
+                or _has_control(prompt_clean, allow_whitespace=True)
+            ):
+                return ToolResult.error(
+                    f"Prompt must be 1–{limit} characters without control characters."
+                )
+            if (
+                not title_clean
+                or len(title_clean) > 120
+                or _has_control(title_clean, allow_whitespace=False)
+            ):
+                return ToolResult.error(
+                    "Title must be 1–120 characters without newlines or control characters."
+                )
+            if size not in SIZES:
+                return ToolResult.error("Size must be square, portrait or landscape.")
+            if not self.generation_available or not await may_generate(self.access, ctx):
+                return ToolResult.error("Image generation is unavailable here.")
+            if ctx.turn.tool_attempts.get(TOOL):
+                return ToolResult.error("An image was already attempted this turn.")
+            ctx.turn.tool_attempts[TOOL] = 1
+            caption = "🖼 " + title_clean
+            try:
+                data = await self.service.generate(prompt_clean, size, user_key=ctx.user.ref.key)
+                if not await may_generate(self.access, ctx):
+                    return ToolResult.error("Image delivery is no longer allowed.")
+                if isinstance(ctx.platform, PhotoPlatform):
+                    await ctx.platform.send_photo(
+                        ctx.chat, "image.png", data, caption=caption, thread_id=ctx.thread_id
+                    )
+                else:
+                    await ctx.platform.send_file(
+                        ctx.chat, "image.png", data, caption=caption, thread_id=ctx.thread_id
+                    )
+                return ToolResult(
+                    "Image sent before the text response. Now reply in one or two sentences "
+                    "saying what was made."
+                )
+            except ImageError as exc:
+                return ToolResult.error(_ERRORS.get(exc.code, _ERRORS["unavailable"]))
+            except Exception as exc:
+                log.warning("image delivery failed error=%s", type(exc).__name__)
+                return ToolResult.error("Could not deliver the image.")
+
+        return Tool(
+            TOOL,
+            "Create one requested image from a text description and send it to the chat.",
+            schema,
+            generate,
+            writes=False,
+        )
+
+    def skills(self) -> list[Skill]:
+        if not self.generation_available:
+            return []
+        return [
+            Skill(
+                "image_generation",
+                "Create a picture from a description",
+                (
+                    "draw a cat wearing a space helmet",
+                    "make a picture of a sunset over the Singapore skyline",
+                    "generate an image for my birthday invite",
+                    "can you illustrate this story",
+                    "画一只在海边的狗",
+                    "create a logo idea for a bubble tea shop",
+                ),
+                (TOOL,),
+                keywords=(
+                    "draw a",
+                    "draw an",
+                    "draw me",
+                    "draw my",
+                    "picture of",
+                    "image of",
+                    "generate an image",
+                    "make an image",
+                    "illustrate",
+                    "illustration",
+                    "画一",
+                    "画个",
+                    "画张",
+                    "帮我画",
+                    "生成图片",
+                ),
+                commands=("image",),
+                max_steps=4,
+                instructions=IMAGE_GENERATION_INSTRUCTIONS,
+            )
+        ]
+
+    def commands(self) -> list[Command]:
+        async def image(ctx: CommandContext, args: str) -> str:
+            if args.strip().casefold() != "usage":
+                return f"Use {ctx.command_form('image')} usage to see image usage."
+            if not self.service.available:
+                return "Image generation is not configured."
+            report = await self.service.report()
+            return (
+                f"Images today (UTC): {report['total']:,} of {report['daily_limit']:,}.\n"
+                f"Model: {report['model']}, quality: {report['quality']}."
+            )
+
+        return [Command("image", "Show image generation usage (admins)", image, admin_only=True)]

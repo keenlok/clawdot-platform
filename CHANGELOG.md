@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- New optional `chatcore-image` plugin (`ImagePlugin`, `ImageSettings`), disabled by default.
+  Configure `IMAGE_ENABLED`, `IMAGE_OPENAI_API_KEY`, `IMAGE_OPENAI_BASE_URL`, `IMAGE_MODEL`,
+  `IMAGE_QUALITY`, `IMAGE_MODERATION`, `IMAGE_MAX_PROMPT_CHARS`, `IMAGE_MAX_PER_USER_DAY` and
+  `IMAGE_MAX_PER_DAY` to enable it. Core adds the `PhotoPlatform` capability and Telegram adds
+  inline `send_photo`; bridge mode sends generated images as documents.
+
 ## [0.8.1] - 2026-11-11
 
 ### Fixed

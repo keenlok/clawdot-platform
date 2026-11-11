@@ -17,6 +17,7 @@ members = [
     "chatcore-extensions",
     "chatcore-google",
     "chatcore-google-browser-editor",
+    "chatcore-image",
     "chatcore-jobs",
     "chatcore-memory",
     "chatcore-polls",
@@ -727,6 +728,21 @@ requires-dist = [
     { name = "playwright", specifier = ">=1.55" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
+]
+
+[[package]]
+name = "chatcore-image"
+version = "0.1.0"
+source = { editable = "packages/plugins/image" }
+dependencies = [
+    { name = "chatcore" },
+    { name = "openai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "chatcore", editable = "packages/core" },
+    { name = "openai", specifier = ">=2.0" },
 ]
 
 [[package]]

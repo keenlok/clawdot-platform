@@ -143,3 +143,32 @@ Missing credentials or a failed step keep activation blocked.
 2. Are 10 images per user and 50 per day the right starting caps?
 3. Should the default quality be `medium` (cheaper, faster) or `high`?
 4. Should v2 support editing a photo the user sends ("make this a watercolour")? That needs the inbound image bytes passed to the tool, which the vision path already downloads.
+
+## Implementation record (2026-11-11)
+
+**Execution:** Codex `gpt-6-luna` executed, following the [execution plan](2026-11-11-image-generation-execution.md). Codex `gpt-6.1-sol` reviewed. Claude did the final review.
+
+**Open questions:** inline photos and `gpt-image-2.5-flare` were chosen by the owner. The caps (10 per user, 50 per day) and `medium` quality use the plan defaults and can be changed in settings.
+
+**Review:** Sol's first review returned FAIL, with no high-severity findings. One fix round resolved every finding:
+
+- Moderation refusals are detected from the error code or the body.
+- Non-string tool arguments are rejected.
+- Budget and authorization tests were made stronger.
+- The packaged explainer documents every `IMAGE_*` setting.
+- Claude's review added a keyword fix. `画` and bare `draw` became `画一`/`画个`/`画张`/`帮我画` and `draw a`/`an`/`me`/`my`. Non-ASCII keywords match as substrings, so the bare forms routed 动画 (anime), 漫画 (comics) and "lucky draw" to image generation.
+
+**Verification:**
+
+- Full suite: 4,044 passed, 57 skipped (services not available locally). Ruff check, format and the explainer check are clean.
+- Mutation checks each turned the image tests red, then were reverted:
+  - charging busy refusals;
+  - removing the daily cap;
+  - falling back to a document after a photo failure;
+  - skipping the permission recheck after generation.
+
+**Plan changes found during implementation:**
+
+- The `codex exec review --uncommitted` command in this Codex version rejects a custom prompt, so Sol ran as `codex exec -s read-only` with the review brief.
+
+**Not run:** no live OpenAI call (that's the activation gate), no Postgres integration tests locally, and no live Telegram `send_photo`. The real adapter is exercised only with a mocked bot.

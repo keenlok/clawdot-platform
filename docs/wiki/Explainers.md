@@ -8,6 +8,7 @@ Generated from maintained plugin documentation.
 - [Reviewed sandboxed extensions](https://github.com/keenlok/clawdot-platform/wiki/Plugin-extensions) — Requested JSON tools require review and activation before constrained execution.
 - [How the bot works](https://github.com/keenlok/clawdot-platform/wiki/How-the-bot-works) — The language model, tools, application code and stores each have separate jobs.
 - [Google files and bounded edits](https://github.com/keenlok/clawdot-platform/wiki/Plugin-google) — Read authorized files and confirm bounded API edits with preconditions and verification.
+- [Image generation](https://github.com/keenlok/clawdot-platform/wiki/Plugin-image) — Creates one requested image from a text description and sends it to the chat.
 - [Reminders and website watches](https://github.com/keenlok/clawdot-platform/wiki/Plugin-jobs) — Persistent scheduled jobs are executed by a worker, separate from conversation memory.
 - [Saved facts and recall](https://github.com/keenlok/clawdot-platform/wiki/Plugin-memory) — Selected durable facts are distinct from chat history and rolling summaries.
 - [Native polls](https://github.com/keenlok/clawdot-platform/wiki/Plugin-polls) — Poll tools validate inputs and use the chat platform's native poll capability.

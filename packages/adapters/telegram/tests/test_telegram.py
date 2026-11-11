@@ -20,7 +20,7 @@ from chatcore.events import (
     MessageRef,
     UserRef,
 )
-from chatcore.files import VoicePlatform
+from chatcore.files import PhotoPlatform, VoicePlatform
 from chatcore.platform import Capabilities, ChatPlatform, PlatformError
 from chatcore_telegram import TelegramPlatform, TelegramSettings
 from pydantic import SecretStr
@@ -40,6 +40,9 @@ from telegram import (
 from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import TypeHandler
 from telegram.request import BaseRequest
+
+PNG = b"\x89PNG\r\n\x1a\nimage"
+JPEG = b"\xff\xd8\xffimage"
 
 
 class FakeRequest(BaseRequest):
@@ -96,6 +99,52 @@ class FakeRequest(BaseRequest):
                 "text": "ok",
             }
         return 200, json.dumps({"ok": True, "result": response}).encode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("filename", "data"), [("image.png", PNG), ("image.jpg", JPEG)])
+async def test_send_photo_uploads_inline_image_with_caption_and_topic(filename, data):
+    bot = AsyncMock()
+    bot.send_photo.return_value = SimpleNamespace(message_id=19)
+    platform = TelegramPlatform(TelegramSettings(bot_token=SecretStr("fake-token")))
+    platform._application = SimpleNamespace(bot=bot)
+    assert isinstance(platform, PhotoPlatform)
+    result = await platform.send_photo(
+        ChatRef("tg", "123"), filename, data, caption="🖼 Cat", thread_id="7"
+    )
+    assert result.message_id == "19" and result.thread_id == "7"
+    bot.send_photo.assert_awaited_once_with(
+        chat_id="123", photo=data, filename=filename, caption="🖼 Cat", message_thread_id=7
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_photo_rejects_invalid_data_size_and_caption():
+    from chatcore_telegram import MAX_PHOTO_BYTES
+
+    bot = AsyncMock()
+    platform = TelegramPlatform(TelegramSettings(bot_token=SecretStr("fake-token")))
+    platform._application = SimpleNamespace(bot=bot)
+    chat = ChatRef("tg", "123")
+    for filename, data in (
+        ("../image.png", PNG),
+        ("image.png", b""),
+        ("image.png", "text"),
+        ("image.png", b"<html>"),
+    ):
+        with pytest.raises(PlatformError, match="InvalidPhoto"):
+            await platform.send_photo(chat, filename, data)
+    with pytest.raises(PlatformError, match="PhotoTooLarge"):
+        await platform.send_photo(
+            chat, "image.png", b"\x89PNG\r\n\x1a\n" + b"x" * (MAX_PHOTO_BYTES - 7)
+        )
+    bot.send_photo.return_value = SimpleNamespace(message_id=20)
+    await platform.send_photo(
+        chat, "image.png", b"\x89PNG\r\n\x1a\n" + b"x" * (MAX_PHOTO_BYTES - 8)
+    )
+    assert bot.send_photo.await_count == 1
+    with pytest.raises(PlatformError, match="CaptionTooLong"):
+        await platform.send_photo(chat, "image.png", PNG, caption="😀" * 513)
 
 
 def make_platform(bot: object | None = None) -> TelegramPlatform:

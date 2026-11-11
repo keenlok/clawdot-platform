@@ -33,3 +33,18 @@ class VoicePlatform(Protocol):
         caption: str | None = None,
         thread_id: str | None = None,
     ) -> MessageRef: ...
+
+
+@runtime_checkable
+class PhotoPlatform(Protocol):
+    """Optional capability for sending one image inline as a response attachment."""
+
+    async def send_photo(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef: ...
