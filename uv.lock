@@ -17,6 +17,7 @@ members = [
     "chatcore-extensions",
     "chatcore-google",
     "chatcore-google-browser-editor",
+    "chatcore-image",
     "chatcore-jobs",
     "chatcore-memory",
     "chatcore-polls",
@@ -730,6 +731,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "chatcore-image"
+version = "0.1.0"
+source = { editable = "packages/plugins/image" }
+dependencies = [
+    { name = "chatcore" },
+    { name = "openai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "chatcore", editable = "packages/core" },
+    { name = "openai", specifier = ">=2.0" },
+]
+
+[[package]]
 name = "chatcore-jobs"
 version = "0.1.0"
 source = { editable = "packages/plugins/jobs" }
@@ -926,7 +942,7 @@ dev = [{ name = "respx", specifier = ">=0.22" }]
 
 [[package]]
 name = "clawdot-platform-workspace"
-version = "0.8.2"
+version = "0.9.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

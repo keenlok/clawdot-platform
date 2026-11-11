@@ -23,6 +23,7 @@ BUILTIN_PLUGINS = (
     "expenses",
     "extensions",
     "google",
+    "image",
     "jobs",
     "memory",
     "polls",

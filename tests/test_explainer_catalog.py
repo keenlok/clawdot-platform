@@ -12,6 +12,7 @@ PACKAGES = (
     "expenses",
     "extensions",
     "google",
+    "image",
     "jobs",
     "memory",
     "polls",
@@ -58,6 +59,6 @@ def test_all_builtin_topic_aliases_are_unique():
             )
         )
     catalog = ExplainerCatalog(documents)
-    assert len(catalog.documents()) == 14
+    assert len(catalog.documents()) == 15
     assert catalog.resolve("trips").spec.topic == "expenses"
     assert catalog.resolve("google_docs").spec.topic == "google"
