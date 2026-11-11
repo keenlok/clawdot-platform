@@ -224,3 +224,18 @@ Fix (v0.8.1): the adapter accepts any plain lowercase `.mp3` name and caps voice
 Telegram adapter (mocked bot) and checks tutor audio fits the cap. It fails on v0.8.0 with the
 production error and passes with the fix. Implemented and self-reviewed in a single Claude
 session.
+
+## Cantonese record (2026-11-11)
+
+A live Cantonese read-aloud request got a text-only answer: the router offered no skill (the
+`read_aloud` Chinese keywords were Mandarin only), and the plugin had no Cantonese language.
+The configurable models can't speak it: the tutor's live qualification found the API rejects
+`yue` on v3, and Eleven v4 succeeds.
+
+v0.8.2 adds Cantonese (`yue`) with a code-owned model pin (`LANGUAGE_MODELS`:
+Cantonese → `eleven_v4`, multiplier 1.0, which ElevenLabs documents as 1 credit per
+character), so other languages keep `VOICE_TTS_MODEL`. The skill gains Cantonese triggers
+(`讀出嚟`, `念出嚟`, `唸出嚟`) that don't overlap the tutor's pronunciation phrases, and
+one instruction sentence asking for colloquial Cantonese in traditional characters. Tests cover the
+exact v4/`yue` request, the pin under another configured model, and keyword routing.
+Implemented and self-reviewed in a single Claude session.

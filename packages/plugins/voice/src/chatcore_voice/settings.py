@@ -8,9 +8,11 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Narration languages and their ISO 639-1 codes; every one is supported by the allowed models.
+# Narration languages and their ElevenLabs language codes (ISO 639-1, or ISO 639-3 for
+# Cantonese). Languages in ``LANGUAGE_MODELS`` use that model; the rest use ``VOICE_TTS_MODEL``.
 LANGUAGES: dict[str, str] = {
     "English": "en",
+    "Cantonese": "yue",
     "Mandarin Chinese": "zh",
     "Japanese": "ja",
     "Korean": "ko",
@@ -29,7 +31,12 @@ MODELS: dict[str, tuple[float, bool]] = {
     "eleven_multilingual_v2": (1.0, False),
     "eleven_flash_v2_5": (1.0, True),
     "eleven_turbo_v2_5": (1.0, True),
+    "eleven_v4": (1.0, True),
 }
+
+# Languages the configurable models can't speak, pinned to a model that can. Cantonese needs
+# Eleven v4 (the API rejects ``yue`` on v3 and the v2 models have no Cantonese).
+LANGUAGE_MODELS: dict[str, str] = {"Cantonese": "eleven_v4"}
 
 _VOICE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}", flags=re.ASCII)
 
@@ -81,3 +88,6 @@ class VoiceSettings(BaseSettings):
     @property
     def voices(self) -> dict[str, str]:
         return parse_voices(self.VOICE_TTS_VOICES)
+
+    def model_for(self, language: str) -> str:
+        return LANGUAGE_MODELS.get(language, self.VOICE_TTS_MODEL)

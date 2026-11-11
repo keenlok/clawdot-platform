@@ -14,7 +14,8 @@ ElevenLabs key and at least one voice.
 ## Workflow
 The read-aloud skill offers the narration tool together with the general web tools, so a request
 such as "narrate today's news" can gather sources, write a short summary and narrate it. The tool
-takes the exact passage, its language and a short caption title. One narration is attempted per
+takes the exact passage, its language and a short caption title. Cantonese is always synthesised
+with Eleven v4 (`yue`); other languages use the configured model. One narration is attempted per
 turn, and the voice message arrives before the text reply. Admins can run `/voice usage` to see
 today's narration characters and the provider's billing-period usage.
 

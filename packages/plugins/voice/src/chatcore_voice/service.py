@@ -223,7 +223,8 @@ class NarrationService:
             raise NarrationError("invalid_user")
         if not self.available:
             raise NarrationError("unavailable")
-        multiplier, accepts_language = MODELS[self.settings.VOICE_TTS_MODEL]
+        model = self.settings.model_for(language)
+        multiplier, accepts_language = MODELS[model]
         cost = len(text)
         entry = await self._reserve_local(user_key, cost)
         try:
@@ -238,7 +239,7 @@ class NarrationService:
                     key=self.settings.VOICE_ELEVENLABS_API_KEY.get_secret_value(),
                     text=text,
                     voice=self._voices[language],
-                    model=self.settings.VOICE_TTS_MODEL,
+                    model=model,
                     output_format=OUTPUT_FORMAT,
                     max_bytes=MAX_AUDIO_BYTES,
                     language_code=LANGUAGES[language] if accepts_language else None,

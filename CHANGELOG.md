@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-11
+
+### Added
+
+- Voice narration supports **Cantonese**. Add `Cantonese=<voice_id>` to `VOICE_TTS_VOICES` to
+  offer it. Cantonese is always synthesised with `eleven_v4` and language code `yue` (the
+  configurable v2 models have no Cantonese); other languages keep `VOICE_TTS_MODEL`.
+  `eleven_v4` joins the model allowlist at 1 credit per character.
+- The `read_aloud` skill routes Cantonese requests (`讀出嚟`, `念出嚟`, `唸出嚟`) and its
+  instructions ask for colloquial Cantonese in traditional characters. Apps that test their
+  resulting skill prompt should refresh that expectation.
+
 ## [0.8.1] - 2026-11-11
 
 ### Fixed
@@ -289,7 +301,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/keenlok/clawdot-platform/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/keenlok/clawdot-platform/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/keenlok/clawdot-platform/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/keenlok/clawdot-platform/compare/v0.6.2...v0.7.0
