@@ -162,6 +162,17 @@ async def test_send_voice_uploads_mp3_to_exact_chat_topic_and_caption() -> None:
     assert bot.send_voice.await_args.kwargs["voice"].filename == "pronunciation.mp3"
 
 
+async def test_send_voice_accepts_other_plain_mp3_names_up_to_eight_mib() -> None:
+    bot = AsyncMock()
+    bot.send_voice.return_value = SimpleNamespace(message_id=30)
+    platform = make_platform(bot)
+    chat = ChatRef("tg", "-100")
+    header = b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x64"
+    large = header + b"\x00" * (8 * 1024 * 1024 - len(header))
+    await platform.send_voice(chat, "narration.mp3", large, caption="🔊 News")
+    assert bot.send_voice.await_args.kwargs["voice"].filename == "narration.mp3"
+
+
 async def test_voice_rejects_bounds_and_sanitizes_one_ambiguous_send() -> None:
     from telegram.error import BadRequest, NetworkError
 
@@ -169,12 +180,20 @@ async def test_voice_rejects_bounds_and_sanitizes_one_ambiguous_send() -> None:
     platform = make_platform(bot)
     chat = ChatRef("tg", "-100")
     valid = b"ID3\x04\x00\x00\x00\x00\x00\x00\xff\xfb\x90\x64"
-    with pytest.raises(PlatformError):
-        await platform.send_voice(chat, "../unsafe.mp3", valid)
+    for name in (
+        "../unsafe.mp3",
+        "voice.ogg",
+        "Narration.mp3",
+        "a b.mp3",
+        "x" * 65 + ".mp3",
+        ".mp3",
+    ):
+        with pytest.raises(PlatformError):
+            await platform.send_voice(chat, name, valid)
     with pytest.raises(PlatformError):
         await platform.send_voice(chat, "pronunciation.mp3", b"invalid")
     with pytest.raises(PlatformError):
-        await platform.send_voice(chat, "pronunciation.mp3", valid + b"x" * (2 * 1024 * 1024))
+        await platform.send_voice(chat, "pronunciation.mp3", valid + b"x" * (8 * 1024 * 1024))
     with pytest.raises(PlatformError):
         await platform.send_voice(chat, "pronunciation.mp3", valid, caption="x" * 1025)
     assert bot.send_voice.await_count == 0

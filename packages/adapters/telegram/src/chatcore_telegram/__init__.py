@@ -61,7 +61,8 @@ from chatcore_telegram.menu import fit_menu
 
 NAME = "tg"
 MAX_FILE_BYTES = 20 * 1024 * 1024
-MAX_VOICE_BYTES = 2 * 1024 * 1024
+MAX_VOICE_BYTES = 8 * 1024 * 1024
+_VOICE_FILENAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\.mp3")
 _COMMAND_NAME = re.compile(r"^[a-z0-9_]{1,32}$")
 logger = logging.getLogger(__name__)
 logging.getLogger("telegram").setLevel(logging.WARNING)
@@ -580,7 +581,12 @@ class TelegramPlatform(VoicePlatform):
         caption: str | None = None,
         thread_id: str | None = None,
     ) -> MessageRef:
-        if filename != "pronunciation.mp3" or not isinstance(data, bytes) or not data:
+        if (
+            not isinstance(filename, str)
+            or not _VOICE_FILENAME.fullmatch(filename)
+            or not isinstance(data, bytes)
+            or not data
+        ):
             raise PlatformError("InvalidVoice")
         if len(data) > MAX_VOICE_BYTES:
             raise PlatformError("VoiceTooLarge")
