@@ -274,3 +274,24 @@ async def test_report_forces_fresh_usage_read():
     fetch.error = "http_403"
     report = await svc.report()
     assert report.provider is None and report.provider_error == "http_403"
+
+
+async def test_cantonese_always_uses_eleven_v4_with_yue_while_others_keep_configured_model():
+    svc, seen = service(configured(VOICE_TTS_VOICES="English=voice_en,Cantonese=voice_yue"))
+    assert svc.languages == ("English", "Cantonese")
+    await svc.narrate("今日有三單新聞。", "Cantonese", user_key="u")
+    await svc.narrate("Three stories today.", "English", user_key="u")
+    cantonese, english = (json.loads(request.read()) for request in seen)
+    assert seen[0].url.path == "/v1/text-to-speech/voice_yue"
+    assert cantonese == {
+        "text": "今日有三單新聞。",
+        "model_id": "eleven_v4",
+        "language_code": "yue",
+    }
+    assert english == {"text": "Three stories today.", "model_id": "eleven_multilingual_v2"}
+
+
+def test_cantonese_model_is_pinned_even_when_another_model_is_configured():
+    settings = configured(VOICE_TTS_MODEL="eleven_flash_v2_5")
+    assert settings.model_for("Cantonese") == "eleven_v4"
+    assert settings.model_for("Japanese") == "eleven_flash_v2_5"

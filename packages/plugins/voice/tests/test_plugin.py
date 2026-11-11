@@ -3,6 +3,7 @@ from chatcore.access import AccessPolicy
 from chatcore.app import BotApp
 from chatcore.events import ChatRef, User, UserRef
 from chatcore.plugin import CommandContext
+from chatcore.skill_router import SkillRouter
 from chatcore.testing import FakePlatform, memory_stores
 from chatcore.tools.registry import ToolContext, ToolRegistry, TurnState
 from chatcore_voice import VoicePlugin, VoiceSettings
@@ -199,3 +200,20 @@ async def test_plugin_close_closes_owned_client():
     client = plugin.narration._client
     await plugin.aclose()
     assert client.is_closed
+
+
+async def test_cantonese_language_and_read_aloud_phrases_route_by_keyword():
+    plugin, platform = make(VOICE_TTS_VOICES="English=voice_en,Cantonese=voice_yue")
+    assert plugin.tools()[0].parameters["properties"]["language"]["enum"] == [
+        "English",
+        "Cantonese",
+    ]
+    app = BotApp(
+        platform, stores=memory_stores(), access=plugin.access, plugins=[plugin], bot_name="t"
+    )
+    router = SkillRouter(
+        app.skills, None, mode="keyword", timeout_ms=100, threshold=0.5, margin=0.05
+    )
+    for phrase in ("將呢段新聞讀出嚟", "可唔可以念出嚟", "唸出嚟俾我聽", "read that out loud"):
+        result = await router.route(phrase)
+        assert "read_aloud" in [hit.skill for hit in result.hits], phrase
