@@ -70,7 +70,7 @@ def render_fact(row: Mapping[str, Any], names: Mapping[str, str]) -> str:
     creator = row.get("created_by")
     source = row.get("source")
     if subject:
-        attribution = f"about {safe_name(names.get(str(subject)))}"
+        attribution = f"about {safe_name(names.get(str(subject)))} ({subject})"
     elif source == "auto":
         attribution = f"from {safe_name(names.get(str(creator)))}"
     else:

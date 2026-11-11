@@ -156,7 +156,13 @@ async def test_bare_tag_reply_to_human_uses_wrapped_target_not_taggers_previous_
 
     assert len(provider.calls) == 1
     request = provider.calls[0]["messages"][-1].text
-    assert request == "Please respond to the message I'm replying to (quoted above)."
+    closing = request.find("</untrusted-")
+    closing_end = request.find(">", closing) + 1
+    assert (
+        request[closing_end:] == "\nPlease respond to the message I'm replying to (quoted above)."
+    )
+    assert request.count("<untrusted-") == 1
+    assert request.startswith("<untrusted-") and "Message from Alice" in request
     assert "Alice's own earlier question" not in request
     assert "What can I help with?" not in platform.texts
     reply_block = next(
@@ -180,9 +186,14 @@ async def test_bare_tag_reply_to_bot_continues_from_wrapped_bot_message():
     await app.handle(tagged_reply)
 
     assert len(provider.calls) == 1
-    assert provider.calls[0]["messages"][-1].text == (
-        "Please continue from your earlier message that I'm replying to."
+    final = provider.calls[0]["messages"][-1].text
+    assert final.startswith("<untrusted-") and "Message from Alice" in final
+    closing = final.find("</untrusted-")
+    closing_end = final.find(">", closing) + 1
+    assert (
+        final[closing_end:] == "\nPlease continue from your earlier message that I'm replying to."
     )
+    assert final.count("<untrusted-") == 1
     reply_block = next(
         item.text
         for item in provider.calls[0]["messages"]

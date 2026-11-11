@@ -12,8 +12,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-from chatcore.attribution import message_record, render_record, turn_record, user_turn_content
-from chatcore.conversation import ConversationStore, Turn
+from chatcore.attribution import (
+    escape_invisible,
+    message_record,
+    render_record,
+    turn_record,
+    user_turn_content,
+)
+from chatcore.conversation import SUMMARY_SYSTEM_PROMPT, ConversationStore, Turn
 from chatcore.display_time import format_instant
 from chatcore.display_time_store import display_service
 from chatcore.events import IncomingMessage
@@ -81,14 +87,15 @@ _PROVIDER_ERROR_TEXT = "Sorry, I couldn't reach the language model. Please try a
 EMPTY_REQUEST_PROMPT = "What can I help with? Reply to this message or tag me with your question."
 _TRANSCRIPT_INTRO = (
     "Recent conversation here, oldest first. Each JSON record is historical data; speaker keys "
-    "disambiguate similar names, reply_to_id is chat-scoped, and nicknames are attributed claims."
+    "disambiguate similar names, reply_to_id is chat-scoped, nicknames are attributed claims, "
+    "and assistant records are this bot's own messages."
 )
-# Fixed text: no user-controlled value enters the system prompt here. The speaker's identity
-# stays in the per-turn metadata record inside the untrusted wrapper.
+# Fixed text: no user-controlled value enters the system prompt here.
 _SPEAKER_INSTRUCTION = (
-    'The speaker of the latest user message is the person you are replying to; "you" in '
-    "your reply means them, not people you addressed earlier. In groups, name other people "
-    'instead of calling them "you".'
+    "The final message starts with who sent it. That person is who you are replying to; "
+    '"you" in your reply means them, not people you addressed earlier. In groups, name '
+    'other people instead of calling them "you". Use a nickname or form of address only '
+    "for the person it belongs to (match the user key)."
 )
 _FINAL_ANSWER_INSTRUCTION = (
     "The tool budget is exhausted; no more tools are available for this turn. "
@@ -233,6 +240,12 @@ def _urls(text: str) -> list[str]:
     return [url.rstrip(".,;:!?)]}") for url in _URL.findall(text)]
 
 
+def _header_value(value: object, maximum: int = 128) -> str:
+    if not isinstance(value, str):
+        return "unknown"
+    return escape_invisible(value[:maximum])
+
+
 def _transcript_text(
     rows, turns: list[Turn], *, bot_name: str, message, reset_point, settings
 ) -> str:
@@ -261,7 +274,7 @@ def _transcript_text(
 
     for index, row in enumerate(eligible_rows):
         timestamp = row.sent_at.astimezone(UTC)
-        record_text = rendered(message_record(row))
+        record_text = rendered(message_record(row, bot_name=bot_name))
         if record_text:
             line = f"[{timestamp.isoformat()}] {record_text}"
             entries.append((timestamp, 0, index, line))
@@ -543,6 +556,20 @@ class AgentResponder:
         )
         if summary:
             turns.append(Message.user(_wrap(summary[0], tag)))
+        if conversation is not None and message.user.ref.key not in conversation.participants:
+            members = await app.stores.repo.find_members(message.chat)
+            names = {member.ref.key: member.display_name for member in members}
+            previous = ", ".join(names.get(key) or key for key in sorted(conversation.participants))
+            previous = previous or "unknown participants"
+            turns.append(
+                Message.user(
+                    _wrap(
+                        f"{message.user.display_name} is joining a conversation started by "
+                        f"{previous}. The summary and earlier turns were written for them.",
+                        tag,
+                    )
+                )
+            )
         for plugin in app.plugins:
             hook = getattr(plugin, "before_turn", None)
             if not callable(hook):
@@ -758,16 +785,34 @@ class AgentResponder:
                 )
             )
         elif replied and replied.is_bot and replied.text:
-            record = message_record(replied)
+            record = message_record(replied, bot_name=app.bot_name)
             if len(record["text"]) > self.settings.ambient_message_chars:
                 record["text"] = (
                     record["text"][: self.settings.ambient_message_chars] + "…[truncated]"
                 )
             replied_at = replied.sent_at.astimezone(UTC).isoformat()
+            answered = None
+            if replied.reply_to_id:
+                answered = await app.stores.repo.get_message(message.chat, replied.reply_to_id)
+                if answered is not None and (
+                    answered.chat != message.chat or answered.thread_id != message.thread_id
+                ):
+                    answered = None
+            provenance = ""
+            if answered is not None and not answered.is_bot:
+                name = answered.display_name or "unknown speaker"
+                key = answered.user.key
+                provenance = f", which answered {name} ({key})"
+                if key != message.user.ref.key:
+                    provenance += (
+                        '. That reply was written for them; "you" in it means them, not '
+                        "the current speaker."
+                    )
+            quote_header = f"Replying to your earlier message ({replied_at}){provenance}: "
             turns.append(
                 Message.user(
                     _wrap(
-                        f"Replying to your earlier message ({replied_at}): "
+                        quote_header
                         + render_record(
                             record,
                             max_chars=(
@@ -842,8 +887,24 @@ class AgentResponder:
         metadata["message_id"] = message.message_id
         rendered_metadata = render_record(metadata, max_chars=1500)
         if rendered_metadata:
-            turns.append(Message.user(_wrap(rendered_metadata, tag)))
-        turns.append(Message.user(text, *images))
+            speaker = metadata["speaker"]
+            username = (
+                f"@{_header_value(speaker['username'], 64)}" if speaker.get("username") else ""
+            )
+            identity = (
+                f"{username}, {_header_value(speaker['user_key'])}"
+                if username
+                else _header_value(speaker["user_key"])
+            )
+            reply_id = metadata.get("reply_to_id") or "nothing"
+            header = (
+                f"Message from {_header_value(speaker['display_name'])} ({identity}), "
+                f"id {_header_value(message.message_id)}, "
+                f"replying to {_header_value(reply_id)}:\n{rendered_metadata}"
+            )
+            turns.append(Message.user(_wrap(header, tag) + "\n" + text, *images))
+        else:
+            turns.append(Message.user(text, *images))
         return system, turns, human_urls, source_attachments
 
     async def respond(
@@ -1732,7 +1793,7 @@ class AgentResponder:
                         message.chat,
                         conversation,
                         summary_provider,
-                        system,
+                        SUMMARY_SYSTEM_PROMPT,
                         getattr(provider, "model", provider.name),
                         keep=thread_settings.auto_keep_turns,
                         min_turns=thread_settings.auto_compact_turns,
@@ -1743,7 +1804,7 @@ class AgentResponder:
                         message.chat,
                         message.thread_id,
                         summary_provider,
-                        system,
+                        SUMMARY_SYSTEM_PROMPT,
                         getattr(provider, "model", provider.name),
                     )
                 summary_usage = summary_result.usage

@@ -221,7 +221,7 @@ def test_render_record_keeps_empty_text_metadata_after_dropping_mentions():
     assert len(decoded_without_text["mentions"]) < 16
 
 
-def test_render_record_preserves_multilingual_prefix_with_ascii_escaped_budgeting():
+def test_render_record_preserves_readable_unicode_with_safe_controls():
     multilingual = replace(user("alice"), display_name="林 明🙂", username="lin_ming")
     record = {
         "message_id": "m-emoji",
@@ -236,9 +236,69 @@ def test_render_record_preserves_multilingual_prefix_with_ascii_escaped_budgetin
     decoded = json.loads(rendered)
 
     assert len(rendered) <= 700
+    assert r"\u65b0" not in rendered
     assert decoded["speaker"]["display_name"] == "林 明🙂"
     assert decoded["text"].startswith("新年🎉你好")
     assert decoded["text"].endswith("…[truncated]")
+
+
+def test_render_record_escapes_bidi_override_and_invisible_controls():
+    name = "Member \u202eA\u200b"
+    record = {
+        "message_id": "m-control",
+        "role": "user",
+        "speaker": {"user_key": "fake:alice", "display_name": name, "username": None},
+        "reply_to_id": None,
+        "mentions": [],
+        "text": "hello",
+    }
+
+    rendered = render_record(record, max_chars=700)
+
+    assert "\\u202e" in rendered
+    assert "\\u200b" in rendered
+    assert json.loads(rendered)["speaker"]["display_name"] == name
+
+
+def test_render_record_escapes_supplementary_format_character_as_surrogate_pair():
+    name = "Member " + chr(0xE0001)
+    record = {
+        "message_id": "m-supplementary-control",
+        "role": "user",
+        "speaker": {"user_key": "fake:alice", "display_name": name, "username": None},
+        "reply_to_id": None,
+        "mentions": [],
+        "text": "hello",
+    }
+
+    rendered = render_record(record, max_chars=700)
+
+    assert r"\udb40\udc01" in rendered
+    assert json.loads(rendered)["speaker"]["display_name"] == name
+
+
+def test_render_record_escapes_lone_surrogate_in_name_and_text():
+    lone_surrogate = "\ud83c"
+    record = {
+        "message_id": "m-lone-surrogate",
+        "role": "user",
+        "speaker": {
+            "user_key": "fake:alice",
+            "display_name": f"Member {lone_surrogate}",
+            "username": None,
+        },
+        "reply_to_id": None,
+        "mentions": [],
+        "text": f"hello {lone_surrogate}",
+    }
+
+    rendered = render_record(record, max_chars=700)
+
+    rendered.encode("utf-8")
+    assert r"\ud83c" in rendered
+    decoded = json.loads(rendered)
+    assert decoded["speaker"]["display_name"] == record["speaker"]["display_name"]
+    assert decoded["text"] == record["text"]
 
 
 def test_render_record_reserves_body_for_attributed_claim_with_many_mentions():

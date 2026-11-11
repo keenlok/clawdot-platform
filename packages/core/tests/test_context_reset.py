@@ -334,7 +334,7 @@ async def test_ambient_lines_are_capped_and_newest_are_retained():
         message("question"), "question", app, ConversationStore(), "tag"
     )
     ambient = next(turn.text for turn in turns if "x" * 100 in turn.text)
-    assert "x" * 1500 + "\\u2026[truncated]" in ambient
+    assert "x" * 1500 + "…[truncated]" in ambient
     assert "x" * 1501 not in ambient
 
     stores = memory_stores()

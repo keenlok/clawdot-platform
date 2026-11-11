@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Group prompts attach the current speaker to the message being answered, identify whose bot
+  reply is quoted, and mark when someone joins another member's conversation. Conversation
+  summaries now use third-person internal notes, and nickname memories include the subject's
+  user key. Historical records render Unicode directly while escaping invisible controls.
+  Downstream request snapshots must be refreshed.
+
 ## [0.9.0] - 2026-11-11
 
 ### Added
