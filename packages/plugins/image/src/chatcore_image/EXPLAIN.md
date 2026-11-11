@@ -41,7 +41,7 @@ under the operator's account terms and settings.
 
 ### Activation gate
 Activation stays blocked until the qualification in
-[`docs/plans/2026-11-11-image-generation.md`](../../../../../docs/plans/2026-11-11-image-generation.md)
+[`docs/plans/2026-11-11-image-generation.md`](https://github.com/keenlok/clawdot-platform/blob/main/docs/plans/2026-11-11-image-generation.md)
 passes. It confirms OpenAI model IDs, supported sizes, quality values and pricing; tests each size;
 records cost and latency; checks refusal handling; and keeps configured caps within the project
 budget.

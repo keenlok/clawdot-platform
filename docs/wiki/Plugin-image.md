@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Image generation
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:6d5e4e959ac358026a314f7f26bab97bf5d0119572a95594370ff3386e9e799c
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:dc843134d5e37e928f863856ceff796f17eb786feb8d37eefc7337e6212f74ce
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -41,7 +41,7 @@ under the operator's account terms and settings.
 
 ### Activation gate
 Activation stays blocked until the qualification in
-[`docs/plans/2026-11-11-image-generation.md`](../../../../../docs/plans/2026-11-11-image-generation.md)
+[`docs/plans/2026-11-11-image-generation.md`](https://github.com/keenlok/clawdot-platform/blob/main/docs/plans/2026-11-11-image-generation.md)
 passes. It confirms OpenAI model IDs, supported sizes, quality values and pricing; tests each size;
 records cost and latency; checks refusal handling; and keeps configured caps within the project
 budget.
