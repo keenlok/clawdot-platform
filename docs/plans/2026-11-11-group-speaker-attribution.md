@@ -1,6 +1,7 @@
 # Group speaker attribution: who the bot is answering
 
-Status: Approved by the owner 2026-11-11 (all of A–F, including F; B2 as written).
+Status: Approved by the owner 2026-11-11 (all of A–F, including F; B2 as written). Implemented in PR #36 and released in v0.10.0;
+downstream rollout tracked privately. The live eval wasn't run before release.
 Implemented in PR #36 (Codex executed, Codex and Claude reviewed); not yet released. The live
 eval baseline and results are still to be recorded. Predecessor:
 [Expense speaker context](2026-11-10-expense-speaker-context.md) (v0.8.0, PR #30), whose
