@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-12
+
 ### Added
 
 - Image references enable photo edits through `generate_image(reference=...)` when
@@ -14,6 +16,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Core `TurnState` records the sender key for each current or replied-to image attachment.
+
+## [0.11.0] - 2026-11-12
+
+### Added
+
+- Optional `chatcore-cards` plugin (disabled by default; configure `CARDS_*` settings) sends
+  validated summary cards through the local renderer. Expense balance and trip summary card tools
+  are available only when an app supplies a card renderer client.
+- Core `chatcore.cards` validates and renders structured cards through the local renderer's `/card`
+  endpoint, with `CARD_*` page, byte and timeout settings. `PhotoAlbumPlatform` adds Telegram
+  `send_photos`. `Skill.max_output_tokens` and `AgentSettings.max_tokens_ceiling` allow a skill to
+  raise per-step output limits within the configured ceiling.
+
+### Changed
+
+- Telegram renders blockquotes as native entities and aligns narrow Markdown tables. Direct photo
+  uploads now require readable dimensions within Telegram's size and aspect-ratio limits.
 
 ## [0.10.0] - 2026-11-12
 
@@ -331,7 +350,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/keenlok/clawdot-platform/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/keenlok/clawdot-platform/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/keenlok/clawdot-platform/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/keenlok/clawdot-platform/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/keenlok/clawdot-platform/compare/v0.8.1...v0.8.2

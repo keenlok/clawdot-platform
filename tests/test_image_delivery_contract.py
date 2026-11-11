@@ -23,7 +23,9 @@ async def test_maximum_image_is_sent_through_telegram_photo_method():
         platform,
         settings=ImageSettings(IMAGE_ENABLED=True, IMAGE_OPENAI_API_KEY=SecretStr("fake")),
     )
-    png = b"\x89PNG\r\n\x1a\n" + b"x" * (MAX_IMAGE_BYTES - 8)
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x03\xe8\x00\x00\x03\xe8" + b"x" * (
+        MAX_IMAGE_BYTES - 24
+    )
 
     async def generate(*args, **kwargs):
         return png
@@ -63,7 +65,9 @@ async def test_edit_is_sent_through_telegram_photo_method():
             IMAGE_OPENAI_API_KEY=SecretStr("fake"),
         ),
     )
-    plugin.service.generate = AsyncMock(return_value=b"\x89PNG\r\n\x1a\nimage")
+    # A PNG header with 1000x1000 IHDR dimensions, which Telegram send_photo validates.
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x03\xe8\x00\x00\x03\xe8" + b"image"
+    plugin.service.generate = AsyncMock(return_value=png)
     attachment = Attachment("photo", AttachmentKind.PHOTO)
     context = ToolContext(
         ChatRef("tg", "group"),

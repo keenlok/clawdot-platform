@@ -12,6 +12,7 @@ members = [
     "chatcore",
     "chatcore-browse",
     "chatcore-browser-renderer",
+    "chatcore-cards",
     "chatcore-console",
     "chatcore-expenses",
     "chatcore-extensions",
@@ -636,6 +637,17 @@ requires-dist = [
 provides-extras = ["test"]
 
 [[package]]
+name = "chatcore-cards"
+version = "0.1.0"
+source = { editable = "packages/plugins/cards" }
+dependencies = [
+    { name = "chatcore" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "chatcore", editable = "packages/core" }]
+
+[[package]]
 name = "chatcore-console"
 version = "0.1.0"
 source = { editable = "packages/adapters/console" }
@@ -942,7 +954,7 @@ dev = [{ name = "respx", specifier = ">=0.22" }]
 
 [[package]]
 name = "clawdot-platform-workspace"
-version = "0.10.0"
+version = "0.12.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

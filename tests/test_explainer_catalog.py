@@ -9,6 +9,7 @@ from chatcore.explainers import ExplainerCatalog, parse_explainer
 
 PACKAGES = (
     "browse",
+    "cards",
     "expenses",
     "extensions",
     "google",
@@ -59,6 +60,6 @@ def test_all_builtin_topic_aliases_are_unique():
             )
         )
     catalog = ExplainerCatalog(documents)
-    assert len(catalog.documents()) == 15
+    assert len(catalog.documents()) == 16
     assert catalog.resolve("trips").spec.topic == "expenses"
     assert catalog.resolve("google_docs").spec.topic == "google"

@@ -4,6 +4,7 @@
 Generated from maintained plugin documentation.
 
 - [Rendered pages](https://github.com/keenlok/clawdot-platform/wiki/Plugin-browse) — A separate guarded browser renderer reads supported JavaScript pages.
+- [Summary cards](https://github.com/keenlok/clawdot-platform/wiki/Plugin-cards) — Turns structured answers into fixed-template images and sends them to the chat.
 - [Expenses and trips](https://github.com/keenlok/clawdot-platform/wiki/Plugin-expenses) — Stored shares and ledger calculations keep accounting separate from chat memory.
 - [Reviewed sandboxed extensions](https://github.com/keenlok/clawdot-platform/wiki/Plugin-extensions) — Requested JSON tools require review and activation before constrained execution.
 - [How the bot works](https://github.com/keenlok/clawdot-platform/wiki/How-the-bot-works) — The language model, tools, application code and stores each have separate jobs.

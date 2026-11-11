@@ -1,6 +1,6 @@
 [project]
 name = "clawdot-platform-workspace"
-version = "0.10.0"
+version = "0.12.0"
 description = "Workspace root for the chatcore framework and the apps built on it"
 license = "Apache-2.0"
 requires-python = ">=3.12"

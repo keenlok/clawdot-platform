@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -14,6 +16,67 @@ from telegram import MessageEntity
 _PARSER = MarkdownIt("commonmark", {"html": False}).enable(["strikethrough", "table"])
 _INLINE_STYLES = {"strong": "bold", "em": "italic", "s": "strikethrough", "link": "text_link"}
 _HTTP_URL = TypeAdapter(AnyHttpUrl)
+_PRE_TABLE_WIDTH = 36
+_NUMBER = re.compile(r"^[-+−]?[$€£¥]?\s?\d[\d,]*(\.\d+)?\s?%?(\s?[A-Z]{3})?$")
+
+
+def _display_width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
+
+
+def _table_text(rows: list[list[str]]) -> str | None:
+    if not rows or not rows[0]:
+        return None
+    columns = len(rows[0])
+    if any(len(row) != columns for row in rows):
+        return None
+    widths = [max(_display_width(row[index]) for row in rows) for index in range(columns)]
+    if max(sum(widths) + 2 * (columns - 1), 0) > _PRE_TABLE_WIDTH:
+        return None
+    aligns = [
+        bool(rows[1:]) and all(not row[i] or _NUMBER.fullmatch(row[i]) for row in rows[1:])
+        for i in range(columns)
+    ]
+
+    def pad(value: str, width: int, right: bool) -> str:
+        gap = width - _display_width(value)
+        return " " * gap + value if right else value + " " * gap
+
+    rendered = [
+        "  ".join(pad(cell, widths[i], aligns[i]) for i, cell in enumerate(row)) for row in rows
+    ]
+    rendered.insert(1, "  ".join("─" * width for width in widths))
+    return "\n".join(rendered)
+
+
+def _plain_inline(tokens: list[Token] | None) -> str:
+    return "".join(
+        "\n"
+        if token.type in {"softbreak", "hardbreak"}
+        else _plain_inline(token.children)
+        if token.type == "image"
+        else token.content
+        for token in (tokens or [])
+    )
+
+
+def _table_rows(tokens: list[Token], start: int, end: int) -> list[list[str]]:
+    rows: list[list[str]] = []
+    row: list[str] | None = None
+    cell_open = False
+    for token in tokens[start + 1 : end]:
+        if token.type == "tr_open":
+            row = []
+        elif token.type in {"td_open", "th_open"}:
+            cell_open = True
+        elif token.type == "inline" and row is not None and cell_open:
+            row.append(_plain_inline(token.children))
+        elif token.type in {"td_close", "th_close"}:
+            cell_open = False
+        elif token.type == "tr_close" and row is not None:
+            rows.append(row)
+            row = None
+    return rows
 
 
 def _link_url(value: str | None) -> str | None:
@@ -52,6 +115,8 @@ class _Writer:
     marks: list[tuple[str | None, int, str | None]] = field(default_factory=list)
     length: int = 0
     trailing_newlines: int = 0
+    quote_start: int | None = None
+    quote_depth: int = 0
 
     def append(self, text: str) -> None:
         if not text:
@@ -97,7 +162,7 @@ def _inline(writer: _Writer, tokens: list[Token], quote_depth: int) -> None:
         elif stem in _INLINE_STYLES and ending == "close":
             writer.close()
         elif token.type in ("softbreak", "hardbreak"):
-            writer.append("\n" + "› " * quote_depth)
+            writer.append("\n")
         elif token.type == "code_inline":
             writer.code(token.content)
         elif token.type == "image":
@@ -141,8 +206,23 @@ def render_markdown(source: str) -> FormattedText:
     lists: list[int | None] = []
     quote_depth = 0
     cell = 0
-    for token in _PARSER.parse(source):
+    tokens = _PARSER.parse(source)
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
         kind = token.type
+        if kind == "table_open":
+            end = next(
+                (pos for pos in range(index + 1, len(tokens)) if tokens[pos].type == "table_close"),
+                index,
+            )
+            table = _table_text(_table_rows(tokens, index, end))
+            if table is not None:
+                writer.newline(2)
+                writer.code(table, block=True)
+                writer.newline(2)
+                index = end + 1
+                continue
         if kind == "inline":
             _inline(writer, token.children or [], quote_depth)
         elif kind == "heading_open":
@@ -153,7 +233,6 @@ def render_markdown(source: str) -> FormattedText:
             writer.newline(2)
         elif kind == "paragraph_open" and quote_depth:
             writer.newline()
-            writer.append("› " * quote_depth)
         elif kind == "paragraph_close" and not token.hidden:
             writer.newline(2)
         elif kind in ("bullet_list_open", "ordered_list_open"):
@@ -172,9 +251,22 @@ def render_markdown(source: str) -> FormattedText:
             writer.newline(1 if lists else 2)
         elif kind == "blockquote_open":
             writer.newline(2)
+            if quote_depth == 0:
+                writer.quote_start = writer.length
             quote_depth += 1
         elif kind == "blockquote_close":
             quote_depth -= 1
+            if (
+                quote_depth == 0
+                and writer.quote_start is not None
+                and writer.length > writer.quote_start
+            ):
+                writer.entities.append(
+                    MessageEntity(
+                        "blockquote", writer.quote_start, writer.length - writer.quote_start
+                    )
+                )
+                writer.quote_start = None
             writer.newline(2)
         elif kind in ("fence", "code_block"):
             writer.newline(2)
@@ -200,6 +292,7 @@ def render_markdown(source: str) -> FormattedText:
             writer.close()
         elif kind == "tr_close":
             writer.newline()
+        index += 1
     text = "".join(writer.parts).rstrip("\n")
     if not text:
         return FormattedText(source)

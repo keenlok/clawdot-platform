@@ -25,7 +25,7 @@ from chatcore.events import (
     User,
     UserRef,
 )
-from chatcore.files import PhotoPlatform, VoicePlatform
+from chatcore.files import PhotoAlbumPlatform, PhotoPlatform, VoicePlatform
 from chatcore.images import error_label
 from chatcore.platform import Capabilities, EventHandler, PlatformError
 from chatcore.polls import PollLimits, PollResult, SentPoll
@@ -39,6 +39,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputFile,
+    InputMediaPhoto,
     LinkPreviewOptions,
     ReplyParameters,
     Update,
@@ -71,6 +72,39 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _image_size(data: bytes) -> tuple[int, int] | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24 and data[12:16] == b"IHDR":
+        width = int.from_bytes(data[16:20], "big")
+        height = int.from_bytes(data[20:24], "big")
+        return (width, height) if width and height else None
+    if not data.startswith(b"\xff\xd8"):
+        return None
+    index = 2
+    while index + 4 <= len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        while index < len(data) and data[index] == 0xFF:
+            index += 1
+        if index >= len(data):
+            return None
+        marker = data[index]
+        index += 1
+        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(data):
+            return None
+        length = int.from_bytes(data[index : index + 2], "big")
+        if length < 2 or index + length > len(data):
+            return None
+        if marker in {0xC0, 0xC2} and length >= 7:
+            height = int.from_bytes(data[index + 3 : index + 5], "big")
+            width = int.from_bytes(data[index + 5 : index + 7], "big")
+            return (width, height) if width and height else None
+        index += length
+    return None
+
+
 class TelegramSettings(BaseSettings):
     """Keep the bot token wrapped so accidental settings output redacts it."""
 
@@ -87,7 +121,7 @@ class TelegramSettings(BaseSettings):
     )
 
 
-class TelegramPlatform(VoicePlatform, PhotoPlatform):
+class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
     """Bridge Telegram updates and methods to the platform independent core."""
 
     name = NAME
@@ -637,6 +671,9 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform):
             raise PlatformError("InvalidPhoto")
         if len(data) > MAX_PHOTO_BYTES:
             raise PlatformError("PhotoTooLarge")
+        dimensions = _image_size(data)
+        if dimensions is None or sum(dimensions) > 10_000 or max(dimensions) / min(dimensions) > 20:
+            raise PlatformError("InvalidPhoto")
         if caption is not None and utf16_length(caption) > 1024:
             raise PlatformError("CaptionTooLong")
         msg = await self._send_with_retry(
@@ -648,6 +685,44 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform):
             message_thread_id=int(thread_id) if thread_id else None,
         )
         return MessageRef(chat, str(msg.message_id), thread_id)
+
+    async def send_photos(
+        self,
+        chat: ChatRef,
+        photos: Sequence[tuple[str, bytes]],
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef:
+        if not 2 <= len(photos) <= 10:
+            raise PlatformError("InvalidPhoto")
+        media = []
+        for index, (filename, data) in enumerate(photos):
+            if (
+                not isinstance(filename, str)
+                or not _PHOTO_FILENAME.fullmatch(filename)
+                or not isinstance(data, bytes)
+                or not data
+                or not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"\xff\xd8\xff"))
+            ):
+                raise PlatformError("InvalidPhoto")
+            if len(data) > MAX_PHOTO_BYTES:
+                raise PlatformError("PhotoTooLarge")
+            size = _image_size(data)
+            if size is None or sum(size) > 10_000 or max(size) / min(size) > 20:
+                raise PlatformError("InvalidPhoto")
+            if index == 0 and caption is not None and utf16_length(caption) > 1024:
+                raise PlatformError("CaptionTooLong")
+            media.append(
+                InputMediaPhoto(data, filename=filename, caption=caption if index == 0 else None)
+            )
+        messages = await self._send_with_retry(
+            self._application.bot.send_media_group,
+            chat_id=chat.id,
+            media=media,
+            message_thread_id=int(thread_id) if thread_id else None,
+        )
+        return MessageRef(chat, str(messages[0].message_id), thread_id)
 
     async def stop_poll(self, message: MessageRef) -> PollResult:
         poll = await self._safe(

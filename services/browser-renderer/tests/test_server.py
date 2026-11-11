@@ -27,6 +27,11 @@ class FakeEngine:
         self.urls.append(url)
         return RenderResult("ok", final_url=url, title="Title", text="Text")
 
+    async def render_card(self, html, theme):
+        from chatcore_browser_renderer.engine import CardRenderResult
+
+        return CardRenderResult("ok", [b"\x89PNG\r\n\x1a\nimage"])
+
 
 async def dispatch(
     app, method: str, path: str, body: bytes = b"", content_type: str = "application/json"
@@ -157,7 +162,58 @@ def test_settings_have_no_secrets_and_no_override_fields() -> None:
         "RENDER_MAX_RENDERS_PER_BROWSER",
         "BROWSER_NO_SANDBOX",
         "NET_GUARD_EXTRA_BLOCKED",
+        "CARD_MAX_HTML_BYTES",
+        "CARD_TIMEOUT_S",
+        "CARD_MAX_PAGES",
+        "CARD_PAGE_CSS_PX",
+        "CARD_MAX_PNG_BYTES",
     }
+
+
+async def test_card_endpoint_validates_and_returns_base64_pages():
+    response = await dispatch(
+        create_app(engine=FakeEngine()),
+        "POST",
+        "/card",
+        b'{"html":"<p>ok</p>","theme":"dark","width":400}',
+    )
+    assert response.status == 200
+    assert json.loads(response.body)["status"] == "ok"
+
+
+async def test_card_endpoint_rejects_extra_keys():
+    response = await dispatch(
+        create_app(engine=FakeEngine()),
+        "POST",
+        "/card",
+        b'{"html":"x","theme":"light","width":400,"extra":1}',
+    )
+    assert json.loads(response.body) == {"status": "invalid"}
+
+
+async def test_card_engine_exception_maps_to_error_and_logs_fixed_status(caplog):
+    class BrokenEngine(FakeEngine):
+        async def render_card(self, _html, _theme):
+            raise RuntimeError("private page text")
+
+    with caplog.at_level("INFO", logger="chatcore_browser_renderer"):
+        response = await dispatch(
+            create_app(engine=BrokenEngine()),
+            "POST",
+            "/card",
+            b'{"html":"<p>ok</p>","theme":"light","width":400}',
+        )
+    assert json.loads(response.body) == {"status": "error"}
+    assert "card status=error" in caplog.text
+    assert "private page text" not in caplog.text
+
+
+def test_card_page_css_pixel_cap_is_telegram_safe():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        RendererSettings(CARD_PAGE_CSS_PX=3601)
 
 
 def test_service_settings_ignore_hostile_override_environment(monkeypatch) -> None:

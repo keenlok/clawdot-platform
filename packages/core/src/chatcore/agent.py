@@ -219,6 +219,7 @@ class AgentSettings:
     ambient_message_chars: int = 1500
     ambient_total_chars: int = 6000
     skills: SkillSettings = SkillSettings()
+    max_tokens_ceiling: int = 12288
 
 
 def _wrap(text: str, tag: str) -> str:
@@ -1212,7 +1213,11 @@ class AgentResponder:
                         else system,
                         "tools": request_tools,
                         "tool_choice": "none" if final_answer else "auto",
-                        "max_tokens": self.settings.max_tokens,
+                        "max_tokens": skill_turn.output_tokens(
+                            self.settings.max_tokens, self.settings.max_tokens_ceiling
+                        )
+                        if on_mode
+                        else self.settings.max_tokens,
                         "session_key": message.chat.key
                         + (":" + message.thread_id if message.thread_id else ""),
                     }
@@ -1267,7 +1272,12 @@ class AgentResponder:
                                         system=system + "\n\n" + _TRUNCATED_TOOL_CALL_INSTRUCTION,
                                         tools=request_tools,
                                         tool_choice="auto",
-                                        max_tokens=self.settings.max_tokens,
+                                        max_tokens=skill_turn.output_tokens(
+                                            self.settings.max_tokens,
+                                            self.settings.max_tokens_ceiling,
+                                        )
+                                        if on_mode
+                                        else self.settings.max_tokens,
                                         session_key=message.chat.key
                                         + (":" + message.thread_id if message.thread_id else ""),
                                     )
@@ -1402,7 +1412,11 @@ class AgentResponder:
                                     else app.tools.specs(is_admin=ctx.is_admin)
                                 ),
                                 tool_choice="none",
-                                max_tokens=self.settings.max_tokens,
+                                max_tokens=skill_turn.output_tokens(
+                                    self.settings.max_tokens, self.settings.max_tokens_ceiling
+                                )
+                                if on_mode
+                                else self.settings.max_tokens,
                                 session_key=message.chat.key
                                 + (":" + message.thread_id if message.thread_id else ""),
                             )
@@ -1442,7 +1456,12 @@ class AgentResponder:
                                                 + _NO_TOOLS_FINAL_INSTRUCTION
                                             ),
                                             tools=(),
-                                            max_tokens=self.settings.max_tokens,
+                                            max_tokens=skill_turn.output_tokens(
+                                                self.settings.max_tokens,
+                                                self.settings.max_tokens_ceiling,
+                                            )
+                                            if on_mode
+                                            else self.settings.max_tokens,
                                             session_key=(
                                                 f"{message.chat.key}:{message.thread_id}"
                                                 if message.thread_id

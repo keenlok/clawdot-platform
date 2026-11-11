@@ -156,4 +156,6 @@ Fix round 1 resolved everything except two service-test gaps, which fix round 2 
 - `_context()` keeps its return shape and records owners on `tool_ctx.turn`.
 - The new photo-phrase keywords also route when editing is off, where they generate from a description as before.
 
+**Release:** [PR #39](https://github.com/keenlok/clawdot-platform/pull/39), released as v0.12.0 after merging v0.10.0 and v0.11.0 from main. v0.11.0's Telegram photo dimension check required a real IHDR header in the edit contract test.
+
 **Not run:** a live OpenAI edit (that's the activation gate). Locally, the 92 release-control Postgres tests errored because the Mac's shared memory was exhausted; CI covers them.
