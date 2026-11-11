@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Voice narration
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/voice/src/chatcore_voice/EXPLAIN.md) · sha256:84e02cb32e8d98133b99fc3c3e98167b6049118baf362d873a94884be7eedbcb
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/voice/src/chatcore_voice/EXPLAIN.md) · sha256:515810dd2c6051fac34acbf46efa64a4bacdaf1759fe03a985a377e15290f136
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -14,7 +14,8 @@ ElevenLabs key and at least one voice.
 ## Workflow
 The read-aloud skill offers the narration tool together with the general web tools, so a request
 such as "narrate today's news" can gather sources, write a short summary and narrate it. The tool
-takes the exact passage, its language and a short caption title. One narration is attempted per
+takes the exact passage, its language and a short caption title. Cantonese is always synthesised
+with Eleven v4 (`yue`); other languages use the configured model. One narration is attempted per
 turn, and the voice message arrives before the text reply. Admins can run `/voice usage` to see
 today's narration characters and the provider's billing-period usage.
 

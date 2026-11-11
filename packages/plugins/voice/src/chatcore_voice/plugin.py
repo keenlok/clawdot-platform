@@ -26,7 +26,8 @@ READ_ALOUD_INSTRUCTIONS = (
     "tables or emoji; say sources and numbers in words. For news, gather a few current sources "
     "with the web tools before writing. Keep it within the tool's length limit by summarising, "
     "never by cutting off mid-sentence. Call narrate_text once with exactly that passage, its "
-    "language and a short title. Then reply with the same passage as text, adding any links. "
+    "language and a short title. For Cantonese, write colloquial Cantonese in traditional "
+    "characters, not Mandarin. Then reply with the same passage as text, adding any links. "
     "If narration fails, still give the text and say the voice note couldn't be sent."
 )
 
@@ -156,6 +157,7 @@ class VoicePlugin(BasePlugin):
                     "把这段总结念出来",
                     "把今天的新闻念给我听",
                     "can send voice note of the news or not",
+                    "幫我將今日嘅新聞讀出嚟",
                 ),
                 (TOOL,),
                 keywords=(
@@ -170,6 +172,9 @@ class VoicePlugin(BasePlugin):
                     "narration",
                     "念给我听",
                     "读出来",
+                    "讀出嚟",
+                    "念出嚟",
+                    "唸出嚟",
                 ),
                 commands=("voice",),
                 max_steps=4,
