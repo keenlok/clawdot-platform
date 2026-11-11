@@ -7,7 +7,7 @@ answer is structured: a trip expense summary, who owes whom, or a research resul
 sources. The card is fixed-template HTML, rendered to a PNG by `services/browser-renderer` and
 sent as a Telegram photo, with a short text reply beside it.
 
-**Status (2026-11-11):** Planned. Nothing built.
+**Status (2026-11-12):** Approved by the owner; execution in progress per the [execution plan](2026-11-12-formatted-html-output-execution.md).
 
 **Architecture:** The model never writes HTML or CSS. It fills in a small, typed card document
 (title, stat tiles, table, bullets, callout, sources). Core (`chatcore.cards`) validates it and
