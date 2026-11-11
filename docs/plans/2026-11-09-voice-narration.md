@@ -4,7 +4,7 @@
 
 **Goal:** Let any bot read a passage it has written aloud, such as a news summary, as one Telegram voice message, without depending on tutor mode. Make the spending limits provider-aware by checking ElevenLabs' own usage figures before each paid request.
 
-**Status (2026-11-09):** Released in v0.7.0 (PR #28) and disabled by default (see the implementation record at the end). The live activation gate hasn't been run.
+**Status (2026-11-11):** Released in v0.7.0 (PR #28) and enabled for sb_bot on 2026-11-11. The first live narrations failed at Telegram delivery; the fix ships in v0.8.1 (see the delivery fix record at the end).
 
 **Architecture:** A framework speech client in core (`chatcore.tts`) owns the ElevenLabs HTTP call, MP3 checks and a provider usage reader. A new `voice` plugin owns the `narrate_text` tool, its budgets, gate and skill. The tutor plugin keeps its pronunciation tool and limits, and moves onto the shared client without changing behaviour. A news narration that combines web tools with `narrate_text` is an app composite. Downstream apps own keys, voices, caps and activation.
 
@@ -210,3 +210,17 @@ Missing credentials or a failed step keep activation blocked.
 - **Mutation check.** Making `chatcore.tts.synthesize` raise fails the tutor request-shape tests, which proves the tutor uses the shared path.
 - **Known limitation.** Provider counters can lag recent requests. The reserve margin and local caps cover that gap; the per-key credit quota remains the hard ceiling.
 - **Not run.** No live ElevenLabs call has been made (that's the activation gate). Postgres integration tests were skipped locally.
+
+## Delivery fix record (2026-11-11)
+
+After sb_bot enabled narration, two live read-aloud turns synthesised audio and then failed
+with `voice narration delivery failed error=PlatformError`. Cause: `TelegramPlatform.send_voice`
+accepted only the tutor's filename `pronunciation.mp3`, and the plugin sends `narration.mp3`;
+the adapter also capped voice notes at 2 MiB against the plugin's 8 MiB. The plugin tests used
+`FakePlatform`, which does neither check.
+
+Fix (v0.8.1): the adapter accepts any plain lowercase `.mp3` name and caps voice at 8 MiB.
+`tests/test_voice_delivery_contract.py` runs `narrate_text` at its byte cap through the real
+Telegram adapter (mocked bot) and checks tutor audio fits the cap. It fails on v0.8.0 with the
+production error and passes with the fix. Implemented and self-reviewed in a single Claude
+session.

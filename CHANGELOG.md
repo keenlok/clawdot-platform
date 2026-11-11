@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-11
+
+### Fixed
+
+- Telegram voice delivery no longer rejects voice notes that aren't named
+  `pronunciation.mp3`. `TelegramPlatform.send_voice` now accepts any plain lowercase `.mp3`
+  name (letters, digits, `_` and `-`, at most 68 characters), so `narrate_text` voice notes
+  (`narration.mp3`) are delivered instead of failing after synthesis. Path-like or
+  non-MP3 names are still refused before any upload.
+- The Telegram voice size cap rises from 2 MiB to 8 MiB to match the voice plugin's audio
+  cap, so long narrations within `VOICE_TTS_MAX_CHARS_PER_REQUEST` are not rejected after
+  being billed. Tutor audio (2 MiB cap) is unaffected.
+
 ## [0.8.0] - 2026-11-11
 
 ### Added
@@ -276,7 +289,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/keenlok/clawdot-platform/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/keenlok/clawdot-platform/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/keenlok/clawdot-platform/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/keenlok/clawdot-platform/compare/v0.6.1...v0.6.2
