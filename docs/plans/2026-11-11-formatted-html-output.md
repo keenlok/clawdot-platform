@@ -7,7 +7,7 @@ answer is structured: a trip expense summary, who owes whom, or a research resul
 sources. The card is fixed-template HTML, rendered to a PNG by `services/browser-renderer` and
 sent as a Telegram photo, with a short text reply beside it.
 
-**Status (2026-11-12):** Approved by the owner; execution in progress per the [execution plan](2026-11-12-formatted-html-output-execution.md).
+**Status (2026-11-12):** Implemented in [PR #33](https://github.com/keenlok/clawdot-platform/pull/33) per the [execution plan](2026-11-12-formatted-html-output-execution.md); disabled by default. Qualification (fonts, phone review, token measurement) is still pending. See the implementation record at the end.
 
 **Architecture:** The model never writes HTML or CSS. It fills in a small, typed card document
 (title, stat tiles, table, bullets, callout, sources). Core (`chatcore.cards`) validates it and
@@ -456,3 +456,37 @@ Name any check that couldn't run (browser integration, Postgres) in the PR.
 3. Should the bot offer a card on its own for long structured answers, or only when asked?
    The draft skill does both (asked, or 3+ table rows).
 4. Phase order: ship Phase 1 (text baseline) on its own first, or with Phase 2?
+
+## Implementation record (2026-11-12)
+
+**Execution:** Codex executed (`gpt-6-luna`) and reviewed (`gpt-6.1-sol`) in two runs with two fix
+rounds each; Claude did the final review, including real renders of sample cards in both themes.
+
+**Changes from this plan, decided during review:**
+
+- **Expense balance table is Member / Status / Net**, not Paid / Share / Net. Only net balances
+  come from the ledger helpers; recomputed Paid and Share used different rounding in converted
+  trips and didn't add up once settlements existed. Status uses the same words as
+  `get_balances` ("is owed", "owes", "settled"); settled members collapse into one "Everyone
+  else" row.
+- **No sentence appended to `EXPENSES_INSTRUCTIONS`.** It's already 797 characters, so the
+  card guidance lives in the expense card tools' descriptions; instructions are unchanged with
+  or without cards.
+- **Transfers:** up to 12 as bullets, 13–40 as a From / To / Amount table, more falls back to the
+  text balances. No transfer is ever left off a delivered card.
+- **Limits tightened:** source URLs are capped at 300 characters (was 2,000), so a maximum-size
+  card's tool call fits the output budget; captions reject Unicode line and paragraph separators.
+- **No provider-maximum clamp** for `max_tokens_ceiling` (no registry exists); the operator sets it
+  at or below the model's output limit.
+
+**Bugs the final review caught by rendering:** table `total` rows never validated; short cards
+split into a trailing sliver page; stat tiles stacked full width; table amounts lacked thousands
+separators.
+
+**Checks:** lint and format clean; 3,499 non-browser tests and 21 browser tests pass; request
+snapshot unchanged. Release-control's Postgres-backed tests couldn't start on the review machine
+(shared-memory limit); no release-control code changed.
+
+**Not done yet (qualification before an app enables cards):** glyph coverage in the renderer
+image (and fonts if needed), owner review of cards on a real phone, real token counts for
+maximum-size English and Chinese cards, and render latency on the deploy host. No app wiring.

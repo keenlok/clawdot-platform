@@ -20,6 +20,7 @@ _TOPIC = re.compile(r"[a-z][a-z0-9_]{0,47}")
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 BUILTIN_PLUGINS = (
     "browse",
+    "cards",
     "expenses",
     "extensions",
     "google",

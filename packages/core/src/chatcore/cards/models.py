@@ -149,7 +149,7 @@ class CalloutBlock(StrictModel):
 
 class Source(StrictModel):
     title: str = Field(min_length=1, max_length=100)
-    url: str = Field(min_length=1, max_length=2000)
+    url: str = Field(min_length=1, max_length=300)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -342,7 +342,7 @@ def card_json_schema() -> dict:
         "Source link",
         {
             "title": string("Source title", 1, 100),
-            "url": string("HTTP or HTTPS URL", 1, 2000, pattern=r"^https?://[^/@]+(?:/|$)"),
+            "url": string("HTTP or HTTPS URL", 1, 300, pattern=r"^https?://[^/@]+(?:/|$)"),
         },
         ["title", "url"],
     )

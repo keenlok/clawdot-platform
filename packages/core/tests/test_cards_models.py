@@ -194,7 +194,7 @@ def _valid_card(blocks=(), **fields):
                 blocks=[
                     {
                         "type": "sources",
-                        "items": [{"title": "x", "url": "https://a.test/" + "x" * 1985}],
+                        "items": [{"title": "x", "url": "https://a.test/" + "x" * 285}],
                     }
                 ]
             ),
@@ -202,7 +202,7 @@ def _valid_card(blocks=(), **fields):
                 blocks=[
                     {
                         "type": "sources",
-                        "items": [{"title": "x", "url": "https://a.test/" + "x" * 1986}],
+                        "items": [{"title": "x", "url": "https://a.test/" + "x" * 286}],
                     }
                 ]
             ),
@@ -231,7 +231,7 @@ def _valid_card(blocks=(), **fields):
                 blocks=[
                     {
                         "type": "sources",
-                        "items": [{"title": "x" * 100, "url": "https://a.test/" + "x" * 1985}],
+                        "items": [{"title": "x" * 100, "url": "https://a.test/" + "x" * 285}],
                     }
                 ]
             ),
@@ -352,6 +352,33 @@ def test_json_schema_has_no_refs_and_forbids_extra_properties() -> None:
     assert "exactly one cell per column" in table["properties"]["rows"]["description"]
     assert "exactly one cell per column" in table["properties"]["total"]["anyOf"][0]["description"]
     assert Card.model_validate({"title": "ok"})
+
+
+def test_source_url_length_is_capped_at_300_in_model_and_schema():
+    prefix = "https://a.test/"
+    valid_url = prefix + "x" * (300 - len(prefix))
+    invalid_url = valid_url + "x"
+    card = validate_card(
+        {
+            "title": "Source",
+            "blocks": [{"type": "sources", "items": [{"title": "T", "url": valid_url}]}],
+        }
+    )
+    assert len(card.blocks[0].items[0].url) == 300
+    with pytest.raises(CardError):
+        validate_card(
+            {
+                "title": "Source",
+                "blocks": [{"type": "sources", "items": [{"title": "T", "url": invalid_url}]}],
+            }
+        )
+    schema = card_json_schema()
+    sources = next(
+        block
+        for block in schema["properties"]["blocks"]["items"]["anyOf"]
+        if block["properties"]["type"]["const"] == "sources"
+    )
+    assert sources["properties"]["items"]["items"]["properties"]["url"]["maxLength"] == 300
 
 
 def test_cards_package_exports_public_card_helpers():

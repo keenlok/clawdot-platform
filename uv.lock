@@ -12,6 +12,7 @@ members = [
     "chatcore",
     "chatcore-browse",
     "chatcore-browser-renderer",
+    "chatcore-cards",
     "chatcore-console",
     "chatcore-expenses",
     "chatcore-extensions",
@@ -634,6 +635,17 @@ requires-dist = [
     { name = "trustme", marker = "extra == 'test'", specifier = ">=1.2" },
 ]
 provides-extras = ["test"]
+
+[[package]]
+name = "chatcore-cards"
+version = "0.1.0"
+source = { editable = "packages/plugins/cards" }
+dependencies = [
+    { name = "chatcore" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "chatcore", editable = "packages/core" }]
 
 [[package]]
 name = "chatcore-console"
