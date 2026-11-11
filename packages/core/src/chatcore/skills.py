@@ -59,6 +59,8 @@ class Skill:
     keywords: tuple[str, ...] = ()  # Casefolded literal hints, such as ``remind`` and ``提醒``.
     commands: tuple[str, ...] = ()  # Related slash commands for help and hints.
     max_steps: int | None = None  # Clamped to the global agent tool-step cap; never raises it.
+    # Raises the turn's per-step output limit while active, clamped to AgentSettings ceiling.
+    max_output_tokens: int | None = None
     sticky_turns: int = 2  # How many later requester turns may inherit this skill.
     context: Callable[[ToolContext], Awaitable[str | None]] | None = None
     """Trusted per-turn text appended to ``instructions`` while active. Build it only from
@@ -280,6 +282,8 @@ class SkillSet:
             invalid("keywords must be casefolded")
         if skill.sticky_turns < 1:
             invalid("sticky_turns must be at least 1")
+        if skill.max_output_tokens is not None and skill.max_output_tokens < 1:
+            invalid("max_output_tokens must be at least 1")
         if skill.context is not None and not callable(skill.context):
             invalid("context must be callable")
         if skill.pin is not None and not callable(skill.pin):

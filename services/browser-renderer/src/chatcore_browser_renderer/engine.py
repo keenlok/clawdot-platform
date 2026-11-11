@@ -17,6 +17,7 @@ from .settings import RendererSettings
 CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 ALLOWED_SCHEMES = {"https", "data", "blob", "about"}
 BLOCKED_TYPES = {"media", "font", "image", "websocket", "eventsource"}
+_MIN_PAGE_CSS_PX = 80
 
 
 def browser_environment(source: dict[str, str] | None = None) -> dict[str, str]:
@@ -50,6 +51,12 @@ class RenderResult:
             "text": self.text,
             "truncated": self.truncated,
         }
+
+
+@dataclass(slots=True)
+class CardRenderResult:
+    status: str
+    pages: list[bytes]
 
 
 class RendererEngine:
@@ -179,6 +186,127 @@ class RendererEngine:
             self._recycle_pending = True
             return RenderResult("error")
         finally:
+            async with self._state_lock:
+                self.active -= 1
+                if current:
+                    self._active_tasks.discard(current)
+                if self.active == 0 and self._recycle_pending:
+                    async with self._browser_lock:
+                        await self._close_browser_locked()
+                    self._recycle_pending = False
+                    self.render_count = 0
+
+    async def render_card(self, html: str, theme: str) -> CardRenderResult:
+        current = asyncio.current_task()
+        async with self._state_lock:
+            if self.active >= self.settings.render_concurrency:
+                return CardRenderResult("busy", [])
+            if self.active == 0 and self._recycle_pending:
+                async with self._browser_lock:
+                    await self._close_browser_locked()
+                self._recycle_pending = False
+                self.render_count = 0
+            self.active += 1
+            if current:
+                self._active_tasks.add(current)
+        context = None
+        try:
+            async with asyncio.timeout(self.settings.card_timeout_s):
+                await self._ensure_browser()
+                if self.browser is None:
+                    return CardRenderResult("error", [])
+                context = await self.browser.new_context(
+                    java_script_enabled=False,
+                    offline=True,
+                    accept_downloads=False,
+                    service_workers="block",
+                    permissions=[],
+                    viewport={"width": 400, "height": 600},
+                    device_scale_factor=2.5,
+                    color_scheme=theme,
+                )
+
+                async def abort(route, _request=None):
+                    await route.abort()
+
+                await context.route("**/*", abort)
+                page = await context.new_page()
+                await page.set_content(html, wait_until="load")
+                height = int(
+                    await page.locator("body").evaluate(
+                        "element => Math.ceil(element.scrollHeight)"
+                    )
+                )
+                if height <= 0:
+                    return CardRenderResult("error", [])
+                max_height = max(_MIN_PAGE_CSS_PX, self.settings.card_page_css_px)
+                boundaries = []
+                try:
+                    for selector in ("[data-block]", "tr[data-row]"):
+                        locator = page.locator(selector)
+                        for index in range(await locator.count()):
+                            box = await locator.nth(index).bounding_box()
+                            if box:
+                                boundaries.append(
+                                    (float(box["y"]), float(box["y"] + box["height"]))
+                                )
+                    boundaries = sorted(set(boundaries))
+                except Exception:
+                    boundaries = []
+                tops = []
+                top = 0
+                while top < height:
+                    remaining = height - top
+                    if remaining <= max_height or remaining < 2 * _MIN_PAGE_CSS_PX:
+                        tops.append((top, remaining))
+                        break
+                    limit = min(height, top + max_height)
+                    candidates = [
+                        end for _start, end in boundaries if top + _MIN_PAGE_CSS_PX <= end <= limit
+                    ]
+                    end = max(candidates) if candidates else limit
+                    remainder = height - end
+                    if 0 < remainder < _MIN_PAGE_CSS_PX:
+                        eligible = [
+                            boundary
+                            for _start, boundary in boundaries
+                            if top + _MIN_PAGE_CSS_PX <= boundary < end
+                            and height - boundary >= _MIN_PAGE_CSS_PX
+                        ]
+                        if eligible:
+                            end = max(eligible)
+                        else:
+                            end -= _MIN_PAGE_CSS_PX - remainder
+                    tops.append((top, end - top))
+                    top = end
+                if len(tops) > self.settings.card_max_pages:
+                    return CardRenderResult("too_large", [])
+                pages = []
+                for top, page_height in tops:
+                    png = await page.screenshot(
+                        type="png",
+                        clip={"x": 0, "y": top, "width": 400, "height": page_height},
+                        full_page=True,
+                    )
+                    if len(png) > self.settings.card_max_png_bytes:
+                        return CardRenderResult("too_large", [])
+                    pages.append(png)
+                return CardRenderResult("ok", pages)
+        except TimeoutError:
+            return CardRenderResult("timeout", [])
+        except Exception:
+            self._recycle_pending = True
+            return CardRenderResult("error", [])
+        finally:
+            if context is not None:
+                try:
+                    async with asyncio.timeout(2):
+                        await context.close()
+                except Exception:
+                    self._recycle_pending = True
+            self.render_count += 1
+            if self.render_count >= self.settings.render_max_renders_per_browser:
+                self._recycle_pending = True
             async with self._state_lock:
                 self.active -= 1
                 if current:

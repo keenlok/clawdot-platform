@@ -1,5 +1,6 @@
 """Optional outgoing-file capability, independent of the required platform contract."""
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from chatcore.events import ChatRef, MessageRef
@@ -44,6 +45,20 @@ class PhotoPlatform(Protocol):
         chat: ChatRef,
         filename: str,
         data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> MessageRef: ...
+
+
+@runtime_checkable
+class PhotoAlbumPlatform(Protocol):
+    """Optional capability for sending 2–10 images as one album."""
+
+    async def send_photos(
+        self,
+        chat: ChatRef,
+        photos: Sequence[tuple[str, bytes]],
         *,
         caption: str | None = None,
         thread_id: str | None = None,

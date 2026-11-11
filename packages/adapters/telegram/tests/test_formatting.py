@@ -82,11 +82,11 @@ def entities(payload):
             [("text_link", 0, 8, "https://example.com", None)],
         ),
         ("# **Heading**", "Heading", [("bold", 0, 7, None, None)]),
-        ("> quoted\n> text", "› quoted\n› text", []),
+        ("> quoted\n> text", "quoted\ntext", [("blockquote", 0, 11, None, None)]),
         (
             "| Name | Cost |\n| --- | --- |\n| A | 2 |",
-            "Name | Cost\nA | 2",
-            [("bold", 0, 4, None, None), ("bold", 7, 4, None, None)],
+            "Name  Cost\n────  ────\nA        2",
+            [("pre", 0, 32, None, None)],
         ),
     ],
 )
@@ -155,3 +155,25 @@ async def test_edit_rejects_text_over_utf16_limit_before_api_call():
     with pytest.raises(ValueError, match="message limit"):
         await platform.edit(MessageRef(ChatRef("tg", "7"), "42"), "😀" * 2049)
     bot.edit_message_text.assert_not_awaited()
+
+
+def test_quote_entity_offsets_include_utf16_emoji_and_cjk():
+    from chatcore_telegram.formatting import render_markdown
+
+    rendered = render_markdown("> 😀 陈明\n> 好")
+    quote = next(entity for entity in rendered.entities if entity.type == "blockquote")
+    assert rendered.text[quote.offset : quote.offset + quote.length] == "😀 陈明\n好"
+    assert quote.length == 7
+
+
+def test_wide_table_keeps_pipe_format_and_pre_table_drops_inline_entities():
+    from chatcore_telegram.formatting import render_markdown
+
+    narrow = render_markdown("| **Name** | Cost |\n| --- | --- |\n| 陈明 | 12 |")
+    assert "**" not in narrow.text
+    assert any(entity.type == "pre" for entity in narrow.entities)
+    wide = render_markdown(
+        "| Name | Very long header which makes this over 36 columns |\n| --- | --- |\n| A | 1 |"
+    )
+    assert " | " in wide.text
+    assert not any(entity.type == "pre" for entity in wide.entities)
