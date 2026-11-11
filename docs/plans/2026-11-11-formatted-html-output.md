@@ -13,7 +13,8 @@ sent as a Telegram photo, with a short text reply beside it.
 (title, stat tiles, table, bullets, callout, sources). Core (`chatcore.cards`) validates it and
 renders it through one fixed template and CSS token set, escaping every string. A new `/card`
 endpoint on the renderer turns that HTML into a PNG with JavaScript and all network access off. A
-new optional `PhotoPlatform.send_photo` capability delivers it. A new `cards` plugin owns the
+The existing `PhotoPlatform.send_photo` capability (added by the image generation plugin in
+v0.9.0) delivers it, with a new album method for multi-page cards. A new `cards` plugin owns the
 generic `send_card` tool and its skill. The expenses plugin adds ledger-backed cards whose numbers
 come from the database, not the model.
 
@@ -46,13 +47,15 @@ What exists and can be reused:
 | --- | --- | --- |
 | `services/browser-renderer` | Headless Chromium behind a guarded egress proxy; `POST /render {url}` returns page **text** only. Sandboxed (Chromium sandbox, seccomp profile, non-root, no-new-privileges), concurrency 2, browser recycled every 50 renders | Add a second endpoint that renders supplied HTML to PNG in a no-network, no-JS context |
 | `chatcore.files.FilePlatform.send_file` | Telegram `send_document`, 20 MiB cap; used by `export_expenses` | Fallback delivery for a PDF in a later phase |
-| `chatcore.files.VoicePlatform.send_voice` | Response attachment pattern (`writes=False`, sent inside the tool call before the text reply) | Same pattern for photos: a new `PhotoPlatform` |
+| `chatcore.files.VoicePlatform.send_voice` | Response attachment pattern (`writes=False`, sent inside the tool call before the text reply) | Same response-attachment pattern |
+| `chatcore.files.PhotoPlatform.send_photo` | Shipped in v0.9.0 with the [image generation plugin](2026-11-11-image-generation.md): direct Telegram `bot.send_photo`, PNG/JPEG signature, 10 MiB and caption checks; bridge mode falls back to `send_file` | Reused as is for one-page cards; gains a pixel-dimension check and an album method |
 | `chatcore_voice` | Plugin with tool, gate, permission helper, one-per-turn rule | Template for the `cards` plugin's layout and checks |
 | Expenses `_balances` / `get_balances` | Exact balance computation shared by tools | Data source for ledger-backed cards |
 | `chatcore_browse.RenderClient` | HTTP client for `/render` | Pattern only; plugins can't import browse, so the card client lives in core |
 
-A separate image-generation effort may also need photo delivery. Whichever lands first adds
-`PhotoPlatform`; the other reuses it rather than adding a second capability.
+The [image generation plan](2026-11-11-image-generation.md) already added `PhotoPlatform`, so this
+plan adds no second photo capability. Its gate and document-fallback pattern is the model for the
+cards plugin.
 
 ## Delivery options
 
@@ -174,13 +177,19 @@ userinfo-free base URL (same checks as `RenderClient`), streamed response capped
 magic bytes checked on every page. `render(doc, theme) -> list[bytes]` raises `CardError(code)` with codes `busy`,
 `too_large`, `timeout`, `unavailable`.
 
-**Photo capability (`chatcore.files.PhotoPlatform`).**
-`send_photo(chat, filename, data, *, caption=None, thread_id=None) -> MessageRef`. The direct
-Telegram adapter implements it with `bot.send_photo`, checking PNG/JPEG magic bytes, ≤ 10 MB,
-width + height ≤ 10,000 and ratio ≤ 20 from the PNG header, and a plain caption ≤ 1,024 UTF-16
-units. `send_photos(chat, photos, *, caption=None, thread_id=None)` sends 2–4 pages as one
-Telegram media group (`sendMediaGroup`, 2–10 items) with the caption on the first. The bridge
-adapter and console don't implement either, so the gates hide card tools there.
+**Photo delivery (`chatcore.files`).** Reuse the shipped `PhotoPlatform.send_photo` for one-page
+cards. Two additions:
+
+- The direct Telegram `send_photo` also checks width + height ≤ 10,000 and ratio ≤ 20 from the
+  PNG/JPEG header and raises `PlatformError("InvalidPhoto")` otherwise, so a bad image fails
+  before upload. This tightens the image plugin's path too; its generated sizes are well inside
+  the limits.
+- A new optional `PhotoAlbumPlatform.send_photos(chat, photos, *, caption=None, thread_id=None)`
+  sends 2–4 pages as one Telegram media group (`sendMediaGroup`, 2–10 items) with the caption on
+  the first, using the same per-photo checks.
+
+Bridge mode has only `FilePlatform`. As in the image plugin, cards fall back there to PNG
+documents through `send_file` (one per page). Platforms with neither capability hide the tools.
 
 ### Design spec the template must follow
 
@@ -245,9 +254,9 @@ skill's rules (one axis, fixed categorical order, validated palette, legend for 
 - `settings.py`: `CardsSettings` (`CARDS_ENABLED` default `false`, `CARDS_RENDER_URL`,
   `CARDS_THEME`, `CARDS_TIMEOUT_SECONDS` default 15, `CARDS_MAX_PER_USER_HOUR` default 20).
 - `permissions.py`: `may_send_card`, the same rules as `may_narrate` (platform namespace match,
-  `PhotoPlatform`, refreshed access, restrictions, `can_dm` for DMs, allowed chats for groups,
+  `PhotoPlatform` or `FilePlatform`, refreshed access, restrictions, `can_dm` for DMs, allowed chats for groups,
   fail closed). Duplicated, not imported, because plugins don't import each other.
-- `gates.py`: available only when enabled, configured and on a `PhotoPlatform`; user gate calls
+- `gates.py`: available only when enabled, configured and on a `PhotoPlatform` or `FilePlatform`; user gate calls
   `may_send_card`.
 - `service.py`: per-user hourly counter and rendering through `CardRenderClient`.
 - `plugin.py`: the tool and the `visual_summary` skill. `EXPLAIN.md` for `/help`.
@@ -341,7 +350,7 @@ maintenance-reviewed file and is called out in the PR. No web fonts, ever.
 | Phase | Files |
 | --- | --- |
 | 1 | `packages/adapters/telegram/src/chatcore_telegram/formatting.py` and its tests |
-| 2 | New `packages/core/src/chatcore/cards/` (`__init__.py`, `models.py`, `html.py`, `client.py`); `packages/core/src/chatcore/files.py` (`PhotoPlatform`); `packages/core/src/chatcore/skills.py` (`Skill.max_output_tokens`), `agent.py` and `skill_turn.py` (skill-scoped output budget, `max_tokens_ceiling`); `packages/core/src/chatcore/testing.py` (fake `send_photo`); `packages/adapters/telegram/src/chatcore_telegram/__init__.py` (`send_photo`); `services/browser-renderer/src/chatcore_browser_renderer/{server,engine,settings}.py` and tests; possibly `services/browser-renderer/Dockerfile` (fonts); core tests |
+| 2 | New `packages/core/src/chatcore/cards/` (`__init__.py`, `models.py`, `html.py`, `client.py`); `packages/core/src/chatcore/files.py` (`PhotoAlbumPlatform`); `packages/core/src/chatcore/skills.py` (`Skill.max_output_tokens`), `agent.py` and `skill_turn.py` (skill-scoped output budget, `max_tokens_ceiling`); `packages/core/src/chatcore/testing.py` (fake `send_photos`); `packages/adapters/telegram/src/chatcore_telegram/__init__.py` (`send_photo` dimension check, `send_photos`); `services/browser-renderer/src/chatcore_browser_renderer/{server,engine,settings}.py` and tests; possibly `services/browser-renderer/Dockerfile` (fonts); core tests |
 | 3 | New `packages/plugins/cards/**` (`pyproject.toml`, `src/chatcore_cards/{__init__,plugin,gates,permissions,settings,service}.py`, `EXPLAIN.md`, tests); root `pyproject.toml` and `uv.lock` for the new workspace member; scaffold `.env.example` (disabled by default) |
 | 4 | `packages/plugins/expenses/src/chatcore_expenses/{plugin,gates}.py` and tests |
 | All | `CHANGELOG.md` (Unreleased), `ARCHITECTURE.md` §6a privacy line, `docs/plans/README.md` row, wiki page for the plugin |
@@ -378,7 +387,7 @@ Not touched: `/render` behaviour, the egress proxy, `seccomp.json`, other plugin
 - **Telegram `send_photo` / `send_photos`.** Magic bytes, 10 MB, dimension and ratio checks from
   the PNG header, caption length, media group of 2–4 with the caption on the first, thread and
   reply metadata, through `FakeRequest`.
-- **`cards` plugin.** Gate hidden when disabled, unconfigured or not a `PhotoPlatform`; user gate
+- **`cards` plugin.** Gate hidden when disabled, unconfigured or on a platform with neither photos nor files; document fallback in bridge mode; user gate
   and call-time permission checks (DM, group, restricted user, namespace mismatch); one per turn
   including failures; hourly cap; permission rechecked before sending; errors leave the model a
   text fallback.
@@ -424,7 +433,7 @@ Name any check that couldn't run (browser integration, Postgres) in the PR.
 - Phase 1: narrow tables and blockquotes render natively in Telegram, with no other formatting
   change.
 - Phase 2: `chatcore.cards` renders a validated document to escaped HTML; `/card` returns a PNG
-  pages with JS and network off; `PhotoPlatform.send_photo`/`send_photos` work on direct
+  pages with JS and network off; `send_photo` (with dimension checks) and `send_photos` work on direct
   Telegram; a skill can raise the turn's output budget up to the core ceiling.
 - Phase 3: `send_card` and `visual_summary` ship disabled by default, gated, one per turn, with
   a text fallback.
