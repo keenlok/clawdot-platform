@@ -39,6 +39,8 @@ class TurnState:
     fetches: int = 0
     attachments: tuple[Attachment, ...] = ()
     """Image attachments of the current human message and its human reply, for image tools."""
+    attachment_owners: tuple[str, ...] = ()
+    """Sender user key for each entry of ``attachments``, in the same order."""
     vision: bool = False
     """Whether the main model can see images this turn."""
     images_remaining: int = 0

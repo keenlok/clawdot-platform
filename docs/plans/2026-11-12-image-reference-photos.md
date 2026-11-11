@@ -135,3 +135,25 @@ The owner accepted the proposed default for each question:
 1. **Whose photos in groups:** the requester's own photos only. In DMs, the replied-to photo is also allowed.
 2. **Photos of people:** allowed, with the skill instruction above and OpenAI moderation as the backstop.
 3. **Caps:** shared with generation. Add `IMAGE_MAX_EDITS_PER_DAY` only if the gate shows edits cost much more.
+
+## Implementation record (2026-11-12)
+
+**Execution:** Codex `gpt-6-luna` executed, following the [execution plan](2026-11-12-image-reference-photos-execution.md). Codex `gpt-6.1-sol` reviewed. Claude did the final review.
+
+**Review:** Sol's first review returned FAIL, for weak tests and one change to v1 error order. There were no runtime defects. Claude's review added:
+- keyword over-matching: 改成, 变成 and "make this" were replaced with photo-specific phrases;
+- the reference guidance in the skill instructions now appears only when editing is on.
+
+Fix round 1 resolved everything except two service-test gaps, which fix round 2 closed. Mutation checks were caught:
+- removing the group ownership check;
+- a wrong owner key in core;
+- an INFO log containing the prompt or photo bytes;
+- busy charging the caps.
+
+**Deviations:**
+- `images.edit` doesn't accept `moderation` in the SDK, so edits omit it.
+- With editing off, a `reference` argument gets the registry's unknown-argument error, because the property isn't offered.
+- `_context()` keeps its return shape and records owners on `tool_ctx.turn`.
+- The new photo-phrase keywords also route when editing is off, where they generate from a description as before.
+
+**Not run:** a live OpenAI edit (that's the activation gate). Locally, the 92 release-control Postgres tests errored because the Mac's shared memory was exhausted; CI covers them.

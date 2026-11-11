@@ -7,6 +7,8 @@ import unicodedata
 
 from chatcore.access import AccessPolicy
 from chatcore.files import FilePlatform, PhotoPlatform
+from chatcore.images import ImageUnavailable, download_image, is_image
+from chatcore.llm.types import ImagePart
 from chatcore.platform import ChatPlatform
 from chatcore.plugin import BasePlugin, Command, CommandContext
 from chatcore.skills import Skill
@@ -24,6 +26,15 @@ IMAGE_GENERATION_INSTRUCTIONS = (
     "private individuals' names or personal details in the prompt. Call generate_image once, "
     "then reply in one or two sentences saying what was made. If it fails, say so and offer to "
     "adjust the description."
+)
+IMAGE_EDIT_INSTRUCTIONS = (
+    "Use reference only when asked to change or base a picture on a photo the person sent or "
+    "replied to; never use other photos. Never edit a real person into sexual, violent, "
+    "humiliating or deceptive scenes."
+)
+IMAGE_EDIT_PRIVACY_NOTE = (
+    "When photo editing is on, a photo you ask the bot to change is sent to OpenAI with your "
+    "request; the bot doesn't store it."
 )
 _ERRORS = {
     "quota": "Image limit reached for today.",
@@ -87,10 +98,28 @@ class ImagePlugin(BasePlugin):
             "required": ["prompt", "size", "title"],
             "additionalProperties": False,
         }
+        if self.settings.IMAGE_EDIT_ENABLED:
+            schema["properties"]["reference"] = {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Use only when the person asks to change or base a picture on a "
+                "photo they sent or replied to: the 1-based number of that photo.",
+            }
 
-        async def generate(ctx: ToolContext, *, prompt: str, size: str, title: str) -> ToolResult:
+        async def generate(
+            ctx: ToolContext,
+            *,
+            prompt: str,
+            size: str,
+            title: str,
+            reference: int | None = None,
+        ) -> ToolResult:
             if ctx.turn.tool_attempts.get(TOOL):
                 return ToolResult.error("An image was already attempted this turn.")
+            if reference is not None and (
+                not isinstance(reference, int) or isinstance(reference, bool)
+            ):
+                return ToolResult.error("The photo number must be a whole number.")
             if not isinstance(prompt, str):
                 return ToolResult.error(
                     f"Prompt must be 1–{limit} characters without control characters."
@@ -120,6 +149,29 @@ class ImagePlugin(BasePlugin):
                 )
             if size not in SIZES:
                 return ToolResult.error("Size must be square, portrait or landscape.")
+            attachment = None
+            if reference is not None:
+                if not self.settings.IMAGE_EDIT_ENABLED:
+                    return ToolResult.error("Editing photos isn't enabled here.")
+                try:
+                    owned = [
+                        (item, owner)
+                        for item, owner in zip(
+                            ctx.turn.attachments, ctx.turn.attachment_owners, strict=True
+                        )
+                        if is_image(item)
+                    ]
+                except ValueError:
+                    owned = []
+                if not owned:
+                    return ToolResult.error(
+                        "There's no photo to use. Send it with your request or reply to it."
+                    )
+                if reference < 1 or reference > len(owned):
+                    return ToolResult.error(f"There are {len(owned)} images; pick 1–{len(owned)}.")
+                attachment, owner = owned[reference - 1]
+                if not ctx.is_dm and owner != ctx.user.ref.key:
+                    return ToolResult.error("In groups I can only use your own photos.")
             if not self.generation_available or not await may_generate(self.access, ctx):
                 return ToolResult.error("Image generation is unavailable here.")
             if ctx.turn.tool_attempts.get(TOOL):
@@ -127,7 +179,24 @@ class ImagePlugin(BasePlugin):
             ctx.turn.tool_attempts[TOOL] = 1
             caption = "🖼 " + title_clean
             try:
-                data = await self.service.generate(prompt_clean, size, user_key=ctx.user.ref.key)
+                part: ImagePart | None = None
+                if attachment is not None:
+                    try:
+                        part = await download_image(
+                            ctx.platform, attachment, chat=ctx.chat, cache=ctx.turn.downloads
+                        )
+                    except ImageUnavailable as exc:
+                        message = {
+                            "too_large": "That photo is over 5 MB.",
+                            "unsupported_format": "I can only use JPEG, PNG or WebP photos.",
+                            "download_failed": (
+                                "I couldn't download that photo. Please send it again."
+                            ),
+                        }[exc.reason]
+                        return ToolResult.error(message)
+                data = await self.service.generate(
+                    prompt_clean, size, user_key=ctx.user.ref.key, reference=part
+                )
                 if not await may_generate(self.access, ctx):
                     return ToolResult.error("Image delivery is no longer allowed.")
                 if isinstance(ctx.platform, PhotoPlatform):
@@ -166,6 +235,8 @@ class ImagePlugin(BasePlugin):
                 (
                     "draw a cat wearing a space helmet",
                     "make a picture of a sunset over the Singapore skyline",
+                    "make this photo a watercolour",
+                    "把这张照片变成卡通",
                     "generate an image for my birthday invite",
                     "can you illustrate this story",
                     "画一只在海边的狗",
@@ -181,6 +252,12 @@ class ImagePlugin(BasePlugin):
                     "image of",
                     "generate an image",
                     "make an image",
+                    "make this photo",
+                    "make this picture",
+                    "turn this photo",
+                    "turn this into",
+                    "edit this photo",
+                    "this photo into",
                     "illustrate",
                     "illustration",
                     "画一",
@@ -188,10 +265,18 @@ class ImagePlugin(BasePlugin):
                     "画张",
                     "帮我画",
                     "生成图片",
+                    "把这张",
+                    "照片改成",
+                    "照片变成",
+                    "图片改成",
                 ),
                 commands=("image",),
                 max_steps=4,
-                instructions=IMAGE_GENERATION_INSTRUCTIONS,
+                instructions=(
+                    IMAGE_GENERATION_INSTRUCTIONS + " " + IMAGE_EDIT_INSTRUCTIONS
+                    if self.settings.IMAGE_EDIT_ENABLED
+                    else IMAGE_GENERATION_INSTRUCTIONS
+                ),
             )
         ]
 

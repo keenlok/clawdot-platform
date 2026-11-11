@@ -1,28 +1,31 @@
 from unittest.mock import AsyncMock
 
+import pytest
 from chatcore.access import AccessPolicy
 from chatcore.app import BotApp
-from chatcore.events import ChatRef, User, UserRef
+from chatcore.events import Attachment, AttachmentKind, ChatRef, User, UserRef
+from chatcore.images import ImageUnavailable
+from chatcore.llm.types import ImagePart
 from chatcore.platform import PlatformError
 from chatcore.skill_router import SkillRouter
 from chatcore.skills import SkillSet
 from chatcore.testing import FakePlatform, memory_stores, message, user
 from chatcore.tools.registry import ToolContext, ToolRegistry, TurnState
 from chatcore_image import ImagePlugin, ImageSettings
-from chatcore_image.plugin import IMAGE_GENERATION_INSTRUCTIONS
+from chatcore_image.plugin import IMAGE_EDIT_INSTRUCTIONS, IMAGE_GENERATION_INSTRUCTIONS
 from chatcore_image.service import ImageError
 from pydantic import SecretStr
 
 
-def enabled():
-    return ImageSettings(IMAGE_ENABLED=True, IMAGE_OPENAI_API_KEY=SecretStr("fake"))
+def enabled(**kwargs):
+    return ImageSettings(IMAGE_ENABLED=True, IMAGE_OPENAI_API_KEY=SecretStr("fake"), **kwargs)
 
 
-def context(platform, *, turn=None):
+def context(platform, *, turn=None, is_dm=False):
     return ToolContext(
         ChatRef(platform.name, "group"),
         User(UserRef(platform.name, "alice"), display_name="Alice"),
-        False,
+        is_dm,
         platform,
         memory_stores(),
         turn=turn or TurnState(),
@@ -40,6 +43,205 @@ async def test_offers_and_delivers_inline_photo():
     assert not result.is_error
     assert platform.sent_photos[0].caption == "🖼 Cat"
     assert not platform.sent_files
+
+
+async def test_edit_uses_requesters_photo_and_is_opt_in(monkeypatch):
+    from chatcore_image import plugin as module
+
+    platform = FakePlatform(files={"photo": b"\xff\xd8\xffjpeg"})
+    base = ImagePlugin(AccessPolicy(["fake:group"], []), platform, settings=enabled())
+    base.service.generate = AsyncMock(return_value=b"png")
+    download = AsyncMock()
+    monkeypatch.setattr(module, "download_image", download)
+    assert "reference" not in base.tools()[0].parameters["properties"]
+    denied = await base.tools()[0].handler(
+        context(platform), prompt="change style", size="square", title="Cat", reference=1
+    )
+    assert denied.content == "Editing photos isn't enabled here."
+    download.assert_not_awaited()
+    base.service.generate.assert_not_awaited()
+    assert base.skills()[0].instructions == IMAGE_GENERATION_INSTRUCTIONS
+
+    plugin = ImagePlugin(
+        AccessPolicy(["fake:group"], []),
+        platform,
+        settings=enabled(IMAGE_EDIT_ENABLED=True),
+    )
+    plugin.service.generate = AsyncMock(return_value=b"png")
+    download.return_value = ImagePart(b"\xff\xd8\xffjpeg", "image/jpeg")
+    attachment = Attachment("photo", AttachmentKind.PHOTO)
+    turn = TurnState(attachments=(attachment,), attachment_owners=("fake:alice",))
+    result = await ToolRegistry(plugin.tools()).call(
+        "generate_image",
+        {"prompt": "watercolour", "size": "square", "title": "Cat", "reference": 1},
+        context(platform, turn=turn),
+    )
+    assert not result.is_error
+    plugin.service.generate.assert_awaited_once()
+    assert plugin.service.generate.await_args.kwargs["reference"].media_type == "image/jpeg"
+    assert platform.sent_photos[-1].caption == "🖼 Cat"
+    assert len(IMAGE_GENERATION_INSTRUCTIONS) < 800
+    assert IMAGE_GENERATION_INSTRUCTIONS == (
+        "Generate only when the person explicitly asks for an image. Write one self-contained "
+        "prompt that restates the whole picture, resolving references from the conversation. "
+        "Never put private individuals' names or personal details in the prompt. Call "
+        "generate_image once, then reply in one or two sentences saying what was made. If it "
+        "fails, say so and offer to adjust the description."
+    )
+    assert len(IMAGE_GENERATION_INSTRUCTIONS + " " + IMAGE_EDIT_INSTRUCTIONS) < 800
+    assert (
+        plugin.skills()[0].instructions
+        == IMAGE_GENERATION_INSTRUCTIONS + " " + IMAGE_EDIT_INSTRUCTIONS
+    )
+
+
+async def test_group_rejects_another_members_photo_before_download(monkeypatch):
+    from chatcore_image import plugin as module
+
+    platform = FakePlatform()
+    plugin = ImagePlugin(
+        AccessPolicy(["fake:group"], []), platform, settings=enabled(IMAGE_EDIT_ENABLED=True)
+    )
+    plugin.service.generate = AsyncMock(return_value=b"png")
+    download = AsyncMock()
+    monkeypatch.setattr(module, "download_image", download)
+    turn = TurnState(
+        attachments=(Attachment("other", AttachmentKind.PHOTO),),
+        attachment_owners=("fake:bob",),
+    )
+    result = await ToolRegistry(plugin.tools()).call(
+        "generate_image",
+        {"prompt": "style", "size": "square", "title": "Photo", "reference": 1},
+        context(platform, turn=turn),
+    )
+    assert result.content == "In groups I can only use your own photos."
+    download.assert_not_awaited()
+    plugin.service.generate.assert_not_awaited()
+
+
+async def test_dm_allows_reply_photo_owned_by_another_person(monkeypatch):
+    from chatcore_image import plugin as module
+
+    monkeypatch.setattr(module, "may_generate", AsyncMock(return_value=True))
+
+    platform = FakePlatform()
+    plugin = ImagePlugin(
+        AccessPolicy(["fake:group"], []), platform, settings=enabled(IMAGE_EDIT_ENABLED=True)
+    )
+    plugin.service.generate = AsyncMock(return_value=b"png")
+    part = ImagePart(b"\xff\xd8\xffjpeg", "image/jpeg")
+    download = AsyncMock(return_value=part)
+    monkeypatch.setattr(module, "download_image", download)
+    turn = TurnState(
+        attachments=(Attachment("reply", AttachmentKind.PHOTO),),
+        attachment_owners=("fake:bob",),
+    )
+    result = await ToolRegistry(plugin.tools()).call(
+        "generate_image",
+        {"prompt": "style", "size": "square", "title": "Photo", "reference": 1},
+        context(platform, turn=turn, is_dm=True),
+    )
+    assert not result.is_error
+    download.assert_awaited_once()
+    plugin.service.generate.assert_awaited_once()
+    assert plugin.service.generate.await_args.kwargs["reference"] == part
+
+
+@pytest.mark.parametrize(
+    ("attachments", "owners", "reference", "expected"),
+    [
+        ((), (), 1, "There's no photo to use. Send it with your request or reply to it."),
+        (
+            (Attachment("a", AttachmentKind.PHOTO),),
+            ("fake:alice",),
+            0,
+            "There are 1 images; pick 1–1.",
+        ),
+        (
+            (Attachment("a", AttachmentKind.PHOTO), Attachment("b", AttachmentKind.PHOTO)),
+            ("fake:alice", "fake:alice"),
+            3,
+            "There are 2 images; pick 1–2.",
+        ),
+        (
+            (Attachment("a", AttachmentKind.PHOTO),),
+            ("fake:alice",),
+            True,
+            "The photo number must be a whole number.",
+        ),
+        (
+            (Attachment("a", AttachmentKind.PHOTO),),
+            ("fake:alice",),
+            "1",
+            "The photo number must be a whole number.",
+        ),
+        (
+            (Attachment("a", AttachmentKind.PHOTO),),
+            ("fake:alice",),
+            1.5,
+            "The photo number must be a whole number.",
+        ),
+        (
+            (Attachment("a", AttachmentKind.PHOTO),),
+            (),
+            1,
+            "There's no photo to use. Send it with your request or reply to it.",
+        ),
+    ],
+)
+async def test_reference_refusals_do_not_download_or_generate(
+    monkeypatch, attachments, owners, reference, expected
+):
+    from chatcore_image import plugin as module
+
+    platform = FakePlatform()
+    plugin = ImagePlugin(
+        AccessPolicy(["fake:group"], []), platform, settings=enabled(IMAGE_EDIT_ENABLED=True)
+    )
+    plugin.service.generate = AsyncMock(return_value=b"png")
+    download = AsyncMock()
+    monkeypatch.setattr(module, "download_image", download)
+    turn = TurnState(attachments=attachments, attachment_owners=owners)
+    result = await ToolRegistry(plugin.tools()).call(
+        "generate_image",
+        {"prompt": "style", "size": "square", "title": "Photo", "reference": reference},
+        context(platform, turn=turn),
+    )
+    assert result.content == expected
+    download.assert_not_awaited()
+    plugin.service.generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("too_large", "That photo is over 5 MB."),
+        ("unsupported_format", "I can only use JPEG, PNG or WebP photos."),
+        ("download_failed", "I couldn't download that photo. Please send it again."),
+    ],
+)
+async def test_download_errors_do_not_call_service(monkeypatch, reason, expected):
+    from chatcore_image import plugin as module
+
+    platform = FakePlatform()
+    plugin = ImagePlugin(
+        AccessPolicy(["fake:group"], []), platform, settings=enabled(IMAGE_EDIT_ENABLED=True)
+    )
+    plugin.service.generate = AsyncMock(return_value=b"png")
+    download = AsyncMock(side_effect=ImageUnavailable(reason))
+    monkeypatch.setattr(module, "download_image", download)
+    turn = TurnState(
+        attachments=(Attachment("a", AttachmentKind.PHOTO),),
+        attachment_owners=("fake:alice",),
+    )
+    result = await ToolRegistry(plugin.tools()).call(
+        "generate_image",
+        {"prompt": "style", "size": "square", "title": "Photo", "reference": 1},
+        context(platform, turn=turn),
+    )
+    assert result.content == expected
+    download.assert_awaited_once()
+    plugin.service.generate.assert_not_awaited()
 
 
 async def test_file_only_platform_delivers_document_and_no_capability_hides_tool():
@@ -80,9 +282,9 @@ async def test_validation_and_once_per_turn_after_failure():
     )
     assert result.is_error and plugin.service.generate.await_count == 1
     again = await registry.call(
-        "generate_image", {"prompt": "valid", "size": "square", "title": "Title"}, ctx
+        "generate_image", {"prompt": "", "size": "square", "title": "Title"}, ctx
     )
-    assert "already attempted" in again.content
+    assert again.content == "An image was already attempted this turn."
     assert len(IMAGE_GENERATION_INSTRUCTIONS) < 800
     assert all(
         name in vars(__import__("chatcore_image")) for name in __import__("chatcore_image").__all__
@@ -157,10 +359,23 @@ async def test_skill_keywords_avoid_unrelated_draw_and_chinese_requests():
         ToolRegistry(plugin.tools()), {skill.name: (skill, plugin.name)}, {}, {}, (), ()
     )
     router = SkillRouter(skillset, None, mode="keyword", timeout_ms=100, threshold=0.5, margin=0.05)
-    for text in ("draw me a cat", "画一只狗"):
+    for text in (
+        "draw me a cat",
+        "画一只狗",
+        "make this photo a watercolour",
+        "turn this into a cartoon",
+        "把这张照片变成卡通",
+    ):
         result = await router.route(text)
         assert [hit.skill for hit in result.hits] == ["image_generation"]
-    for text in ("推荐一部动画", "who won the lucky draw", "withdraw 50 dollars"):
+    for text in (
+        "推荐一部动画",
+        "who won the lucky draw",
+        "withdraw 50 dollars",
+        "make this shorter",
+        "把会议改成明天",
+        "this photo is nice",
+    ):
         assert not (await router.route(text)).hits
 
 

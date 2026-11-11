@@ -30,6 +30,7 @@ under the operator's account terms and settings.
 | Setting | Default |
 | --- | --- |
 | `IMAGE_ENABLED` | `false` |
+| `IMAGE_EDIT_ENABLED` | `false` |
 | `IMAGE_OPENAI_API_KEY` | empty |
 | `IMAGE_OPENAI_BASE_URL` | `https://api.openai.com/v1` |
 | `IMAGE_MODEL` | `gpt-image-2.5-flare` |
@@ -39,6 +40,11 @@ under the operator's account terms and settings.
 | `IMAGE_MAX_PER_USER_DAY` | `10` |
 | `IMAGE_MAX_PER_DAY` | `50` |
 
+### Reference photos
+When enabled, the image tool can create an edited image from a photo the person explicitly
+points to in their message or reply. In groups, only the requester's own photos can be used.
+The photo and prompt are sent to OpenAI, and edits share the generation caps.
+
 ### Activation gate
 Activation stays blocked until the qualification in
 [`docs/plans/2026-11-11-image-generation.md`](https://github.com/keenlok/clawdot-platform/blob/main/docs/plans/2026-11-11-image-generation.md)
@@ -47,8 +53,7 @@ records cost and latency; checks refusal handling; and keeps configured caps wit
 budget.
 
 ## Limitations
-Only one image can be generated per turn. The plugin supports three fixed sizes and does not edit
-photos supplied by users. Bridge mode sends the PNG as a document. The OpenAI project budget is the
+Only one image can be generated per turn. The plugin supports three fixed sizes. Bridge mode sends the PNG as a document. The OpenAI project budget is the
 hard spending ceiling because local counters reset on restart.
 
 ## Verification

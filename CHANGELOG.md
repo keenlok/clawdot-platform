@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Image references enable photo edits through `generate_image(reference=...)` when
+  `IMAGE_EDIT_ENABLED` is true (default off). `IMAGE_EDIT_PRIVACY_NOTE` is exported for app privacy
+  notices.
+
+### Changed
+
+- Core `TurnState` records the sender key for each current or replied-to image attachment.
+
 ## [0.10.0] - 2026-11-12
 
 ### Changed
