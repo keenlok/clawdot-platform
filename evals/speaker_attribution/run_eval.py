@@ -340,6 +340,7 @@ async def run(runs: int, model: str) -> None:
     )
     provider = build_provider(settings)
     requests = await capture_requests()
+    total_errors = 0
     for case, captured in requests.items():
         failures = 0
         errors = 0
@@ -355,7 +356,14 @@ async def run(runs: int, model: str) -> None:
                 failures += score(case, completion.message.text)
             except Exception:  # noqa: BLE001 - report only an aggregate provider error count
                 errors += 1
-        print(f"{case}: wrong={failures}/{runs} rate={failures / runs:.0%} errors={errors}")
+        total_errors += errors
+        scored = runs - errors
+        rate = f"{failures / scored:.0%}" if scored else "n/a"
+        print(f"{case}: wrong={failures}/{scored} rate={rate} errors={errors}")
+    if total_errors:
+        raise SystemExit(
+            f"{total_errors} provider call(s) failed; rates exclude them and are not a valid result"
+        )
 
 
 def main() -> None:
