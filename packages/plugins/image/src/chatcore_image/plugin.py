@@ -28,9 +28,22 @@ IMAGE_GENERATION_INSTRUCTIONS = (
     "adjust the description."
 )
 IMAGE_EDIT_INSTRUCTIONS = (
-    "Use reference only when asked to change or base a picture on a photo the person sent or "
-    "replied to; never use other photos. Never edit a real person into sexual, violent, "
-    "humiliating or deceptive scenes."
+    "You can edit photos. When the person asks to change, restyle or base a picture on a photo "
+    "they sent or replied to, call generate_image with reference (1 if there is one photo) and a "
+    "prompt describing the result; the photo itself is sent. Never say you can't use it, and "
+    "don't describe it instead. Never use other photos. Never edit a real person into sexual, "
+    "violent, humiliating or deceptive scenes."
+)
+GENERATE_DESCRIPTION = "Create one requested image from a text description and send it to the chat."
+EDIT_DESCRIPTION = (
+    "Create one requested image and send it to the chat, either from a text description or by "
+    "changing a photo the person sent or replied to (pass reference)."
+)
+REFERENCE_DESCRIPTION = (
+    "Pass this whenever the person asks to change, restyle or base a picture on a photo they "
+    "sent with this message or replied to; the photo itself is then used. Photos are numbered "
+    "from 1: first those in the person's message, then those in the message they replied to, "
+    "so a single photo is 1."
 )
 IMAGE_EDIT_PRIVACY_NOTE = (
     "When photo editing is on, a photo you ask the bot to change is sent to OpenAI with your "
@@ -102,8 +115,7 @@ class ImagePlugin(BasePlugin):
             schema["properties"]["reference"] = {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Use only when the person asks to change or base a picture on a "
-                "photo they sent or replied to: the 1-based number of that photo.",
+                "description": REFERENCE_DESCRIPTION,
             }
 
         async def generate(
@@ -219,7 +231,7 @@ class ImagePlugin(BasePlugin):
 
         return Tool(
             TOOL,
-            "Create one requested image from a text description and send it to the chat.",
+            EDIT_DESCRIPTION if self.settings.IMAGE_EDIT_ENABLED else GENERATE_DESCRIPTION,
             schema,
             generate,
             writes=False,

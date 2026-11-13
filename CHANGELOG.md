@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Photo edits: with `IMAGE_EDIT_ENABLED` on, models called `generate_image` without `reference`
+  and generated an unrelated picture, because the tool text described text-only generation. The
+  editing-on tool description, the `reference` description (photo numbering) and the edit skill
+  instructions now tell the model to pass the photo. Text with editing off is unchanged. No
+  configuration change; `evals/image_reference/run_eval.py` measures the live rate.
+
 ## [0.12.0] - 2026-11-12
 
 ### Added

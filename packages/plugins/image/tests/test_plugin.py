@@ -95,6 +95,27 @@ async def test_edit_uses_requesters_photo_and_is_opt_in(monkeypatch):
     )
 
 
+def test_offered_text_is_unchanged_when_editing_is_off_and_points_to_reference_when_on():
+    platform = FakePlatform()
+    off = ImagePlugin(AccessPolicy(["fake:group"], []), platform, settings=enabled()).tools()[0]
+    assert off.description == (
+        "Create one requested image from a text description and send it to the chat."
+    )
+    assert set(off.parameters["properties"]) == {"prompt", "size", "title"}
+
+    on = ImagePlugin(
+        AccessPolicy(["fake:group"], []), platform, settings=enabled(IMAGE_EDIT_ENABLED=True)
+    ).tools()[0]
+    assert "changing a photo the person sent or replied to" in on.description
+    assert "(pass reference)" in on.description
+    reference = on.parameters["properties"]["reference"]["description"]
+    assert reference.startswith("Pass this whenever the person asks to change")
+    assert "a single photo is 1" in reference
+    assert "call generate_image with reference" in IMAGE_EDIT_INSTRUCTIONS
+    assert "Never say you can't use it" in IMAGE_EDIT_INSTRUCTIONS
+    assert "Never use other photos." in IMAGE_EDIT_INSTRUCTIONS
+
+
 async def test_group_rejects_another_members_photo_before_download(monkeypatch):
     from chatcore_image import plugin as module
 
