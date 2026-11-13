@@ -609,7 +609,7 @@ The bot records **every message** in allowlisted groups (privacy mode is off), a
   - ElevenLabs retains submitted data by default; model-training use depends on the account's terms and settings, with an opt-out for future submissions. Zero Retention Mode is an eligible Enterprise feature, not a standard default. Do not promise an ordinary-plan retention period when none is specified. Before activation, the operator must record the current training opt-out and retention arrangement, establish a hard credit/overage cap where supported, and pass the live language, voice and slow-audio listening qualification in `docs/plans/2026-11-04-tutor-pronunciation-tts.md`.
   - Slow speech uses the FFmpeg system binary (`ffmpeg`) with MP3 support and the `atempo` filter. Downstream images must install it before enabling slow requests. Normal requests do not run FFmpeg. No native reply-chain attribution is guaranteed for the voice attachment.
 - **Voice narration (optional and disabled by default):** when explicitly requested, the `voice` plugin sends a passage the model wrote to ElevenLabs. The passage may summarise user messages or fetched pages. The MP3 comes back in memory and is uploaded as a voice message before the text reply; no audio is cached. Before each request the plugin reads the account's billing-period counters from `/v1/user/subscription`. It keeps only the parsed counters, never invoices or payment fields, and logs only status codes. It uses its own restricted key and quota, separate from the tutor's. The same ElevenLabs retention and training notes apply, and the activation gate in `docs/plans/2026-11-09-voice-narration.md` must pass first.
-- **Image generation (optional and disabled by default):** image prompts, which may paraphrase user messages, go to OpenAI. The generated image returns in memory and is uploaded to the chat; the bot stores nothing.
+- **Image generation (optional and disabled by default):** image prompts, which may paraphrase user messages, go to OpenAI. The generated image returns in memory and is uploaded to the chat; the bot does not retain image bytes.
 - **Image editing (optional and disabled by default):** with editing enabled, a photo the user points to is sent to OpenAI with the prompt. It is held only in the per-turn memory cache and never stored.
 - **DM and group isolation:**
   - `chat_id` is a **required** argument on every store and search function, not an optional filter.
@@ -1245,8 +1245,11 @@ starts a new conversation with that message as context.
 
 With photo editing enabled, receipt-capable platforms retain outgoing photo file identifiers and
 requester attribution in message history, not image bytes. Explicit replies select that exact output
-before conversation-origin remapping; current-message photos still come first. Bot outputs without
-trusted requester attribution are not editing inputs. Group checks use the originating requester.
+before conversation-origin remapping; current-message photos still come first. Any authorized group
+member may edit a photo they explicitly reply to in that same chat/topic, including stored bot
+photos without requester attribution. Core records the scoped exact-reply image IDs for the turn;
+the handler permits other-member photos only with that provenance. Text-reply mappings and ambient
+history grant no shared-edit authority. Requester attribution remains metadata for privacy cleanup.
 Normal message retention, chat erasure and requester erasure remove these references. The optional
 `PhotoReceiptPlatform` capability leaves `PhotoPlatform.send_photo` compatible; document/bridge
 delivery without receipts cannot support durable output editing.

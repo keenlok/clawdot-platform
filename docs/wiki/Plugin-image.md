@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Image generation
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:9e0d59ba40e162a7f5fd29bccde459eee685801b32ae7be75737923be9e8918e
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:65b1ef968364df7f1f99e09698380e63fd0d11c0d735737fd21c0f2961a39de9
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -45,9 +45,11 @@ under the operator's account terms and settings.
 
 ### Reference photos
 When enabled, the image tool can create an edited image from a photo the person explicitly
-points to in their message or reply. In groups, only the requester's own photos can be used.
+sends with the request or explicitly replies to. Any authorized group member may edit an explicitly
+replied-to photo in the same chat/topic, whoever uploaded or generated it. Other members' photos
+reached only through text-reply mappings or history cannot be used.
 The photo and prompt are sent to OpenAI, and edits share the generation caps. Replying to a
-generated photo edits that version and preserves its originating requester for group checks.
+generated photo edits that version and preserves requester attribution for retention and erasure.
 Older untracked outputs and platforms without photo receipts require uploading the photo again.
 
 ### Activation gate

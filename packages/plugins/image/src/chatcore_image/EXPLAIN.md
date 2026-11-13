@@ -45,9 +45,11 @@ under the operator's account terms and settings.
 
 ### Reference photos
 When enabled, the image tool can create an edited image from a photo the person explicitly
-points to in their message or reply. In groups, only the requester's own photos can be used.
+sends with the request or explicitly replies to. Any authorized group member may edit an explicitly
+replied-to photo in the same chat/topic, whoever uploaded or generated it. Other members' photos
+reached only through text-reply mappings or history cannot be used.
 The photo and prompt are sent to OpenAI, and edits share the generation caps. Replying to a
-generated photo edits that version and preserves its originating requester for group checks.
+generated photo edits that version and preserves requester attribution for retention and erasure.
 Older untracked outputs and platforms without photo receipts require uploading the photo again.
 
 ### Activation gate

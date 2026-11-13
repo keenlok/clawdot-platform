@@ -113,10 +113,11 @@ def test_offered_text_is_unchanged_when_editing_is_off_and_points_to_reference_w
     assert "a single photo is 1" in reference
     assert "call generate_image with reference" in IMAGE_EDIT_INSTRUCTIONS
     assert "Never say you can't use it" in IMAGE_EDIT_INSTRUCTIONS
-    assert "Never use other photos." in IMAGE_EDIT_INSTRUCTIONS
+    assert "Never use unrelated photos." in IMAGE_EDIT_INSTRUCTIONS
+    assert "In groups, anyone may edit a directly replied-to photo." in IMAGE_EDIT_INSTRUCTIONS
 
 
-async def test_group_rejects_another_members_photo_before_download(monkeypatch):
+async def test_group_rejects_unproven_other_members_photo_before_download(monkeypatch):
     from chatcore_image import plugin as module
 
     platform = FakePlatform()
@@ -135,7 +136,7 @@ async def test_group_rejects_another_members_photo_before_download(monkeypatch):
         {"prompt": "style", "size": "square", "title": "Photo", "reference": 1},
         context(platform, turn=turn),
     )
-    assert result.content == "In groups I can only use your own photos."
+    assert result.content == "In groups, reply directly to the photo you want to edit."
     download.assert_not_awaited()
     plugin.service.generate.assert_not_awaited()
 

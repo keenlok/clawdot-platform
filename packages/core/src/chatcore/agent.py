@@ -401,7 +401,8 @@ class AgentResponder:
         if not vision or not app.platform.capabilities.files:
             return []
         attachments = list(message.attachments)
-        if replied and (not replied.is_bot or replied.attachment_requester_key):
+        # The context builder has already selected and scoped this exact image source.
+        if replied:
             attachments.extend(replied.attachments)
         return await download_images(
             app.platform, attachments, chat=message.chat, limit=_MAX_IMAGES, cache=downloads
@@ -608,6 +609,7 @@ class AgentResponder:
             turns.append(Message.user(ambient_text))
         replied = None
         image_reply = None
+        explicit_reply_attachment_ids = frozenset()
         if (
             message.reply_to
             and message.reply_to.chat == message.chat
@@ -622,10 +624,12 @@ class AgentResponder:
                 exact is not None
                 and exact.chat == message.chat
                 and exact.thread_id == message.thread_id
-                and exact.is_bot
-                and exact.attachment_requester_key
             ):
-                image_reply = exact
+                explicit_reply_attachment_ids = frozenset(
+                    item.id for item in exact.attachments if is_image(item)
+                )
+                if explicit_reply_attachment_ids:
+                    image_reply = exact
             mapping = await store.conversation_for_message(message.chat, reply_id)
             allow_quote = True
             if mapping is not None:
@@ -693,6 +697,7 @@ class AgentResponder:
         )
         if tool_ctx is not None:
             tool_ctx.turn.attachment_owners = attachment_owners
+            tool_ctx.turn.explicit_reply_attachment_ids = explicit_reply_attachment_ids
         images = await self._images(
             message, app, replied=image_reply, downloads=downloads, vision=vision
         )

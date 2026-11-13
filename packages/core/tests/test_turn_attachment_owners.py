@@ -42,7 +42,7 @@ def _app(platform, provider):
     )
 
 
-async def _capture(incoming, *, previous=()):
+async def _capture(incoming, *, previous=(), expected_reply_ids=frozenset()):
     ids = {item.id: b"\xff\xd8\xffjpeg" for item in incoming.attachments}
     for row in previous:
         ids.update({item.id: b"\xff\xd8\xffjpeg" for item in row.attachments})
@@ -59,6 +59,7 @@ async def _capture(incoming, *, previous=()):
     async def capture(ctx):
         captured["attachments"] = ctx.turn.attachments
         captured["owners"] = ctx.turn.attachment_owners
+        captured["reply_ids"] = ctx.turn.explicit_reply_attachment_ids
         return ToolResult("captured")
 
     app.tools.register(
@@ -68,6 +69,7 @@ async def _capture(incoming, *, previous=()):
         await app.stores.repo.log_message(row)
     await app.handle(incoming)
     assert len(captured["attachments"]) == len(captured["owners"])
+    assert captured["reply_ids"] == expected_reply_ids
     return tuple(zip(captured["attachments"], captured["owners"], strict=True))
 
 
@@ -85,13 +87,13 @@ async def test_reply_photo_owners_follow_current_then_replied_order():
         message("@bot edit", mention=True, attachments=[current]),
         reply_to=MessageRef(GROUP, old.message_id),
     )
-    assert await _capture(incoming, previous=(old,)) == (
+    assert await _capture(incoming, previous=(old,), expected_reply_ids={"replied"}) == (
         (current, "fake:alice"),
         (replied, "fake:bob"),
     )
 
 
-async def test_reply_to_bot_message_adds_no_replied_photos():
+async def test_reply_to_bot_photo_preserves_order_and_explicit_provenance():
     own = Attachment("own", AttachmentKind.PHOTO)
     bot_photo = Attachment("bot-photo", AttachmentKind.PHOTO)
     old = message("bot image", sender=user("bot", is_bot=True), attachments=[bot_photo])
@@ -99,7 +101,10 @@ async def test_reply_to_bot_message_adds_no_replied_photos():
         message("@bot edit", mention=True, attachments=[own]),
         reply_to=MessageRef(GROUP, old.message_id),
     )
-    assert await _capture(incoming, previous=(old,)) == ((own, "fake:alice"),)
+    assert await _capture(incoming, previous=(old,), expected_reply_ids={"bot-photo"}) == (
+        (own, "fake:alice"),
+        (bot_photo, "fake:bot"),
+    )
 
 
 async def test_reply_to_another_thread_or_chat_adds_no_replied_photos():

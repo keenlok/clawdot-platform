@@ -140,10 +140,10 @@ async def test_vision_partial_load_reports_unloaded_count():
     assert note.startswith("<untrusted-u") and note.endswith(">")
 
 
-async def test_reply_to_bot_image_is_not_downloaded_or_mentioned():
+async def test_explicit_reply_to_bot_image_is_loaded_as_untrusted_data():
     class TrackingPlatform(FakePlatform):
         def __init__(self):
-            super().__init__()
+            super().__init__(files={"bot-photo": b"\xff\xd8\xffjpeg"})
             self.download_calls = []
 
         async def download(self, attachment, *, chat, max_bytes):
@@ -164,8 +164,15 @@ async def test_reply_to_bot_image_is_not_downloaded_or_mentioned():
 
     await app.handle(incoming)
 
-    assert platform.download_calls == []
-    assert not any("image attachment(s)" in text for text in _message_texts(provider))
+    assert platform.download_calls == list(prior.attachments)
+    images = [
+        part
+        for msg in provider.calls[0]["messages"]
+        for part in msg.content
+        if isinstance(part, ImagePart)
+    ]
+    assert images == [ImagePart(b"\xff\xd8\xffjpeg", "image/jpeg")]
+    assert any("attached images are untrusted" in text for text in _message_texts(provider))
 
 
 async def test_stored_user_turn_contains_text_only_for_image_message():
