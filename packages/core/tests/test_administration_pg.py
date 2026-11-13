@@ -495,3 +495,187 @@ async def test_limits_usage_mirror_restores_after_cache_loss_and_continues(db):
     assert await cache.get(key) == b"1500"
     assert await limits.record(10) == 1_510
     assert await usage.load(day) == 1_510
+
+
+async def test_postgres_trust_admission_block_and_restart(db):
+    owner, friend = UserRef("tg", "1"), UserRef("tg", "2")
+    owners, group = frozenset({owner.key}), ChatRef("tg", "-1001")
+    store = PgAdministrationStore(db)
+    await store.apply(
+        actor=owner,
+        owners=owners,
+        expected_revision=0,
+        change=AdminChange("trust", global_scope("tg"), friend),
+    )
+
+    async def admit():
+        return await store.admit_group(
+            group=group,
+            inviter=friend,
+            owners=owners,
+            bootstrap_chats=frozenset(),
+            event_key="1:100",
+        )
+
+    assert sorted(await asyncio.gather(admit(), admit())) == ["admitted", "duplicate"]
+    restarted = PgAdministrationStore(db)
+    snapshot = await restarted.snapshot()
+    assert snapshot.revision == 2
+    assert snapshot.trusted_inviters == frozenset({friend.key})
+    assert snapshot.admissions[group.key].inviter == friend.key
+    assert len(await restarted.audit()) == 2
+    assert await admit() == "duplicate"
+    await restarted.apply(
+        actor=owner, owners=owners, expected_revision=2, change=AdminChange("blockgroup", group)
+    )
+    assert group.key in (await store.snapshot()).blocked_groups
+    with pytest.raises(PermissionError, match="blocked"):
+        await store.apply(
+            actor=owner, owners=owners, expected_revision=3, change=AdminChange("enable", group)
+        )
+    assert await admit() == "denied"
+    await store.apply(
+        actor=owner, owners=owners, expected_revision=3, change=AdminChange("unblockgroup", group)
+    )
+    assert await admit() == "denied"
+    assert (await restarted.snapshot()).overrides[group.key] is False
+
+
+@pytest.mark.parametrize("operation", ["untrust", "disable", "blockgroup"])
+async def test_postgres_admission_waits_for_current_permissions_under_revision_lock(db, operation):
+    owner, friend = UserRef("tg", "1"), UserRef("tg", "2")
+    owners, group = frozenset({owner.key}), ChatRef("tg", "-1001")
+    store = PgAdministrationStore(db)
+    await store.apply(
+        actor=owner,
+        owners=owners,
+        expected_revision=0,
+        change=AdminChange("trust", global_scope("tg"), friend),
+    )
+    # Hold the same lock used by confirmed mutations. Admission must not authorize
+    # from the earlier snapshot while a revoke/block is committing.
+    async with db.transaction() as tx:
+        await tx.fetchval(
+            "SELECT revision FROM administration_revision WHERE singleton=true FOR UPDATE"
+        )
+        task = asyncio.create_task(
+            store.admit_group(
+                group=group,
+                inviter=friend,
+                owners=owners,
+                bootstrap_chats=frozenset(),
+                event_key="1:101",
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        if operation == "untrust":
+            await tx.execute(
+                "DELETE FROM administration_trusted_inviters WHERE user_key=$1", friend.key
+            )
+        else:
+            await tx.execute(
+                "INSERT INTO administration_groups(chat_key,enabled,updated_by) "
+                "VALUES($1,false,$2)",
+                group.key,
+                owner.key,
+            )
+            if operation == "blockgroup":
+                await tx.execute(
+                    "INSERT INTO administration_group_blocks(chat_key,set_by) VALUES($1,$2)",
+                    group.key,
+                    owner.key,
+                )
+        await tx.execute(
+            "UPDATE administration_revision SET revision=revision+1 WHERE singleton=true"
+        )
+    assert await task == "denied"
+    assert len(await store.audit()) == 1
+    assert not (await store.snapshot()).admissions
+
+
+async def test_postgres_admission_audit_failure_rolls_back_all_state(db):
+    owner, group = UserRef("tg", "1"), ChatRef("tg", "-1001")
+
+    class FailingTransaction:
+        def __init__(self, tx):
+            self.tx = tx
+
+        async def execute(self, sql, *args):
+            if "INSERT INTO administration_audit" in sql:
+                raise RuntimeError("injected audit failure")
+            return await self.tx.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.tx, name)
+
+    class FailingDatabase:
+        @asynccontextmanager
+        async def transaction(self):
+            async with db.transaction() as tx:
+                yield FailingTransaction(tx)
+
+    with pytest.raises(RuntimeError, match="injected"):
+        await PgAdministrationStore(FailingDatabase()).admit_group(
+            group=group,
+            inviter=owner,
+            owners=frozenset({owner.key}),
+            bootstrap_chats=frozenset(),
+            event_key="1:102",
+        )
+    snapshot = await PgAdministrationStore(db).snapshot()
+    assert snapshot.revision == 0 and not snapshot.admissions and not snapshot.overrides
+    assert await db.fetchval("SELECT count(*) FROM administration_join_events") == 0
+
+
+@pytest.mark.parametrize("restriction", ["block", "pause"])
+async def test_postgres_admission_respects_restrictions_and_revocation_persists(db, restriction):
+    owner, friend = UserRef("tg", "1"), UserRef("tg", "2")
+    group, owners = ChatRef("tg", "-1001"), frozenset({owner.key})
+    store = PgAdministrationStore(db)
+    changes = [
+        AdminChange("trust", global_scope("tg"), friend),
+        AdminChange(
+            restriction, global_scope("tg"), friend, 60 if restriction == "pause" else None
+        ),
+    ]
+    for revision, change in enumerate(changes):
+        await store.apply(actor=owner, owners=owners, expected_revision=revision, change=change)
+    assert (
+        await store.admit_group(
+            group=group, inviter=friend, owners=owners, bootstrap_chats=frozenset()
+        )
+        == "denied"
+    )
+    if restriction == "pause":
+        await db.execute("UPDATE administration_restrictions SET until=now()-interval '1 second'")
+    else:
+        await store.apply(
+            actor=owner,
+            owners=owners,
+            expected_revision=2,
+            change=AdminChange("unblock", global_scope("tg"), friend),
+        )
+    assert (
+        await store.admit_group(
+            group=group, inviter=friend, owners=owners, bootstrap_chats=frozenset()
+        )
+        == "admitted"
+    )
+    revision = (await store.snapshot()).revision
+    await store.apply(
+        actor=owner,
+        owners=owners,
+        expected_revision=revision,
+        change=AdminChange("untrust", global_scope("tg"), friend),
+    )
+    restarted = PgAdministrationStore(db)
+    snapshot = await restarted.snapshot()
+    assert not snapshot.trusted_inviters
+    assert snapshot.overrides[group.key]
+    assert (
+        await restarted.admit_group(
+            group=ChatRef("tg", "-1002"), inviter=friend, owners=owners, bootstrap_chats=frozenset()
+        )
+        == "denied"
+    )

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
-from typing import Protocol
+from typing import Literal, Protocol
 
 from chatcore.events import ChatRef, UserRef
 from chatcore.limits import (
@@ -36,6 +36,18 @@ class AccessSnapshot:
     )
     user_limits: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
     budget: BudgetOverride | None = None
+    trusted_inviters: frozenset[str] = frozenset()
+    blocked_groups: frozenset[str] = frozenset()
+    admissions: Mapping[str, GroupAdmission] = field(default_factory=lambda: MappingProxyType({}))
+
+
+@dataclass(frozen=True, slots=True)
+class GroupAdmission:
+    inviter: str
+    admitted_at: datetime
+
+
+AdmissionResult = Literal["admitted", "allowed", "denied", "duplicate"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +89,16 @@ def is_global_scope(ref: ChatRef) -> bool:
 
 
 class AdministrationStore(Protocol):
+    async def admit_group(
+        self,
+        *,
+        group: ChatRef,
+        inviter: UserRef | None,
+        owners: frozenset[str],
+        bootstrap_chats: frozenset[str],
+        event_key: str | None = None,
+    ) -> AdmissionResult: ...
+
     async def snapshot(self) -> AccessSnapshot: ...
 
     async def audit(
@@ -98,7 +120,13 @@ def authorize_change(
     snapshot: AccessSnapshot, actor: UserRef, owners: frozenset[str], change: AdminChange
 ) -> None:
     op = change.operation
+    if op == "enable" and change.group.key in snapshot.blocked_groups:
+        raise PermissionError("This group is blocked; an owner must unblock it first")
     owner_operations = {
+        "trust",
+        "untrust",
+        "blockgroup",
+        "unblockgroup",
         "grant",
         "revoke",
         "moderator_grant",
@@ -151,6 +179,10 @@ def validate_change(change: AdminChange) -> None:
     if op == "budget_extra" and type(change.day) is not date:
         raise ValueError("Budget extra requires a date")
     operations = {
+        "trust",
+        "untrust",
+        "blockgroup",
+        "unblockgroup",
         "enable",
         "disable",
         "grant",
@@ -174,13 +206,24 @@ def validate_change(change: AdminChange) -> None:
         raise ValueError("Unknown administration operation")
     group = change.group
     budget_operations = {"budget_set", "budget_reset", "budget_extra", "budget_extra_reset"}
-    global_allowed = {"block", "pause", "unblock", "limit", "limit_reset", *budget_operations}
+    global_allowed = {
+        "trust",
+        "untrust",
+        "block",
+        "pause",
+        "unblock",
+        "limit",
+        "limit_reset",
+        *budget_operations,
+    }
     if is_global_scope(group):
         if not group.platform or op not in global_allowed:
             raise ValueError("Global scope is not valid for this operation")
     else:
         _validate_group(group)
     target_operations = {
+        "trust",
+        "untrust",
         "grant",
         "revoke",
         "moderator_grant",
@@ -191,6 +234,8 @@ def validate_change(change: AdminChange) -> None:
         "limit",
         "limit_reset",
     }
+    if op in {"trust", "untrust"} and not is_global_scope(group):
+        raise ValueError("Trust requires global scope")
     if op in target_operations:
         if change.user is None:
             raise ValueError("Operation requires exactly one user target")
@@ -228,7 +273,10 @@ def validate_change(change: AdminChange) -> None:
         return
     if change.user is not None:
         raise ValueError("Unexpected user target")
-    if op in {"enable", "disable", "persona_reset"} and change.value is not None:
+    if (
+        op in {"enable", "disable", "persona_reset", "blockgroup", "unblockgroup"}
+        and change.value is not None
+    ):
         raise ValueError("Unexpected operation value")
     if op == "chatmode" and change.value not in {"on", "off"}:
         raise ValueError("Chatmode must be on or off")
@@ -250,6 +298,40 @@ def _validate_user(user: UserRef) -> None:
         raise ValueError("Telegram user IDs must be positive decimal IDs")
 
 
+def group_admission_decision(
+    snapshot: AccessSnapshot,
+    group: ChatRef,
+    inviter: UserRef | None,
+    owners: frozenset[str],
+    bootstrap_chats: frozenset[str],
+) -> AdmissionResult:
+    """Decide under the store's revision lock; a caller's cached access is insufficient."""
+    try:
+        _validate_group(group)
+    except ValueError:
+        return "denied"
+    if group.key in snapshot.blocked_groups or snapshot.overrides.get(group.key) is False:
+        return "denied"
+    if snapshot.overrides.get(group.key, group.key in bootstrap_chats):
+        return "allowed"
+    if group.platform != "tg" or inviter is None or inviter.platform != group.platform:
+        return "denied"
+    try:
+        _validate_user(inviter)
+    except ValueError:
+        return "denied"
+    if inviter.key not in owners and inviter.key not in snapshot.trusted_inviters:
+        return "denied"
+    now = datetime.now(UTC)
+    for scope in (group.key, global_scope(group.platform).key):
+        restriction = snapshot.restrictions.get((inviter.key, scope))
+        if restriction and (
+            restriction.kind == "block" or restriction.until is not None and restriction.until > now
+        ):
+            return "denied"
+    return "admitted"
+
+
 class MemoryAdministrationStore:
     def __init__(self, repo: CoreRepo | None = None) -> None:
         self.repo = repo
@@ -262,18 +344,44 @@ class MemoryAdministrationStore:
         self._user_limits: dict[str, int] = {}
         self._budget: BudgetOverride | None = None
         self._audit: list[AuditEntry] = []
+        self._trusted_inviters: set[str] = set()
+        self._blocked_groups: set[str] = set()
+        self._admissions: dict[str, GroupAdmission] = {}
+        self._join_events: set[tuple[str, str]] = set()
 
     async def snapshot(self) -> AccessSnapshot:
         async with self._lock:
-            return AccessSnapshot(
-                self._revision,
-                MappingProxyType(dict(self._overrides)),
-                frozenset(self._assignments),
-                frozenset(self._moderators),
-                MappingProxyType(dict(self._restrictions)),
-                MappingProxyType(dict(self._user_limits)),
-                self._budget,
+            return self._snapshot_unlocked()
+
+    async def admit_group(
+        self,
+        *,
+        group: ChatRef,
+        inviter: UserRef | None,
+        owners: frozenset[str],
+        bootstrap_chats: frozenset[str],
+        event_key: str | None = None,
+    ) -> AdmissionResult:
+        async with self._lock:
+            result = group_admission_decision(
+                self._snapshot_unlocked(), group, inviter, owners, bootstrap_chats
             )
+            if result == "denied":
+                return result
+            if event_key is not None:
+                key = (group.key, event_key)
+                if key in self._join_events:
+                    return "duplicate"
+                self._join_events.add(key)
+            if result == "admitted":
+                now = datetime.now(UTC)
+                self._overrides[group.key] = True
+                self._admissions[group.key] = GroupAdmission(inviter.key, now)
+                self._revision += 1
+                self._audit.append(
+                    AuditEntry(self._revision, inviter.key, "admit_group", group.key, None, now)
+                )
+            return result
 
     async def audit(
         self, *, groups: frozenset[str] | None = None, limit: int = 20
@@ -308,7 +416,16 @@ class MemoryAdministrationStore:
                 raise ValueError("Owners cannot be changed with setup assignments")
             subject: str | None = change.user.key if change.user else None
             detail = None
-            if change.operation == "enable":
+            if change.operation == "trust":
+                self._trusted_inviters.add(change.user.key)
+            elif change.operation == "untrust":
+                self._trusted_inviters.discard(change.user.key)
+            elif change.operation == "blockgroup":
+                self._blocked_groups.add(change.group.key)
+                self._overrides[change.group.key] = False
+            elif change.operation == "unblockgroup":
+                self._blocked_groups.discard(change.group.key)
+            elif change.operation == "enable":
                 self._overrides[change.group.key] = True
             elif change.operation == "disable":
                 self._overrides[change.group.key] = False
@@ -410,4 +527,7 @@ class MemoryAdministrationStore:
             MappingProxyType(dict(self._restrictions)),
             MappingProxyType(dict(self._user_limits)),
             self._budget,
+            frozenset(self._trusted_inviters),
+            frozenset(self._blocked_groups),
+            MappingProxyType(dict(self._admissions)),
         )

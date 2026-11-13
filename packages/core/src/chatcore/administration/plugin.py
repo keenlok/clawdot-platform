@@ -12,6 +12,7 @@ from chatcore.administration.store import (
     AdminChange,
     AdministrationStore,
     StaleChangeError,
+    authorize_change,
     check_target,
     global_scope,
     is_global_scope,
@@ -33,6 +34,8 @@ from chatcore.security import injection
 
 USAGE = """Usage:
 /admin groups | admins | moderators | restrictions | audit
+/admin trusted | trust tg:123456 | untrust tg:123456
+/admin blockgroup tg:-100123 | unblockgroup tg:-100123
 /admin enable tg:-100123 | disable tg:-100123
 /admin grant tg:123456 tg:-100123 | revoke tg:123456 tg:-100123
 /admin mod tg:123456 tg:-100123 | unmod tg:123456 tg:-100123
@@ -112,6 +115,15 @@ class AdministrationPlugin(BasePlugin):
         verb = parts[0].lower()
         if verb == "chatmode" and not self.enable_chatmode:
             return "Automatic group replies are disabled. Tag me when you want a group reply."
+        if verb == "trusted":
+            if not owner:
+                return "Owner access is required for this administration change."
+            if len(parts) != 1:
+                return self._usage()
+            snapshot = await self.store.snapshot()
+            return "Trusted inviters (owners are implicitly trusted):\n" + (
+                "\n".join(sorted(snapshot.trusted_inviters)) or "None"
+            )
         if verb in {"groups", "admins", "moderators", "restrictions", "audit"}:
             if len(parts) != 1:
                 return self._usage()
@@ -130,6 +142,10 @@ class AdministrationPlugin(BasePlugin):
         except (ValueError, IndexError):
             return self._usage()
         if change.operation in {
+            "trust",
+            "untrust",
+            "blockgroup",
+            "unblockgroup",
             "grant",
             "revoke",
             "moderator_grant",
@@ -148,11 +164,33 @@ class AdministrationPlugin(BasePlugin):
             return "Administration confirmations are unavailable."
         snapshot = await self.store.snapshot()
         try:
+            authorize_change(snapshot, ctx.user.ref, self.owners, change)
             check_target(snapshot, ctx.user.ref, self.owners, self.protected, change)
+        except PermissionError as exc:
+            return f"Change not authorized: {exc}."
         except ValueError:
             return "That person can't be the target of this change."
         target = change.user.key if change.user else None
-        if change.operation == "persona":
+        if change.operation == "trust":
+            effect = f"allow {target} to invite me to new groups without per-group approval"
+            target = None
+        elif change.operation == "untrust":
+            effect = (
+                f"remove {target}'s permission to invite me to new groups; "
+                "existing groups stay enabled"
+            )
+            target = None
+        elif change.operation == "blockgroup":
+            effect = (
+                f"block and disable {change.group.key}; "
+                "invitations and delegated enable cannot override this"
+            )
+        elif change.operation == "unblockgroup":
+            effect = (
+                f"unblock {change.group.key}; "
+                "it stays disabled until explicitly enabled and re-invited"
+            )
+        elif change.operation == "persona":
             effect = f"set persona to: {change.value}"
         elif change.operation == "persona_reset":
             effect = "reset the persona"
@@ -210,7 +248,9 @@ class AdministrationPlugin(BasePlugin):
     @staticmethod
     def _parse_change(platform: str, parts: list[str]) -> AdminChange:
         verb = parts[0].lower()
-        if verb in {"enable", "disable"} and len(parts) == 2:
+        if verb in {"trust", "untrust"} and len(parts) == 2:
+            return AdminChange(verb, global_scope(platform), user=_user(platform, parts[1]))
+        if verb in {"enable", "disable", "blockgroup", "unblockgroup"} and len(parts) == 2:
             return AdminChange(verb, _group(platform, parts[1]))
         if verb in {"grant", "revoke", "mod", "unmod"} and len(parts) == 3:
             operation = {"mod": "moderator_grant", "unmod": "moderator_revoke"}.get(verb, verb)
@@ -261,6 +301,8 @@ class AdministrationPlugin(BasePlugin):
         if owner:
             lines.extend(
                 [
+                    "/admin trusted | trust USER_ID | untrust USER_ID",
+                    "/admin blockgroup GROUP_ID | unblockgroup GROUP_ID",
                     "/admin admins",
                     "/admin moderators | /admin restrictions",
                     "/admin enable GROUP_ID and /admin disable GROUP_ID",
@@ -407,6 +449,7 @@ class AdministrationPlugin(BasePlugin):
         configured = set(self.access.bootstrap_chats)
         if self.access.snapshot:
             configured.update(self.access.snapshot.overrides)
+            configured.update(self.access.snapshot.blocked_groups)
             configured.update(group for _, group in self.access.snapshot.assignments)
         visible = configured if owner else assigned
         keys = sorted(
@@ -425,9 +468,20 @@ class AdministrationPlugin(BasePlugin):
             mode = "on" if settings.chatmode else "off"
             persona = "set" if settings.persona else "default"
             mode_text = f", chatmode {mode}" if self.enable_chatmode else ""
-            lines.append(
-                f"{key}: {'enabled' if enabled else 'disabled'}{mode_text}, persona {persona}"
-            )
+            snapshot = self.access.snapshot
+            blocked = snapshot is not None and key in snapshot.blocked_groups
+            state = "blocked" if blocked else ("enabled" if enabled else "disabled")
+            provenance = ""
+            if owner and snapshot and key in snapshot.admissions:
+                admission = snapshot.admissions[key]
+                zone, _ = await display_service(ctx.stores).resolve(
+                    ctx.chat, ctx.user.ref, is_dm=ctx.is_dm
+                )
+                provenance = (
+                    f", admitted by {admission.inviter} "
+                    f"at {format_instant(admission.admitted_at, zone)}"
+                )
+            lines.append(f"{key}: {state}{mode_text}, persona {persona}{provenance}")
         return "\n".join(lines)
 
     async def _admins(self, ctx: CommandContext, owner: bool, assigned: frozenset[str]) -> str:
@@ -550,6 +604,10 @@ class AdministrationPlugin(BasePlugin):
             )
             value = payload["value"]
             if operation not in {
+                "trust",
+                "untrust",
+                "blockgroup",
+                "unblockgroup",
                 "enable",
                 "disable",
                 "grant",

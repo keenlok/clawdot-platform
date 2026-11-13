@@ -8,14 +8,17 @@ from types import MappingProxyType
 from chatcore.administration.store import (
     AccessSnapshot,
     AdminChange,
+    AdmissionResult,
     AuditEntry,
+    GroupAdmission,
     Restriction,
     StaleChangeError,
     authorize_change,
     check_target,
+    group_admission_decision,
     validate_change,
 )
-from chatcore.events import UserRef
+from chatcore.events import ChatRef, UserRef
 from chatcore.limits import BudgetOverride
 from chatcore.store.base import Database
 
@@ -31,51 +34,63 @@ class PgAdministrationStore:
             )
             if revision is None:
                 raise RuntimeError("Administration revision row is missing")
-            overrides = await tx.fetch("SELECT chat_key, enabled FROM administration_groups")
-            assignments = await tx.fetch(
-                "SELECT user_key, chat_key FROM administration_assignments"
+            return await self._snapshot(tx, revision)
+
+    async def _snapshot(self, tx: Database, revision: int) -> AccessSnapshot:
+        overrides = await tx.fetch("SELECT chat_key, enabled FROM administration_groups")
+        assignments = await tx.fetch("SELECT user_key, chat_key FROM administration_assignments")
+        moderators = await tx.fetch("SELECT user_key, chat_key FROM administration_moderators")
+        restrictions = await tx.fetch(
+            "SELECT user_key, scope_key, kind, until, set_by, set_at "
+            "FROM administration_restrictions"
+        )
+        user_limits = await tx.fetch("SELECT user_key, per_hour FROM administration_user_limits")
+        budget_row = await tx.fetchrow(
+            "SELECT daily_tokens, extra_tokens, extra_day, set_by, set_at "
+            "FROM administration_budget WHERE singleton=true"
+        )
+        trusted = await tx.fetch("SELECT user_key FROM administration_trusted_inviters")
+        blocks = await tx.fetch("SELECT chat_key FROM administration_group_blocks")
+        admissions = await tx.fetch(
+            "SELECT chat_key, inviter_key, admitted_at FROM administration_group_admissions"
+        )
+        return AccessSnapshot(
+            revision,
+            MappingProxyType({row["chat_key"]: row["enabled"] for row in overrides}),
+            frozenset((row["user_key"], row["chat_key"]) for row in assignments),
+            frozenset((row["user_key"], row["chat_key"]) for row in moderators),
+            MappingProxyType(
+                {
+                    (row["user_key"], row["scope_key"]): Restriction(
+                        row["user_key"],
+                        row["scope_key"],
+                        row["kind"],
+                        row["until"],
+                        row["set_by"],
+                        row["set_at"],
+                    )
+                    for row in restrictions
+                }
+            ),
+            MappingProxyType({row["user_key"]: row["per_hour"] for row in user_limits}),
+            BudgetOverride(
+                budget_row["daily_tokens"],
+                budget_row["extra_tokens"],
+                budget_row["extra_day"],
+                budget_row["set_by"],
+                budget_row["set_at"],
             )
-            moderators = await tx.fetch("SELECT user_key, chat_key FROM administration_moderators")
-            restrictions = await tx.fetch(
-                "SELECT user_key, scope_key, kind, until, set_by, set_at "
-                "FROM administration_restrictions"
-            )
-            user_limits = await tx.fetch(
-                "SELECT user_key, per_hour FROM administration_user_limits"
-            )
-            budget_row = await tx.fetchrow(
-                "SELECT daily_tokens, extra_tokens, extra_day, set_by, set_at "
-                "FROM administration_budget WHERE singleton=true"
-            )
-            return AccessSnapshot(
-                revision,
-                MappingProxyType({row["chat_key"]: row["enabled"] for row in overrides}),
-                frozenset((row["user_key"], row["chat_key"]) for row in assignments),
-                frozenset((row["user_key"], row["chat_key"]) for row in moderators),
-                MappingProxyType(
-                    {
-                        (row["user_key"], row["scope_key"]): Restriction(
-                            row["user_key"],
-                            row["scope_key"],
-                            row["kind"],
-                            row["until"],
-                            row["set_by"],
-                            row["set_at"],
-                        )
-                        for row in restrictions
-                    }
-                ),
-                MappingProxyType({row["user_key"]: row["per_hour"] for row in user_limits}),
-                BudgetOverride(
-                    budget_row["daily_tokens"],
-                    budget_row["extra_tokens"],
-                    budget_row["extra_day"],
-                    budget_row["set_by"],
-                    budget_row["set_at"],
-                )
-                if budget_row
-                else None,
-            )
+            if budget_row
+            else None,
+            frozenset(row["user_key"] for row in trusted),
+            frozenset(row["chat_key"] for row in blocks),
+            MappingProxyType(
+                {
+                    row["chat_key"]: GroupAdmission(row["inviter_key"], row["admitted_at"])
+                    for row in admissions
+                }
+            ),
+        )
 
     async def audit(
         self, *, groups: frozenset[str] | None = None, limit: int = 20
@@ -107,6 +122,62 @@ class PgAdministrationStore:
                 for row in rows
             )
 
+    async def admit_group(
+        self,
+        *,
+        group: ChatRef,
+        inviter: UserRef | None,
+        owners: frozenset[str],
+        bootstrap_chats: frozenset[str],
+        event_key: str | None = None,
+    ) -> AdmissionResult:
+        async with self.db.transaction() as tx:
+            revision = await tx.fetchval(
+                "SELECT revision FROM administration_revision WHERE singleton=true FOR UPDATE"
+            )
+            if revision is None:
+                raise RuntimeError("Administration revision row is missing")
+            snapshot = await self._snapshot(tx, revision)
+            result = group_admission_decision(snapshot, group, inviter, owners, bootstrap_chats)
+            if result == "denied":
+                return result
+            if event_key is not None:
+                claimed = await tx.fetchval(
+                    "INSERT INTO administration_join_events(chat_key,event_key) VALUES($1,$2) "
+                    "ON CONFLICT DO NOTHING RETURNING event_key",
+                    group.key,
+                    event_key,
+                )
+                if claimed is None:
+                    return "duplicate"
+            if result == "admitted":
+                await tx.execute(
+                    "INSERT INTO administration_groups(chat_key,enabled,updated_by) "
+                    "VALUES($1,true,$2)",
+                    group.key,
+                    inviter.key,
+                )
+                await tx.execute(
+                    "INSERT INTO administration_group_admissions(chat_key,inviter_key) "
+                    "VALUES($1,$2) "
+                    "ON CONFLICT(chat_key) DO UPDATE SET "
+                    "inviter_key=EXCLUDED.inviter_key, admitted_at=now()",
+                    group.key,
+                    inviter.key,
+                )
+                await tx.execute(
+                    "UPDATE administration_revision SET revision=$1 WHERE singleton=true",
+                    revision + 1,
+                )
+                await tx.execute(
+                    "INSERT INTO administration_audit(revision,actor_key,operation,chat_key) "
+                    "VALUES($1,$2,'admit_group',$3)",
+                    revision + 1,
+                    inviter.key,
+                    group.key,
+                )
+            return result
+
     async def apply(
         self,
         *,
@@ -127,16 +198,7 @@ class PgAdministrationStore:
                 raise RuntimeError("Administration revision row is missing")
             if revision != expected_revision:
                 raise StaleChangeError("Administration settings changed; please retry")
-            rows = await tx.fetch("SELECT user_key, chat_key FROM administration_assignments")
-            moderator_rows = await tx.fetch(
-                "SELECT user_key, chat_key FROM administration_moderators"
-            )
-            snapshot = AccessSnapshot(
-                revision,
-                {},
-                frozenset((row["user_key"], row["chat_key"]) for row in rows),
-                frozenset((row["user_key"], row["chat_key"]) for row in moderator_rows),
-            )
+            snapshot = await self._snapshot(tx, revision)
             authorize_change(snapshot, actor, owners, change)
             check_target(snapshot, actor, owners, protected, change)
             if change.operation in {"grant", "revoke"} and change.user.key in owners:
@@ -145,7 +207,31 @@ class PgAdministrationStore:
             subject = change.user.key if change.user else None
             op = change.operation
             detail = None
-            if op in {"enable", "disable"}:
+            if op in {"trust", "untrust"}:
+                if op == "trust":
+                    await tx.execute(
+                        "INSERT INTO administration_trusted_inviters(user_key, granted_by) "
+                        "VALUES($1,$2) ON CONFLICT(user_key) DO NOTHING",
+                        change.user.key,
+                        actor.key,
+                    )
+                else:
+                    await tx.execute(
+                        "DELETE FROM administration_trusted_inviters WHERE user_key=$1",
+                        change.user.key,
+                    )
+            elif op == "unblockgroup":
+                await tx.execute(
+                    "DELETE FROM administration_group_blocks WHERE chat_key=$1", change.group.key
+                )
+            elif op in {"enable", "disable", "blockgroup"}:
+                if op == "blockgroup":
+                    await tx.execute(
+                        "INSERT INTO administration_group_blocks(chat_key,set_by) VALUES($1,$2) "
+                        "ON CONFLICT(chat_key) DO NOTHING",
+                        change.group.key,
+                        actor.key,
+                    )
                 await tx.execute(
                     """INSERT INTO administration_groups(chat_key, enabled, updated_by)
                        VALUES ($1, $2, $3)

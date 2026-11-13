@@ -29,6 +29,46 @@ that the returned chat ID is negative and belongs to the intended group, then re
 lookup bot. For a person, use the positive numeric Telegram user ID. Usernames, invite links,
 Telegram group-admin status, and IDs from another platform do not grant bot permissions.
 
+## Let trusted friends invite the bot
+
+In your private conversation with the bot, run `/admin trust tg:123456789` using your friend's
+numeric user ID, then confirm. Your friend can now invite the bot into new Telegram groups
+without asking you to approve each group. Owners already have this ability. Strangers' groups
+are still left unless the group was already enabled. Telegram group-admin status alone does
+not grant invitation permission. This onboarding flow requires direct Telegram transport. The
+protected bridge has an independent fixed group allowlist: it drops unknown-group updates and
+rejects their API calls before the adapter can apply this policy. Adapter-level invitation and
+replay checks also apply to bridge events that its operator already permits. Expanding the
+bridge's transport authority requires a separate broker-policy change.
+
+`/admin trusted` lists explicit trusted inviters. `/admin groups` shows enabled, disabled and
+blocked groups; the owner's view includes who automatically admitted each group and when.
+Inviters gain no setup, moderation or full-admin role. Trust alone does not permit private
+content conversations; ordinary membership and DM access rules still apply. Admitted groups
+use the same budgets, message recording, third-party provider processing and privacy notice as
+manually enabled groups. Make sure group members agree to recording before inviting the bot.
+
+Use `/admin untrust tg:123456789` and confirm to stop that person's future admissions. Their
+existing groups stay enabled, including after restart. Inspect `/admin groups` and disable or
+block those groups separately if you want them to lose access. Active user blocks or pauses
+also prevent that person from admitting a new group while the restriction applies.
+
+Use `/admin blockgroup tg:-1001234567890` and confirm for an owner-controlled group denial.
+This blocks and disables the group; neither an invitation nor delegated enable can override it.
+This differs from `/admin block`, which restricts a person. A disabled group also cannot be
+automatically admitted by an invitation. `/admin unblockgroup` clears only the explicit block;
+the group stays disabled. To restore access, unblock, explicitly `/admin enable`, confirm, then
+re-invite the bot. The bot stops serving a disabled/blocked group on the next access refresh
+and leaves on its next group message or bot-added event; no separate eviction process is added.
+
+Admission requires the Telegram join event and current administration storage. If a message
+arrives first or a join is lost during delivery failure, the bot may leave; resolve the delivery
+problem and re-invite it. Replayed membership updates do not repeat join hooks, but privacy/join
+hooks are best effort if a process or storage failure occurs after admission commits. Basic-group
+to supergroup ID migration is not automatic: use the new group ID with manual enable or a fresh
+authorized invitation. Untrusting everyone stops friend-driven expansion; a code rollback alone
+does not revoke groups already persisted as enabled.
+
 ## Commands
 
 Run `/admin` in a private chat with the bot to see the commands available to your role. Every
@@ -39,6 +79,11 @@ the old request is rejected and must be issued again.
 
 ```text
 /admin groups
+/admin trusted
+/admin trust tg:123456789
+/admin untrust tg:123456789
+/admin blockgroup tg:-1001234567890
+/admin unblockgroup tg:-1001234567890
 /admin admins
 /admin moderators
 /admin restrictions

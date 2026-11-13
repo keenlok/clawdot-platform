@@ -415,3 +415,154 @@ async def test_admin_reply_code_fallback_confirms_and_delegate_cannot_use_purge(
     assert (await store.snapshot()).revision == 2
     await app.handle(message("/purgechat", dm=True, sender=user("helper")))
     assert platform.texts[-1] != "purged"
+
+
+async def test_owner_trust_and_group_blocks_require_confirmation_and_show_provenance():
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    owner, friend = user("owner"), user("friend")
+    store, platform, stores = MemoryAdministrationStore(), FakePlatform(), memory_stores()
+    access = AccessPolicy([], [], owners=[owner.ref.key], store=store)
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=access,
+        plugins=[AdministrationPlugin(access, store, frozenset({owner.ref.key}))],
+        bot_name="sbbot",
+    )
+    await app.handle(message("/admin trust fake:friend", dm=True, sender=owner))
+    assert not (await store.snapshot()).trusted_inviters
+    pending = platform.sent[-1]
+    assert "invite" in pending.text.lower()
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert friend.ref.key in (await store.snapshot()).trusted_inviters
+    await app.handle(message("/admin trusted", dm=True, sender=owner))
+    assert friend.ref.key in platform.texts[-1]
+    before = len(platform.sent)
+    await app.handle(message("/admin trusted", dm=True, sender=friend))
+    assert len(platform.sent) == before  # Trust alone does not grant DM admission.
+    await app.handle(message("/admin blockgroup fake:group", dm=True, sender=owner))
+    pending = platform.sent[-1]
+    assert GROUP.key not in (await store.snapshot()).blocked_groups
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert GROUP.key in (await store.snapshot()).blocked_groups
+    await app.handle(message("/admin enable fake:group", dm=True, sender=owner))
+    assert "blocked" in platform.texts[-1]
+    await app.handle(message("/admin unblockgroup fake:group", dm=True, sender=owner))
+    pending = platform.sent[-1]
+    assert "enable" in pending.text.lower()
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert not access.is_chat_allowed(GROUP)
+    await app.handle(message("/admin untrust fake:friend", dm=True, sender=owner))
+    pending = platform.sent[-1]
+    assert "existing" in pending.text.lower()
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert not (await store.snapshot()).trusted_inviters
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "trust fake:other",
+        "untrust fake:other",
+        "blockgroup fake:group",
+        "unblockgroup fake:group",
+        "trusted",
+    ],
+)
+async def test_delegates_cannot_manage_invitation_permissions(command):
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    owner, friend = user("owner"), user("friend")
+    store, platform = MemoryAdministrationStore(), FakePlatform()
+    owners = frozenset({owner.ref.key})
+    await store.apply(
+        actor=owner.ref,
+        owners=owners,
+        expected_revision=0,
+        change=AdminChange("grant", GROUP, friend.ref),
+    )
+    access = AccessPolicy([], [], owners=owners, store=store)
+    app = BotApp(
+        platform,
+        stores=memory_stores(),
+        access=access,
+        plugins=[AdministrationPlugin(access, store, owners)],
+        bot_name="sbbot",
+    )
+    await app.handle(message("/admin " + command, dm=True, sender=friend))
+    assert "Owner access" in platform.texts[-1]
+    assert (await store.snapshot()).revision == 1
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["trust fake:other", "untrust fake:other", "blockgroup fake:group", "unblockgroup fake:group"],
+)
+async def test_invitation_changes_enforce_requester_staleness_and_single_use(command):
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    owner, other = user("owner"), user("other")
+    store, platform = MemoryAdministrationStore(), FakePlatform()
+    owners = frozenset({owner.ref.key})
+    access = AccessPolicy([GROUP.key], [other.ref.key], owners=owners, store=store)
+    app = BotApp(
+        platform,
+        stores=memory_stores(),
+        access=access,
+        plugins=[AdministrationPlugin(access, store, owners)],
+        bot_name="sbbot",
+    )
+    await app.handle(message("/admin " + command, dm=True, sender=owner))
+    pending = platform.sent[-1]
+    assert pending.action_id
+    await app.handle(press(pending.action_id, sender=other, chat=pending.chat))
+    assert (await store.snapshot()).revision == 0
+    await store.apply(
+        actor=owner.ref,
+        owners=owners,
+        expected_revision=0,
+        change=AdminChange("disable", ChatRef("fake", "another")),
+    )
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert (await store.snapshot()).revision == 1
+    assert "changed since" in platform.texts[-1]
+    await app.handle(message("/admin " + command, dm=True, sender=owner))
+    pending = platform.sent[-1]
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert (await store.snapshot()).revision == 2
+    await app.handle(press(pending.action_id, sender=owner, chat=pending.chat))
+    assert (await store.snapshot()).revision == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "trust tg:-1",
+        "trust tg:*",
+        "trust other:2",
+        "blockgroup tg:2",
+        "blockgroup tg:*",
+        "unblockgroup other:-1",
+    ],
+)
+async def test_invitation_commands_reject_malformed_and_cross_platform_targets(command):
+    from chatcore.administration.plugin import AdministrationPlugin
+    from chatcore.events import User, UserRef
+
+    owner = User(UserRef("tg", "1"), display_name="Owner")
+    store, platform = MemoryAdministrationStore(), FakePlatform(name="tg")
+    owners = frozenset({owner.ref.key})
+    access = AccessPolicy([], [], owners=owners, store=store)
+    app = BotApp(
+        platform,
+        stores=memory_stores(),
+        access=access,
+        plugins=[AdministrationPlugin(access, store, owners)],
+        bot_name="sbbot",
+    )
+    dm = replace(message("/admin " + command, dm=True, sender=owner), chat=ChatRef("tg", "1"))
+    await app.handle(dm)
+    assert (await store.snapshot()).revision == 0
+    assert platform.sent[-1].action_id is None
+    assert "Usage" in platform.texts[-1]

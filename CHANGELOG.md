@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-13
+
+### Added
+
+- Owner-confirmed trusted inviters can admit new Telegram groups without per-group approval
+  through `/admin trust` and `/admin untrust`; `/admin trusted` inspects grants. Owners are
+  implicitly trusted. Admission is persistent and audited, rechecks active restrictions, and
+  grants no other role or DM content access. Untrust preserves existing enabled groups.
+- Owner group blocks via `/admin blockgroup` and `/admin unblockgroup`. Blocks and existing
+  disabled overrides win over invitations and bootstrap enables. Unblocking keeps a group
+  disabled until explicitly enabled. `/admin groups` shows owner-visible admission provenance.
+- Additive core migration `0011_trusted_group_invites.sql` stores grants, blocks, admission
+  provenance and join replay claims. Apply migrations before serving events. Existing group
+  state is preserved; owners can now admit unknown groups by inviting the bot. Direct Telegram
+  transport supports free onboarding; the protected bridge retains its independent fixed
+  transport allowlist. Neither model tools nor broker permissions are expanded.
+
 ## [0.12.1] - 2026-11-13
 
 ### Fixed
@@ -360,7 +377,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/keenlok/clawdot-platform/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/keenlok/clawdot-platform/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/keenlok/clawdot-platform/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/keenlok/clawdot-platform/compare/v0.10.0...v0.11.0

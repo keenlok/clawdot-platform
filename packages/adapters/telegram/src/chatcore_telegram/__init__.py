@@ -304,9 +304,18 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
             became_member = not self._is_member_status(
                 old.status, getattr(old, "is_member", None)
             ) and self._is_member_status(new.status, getattr(new, "is_member", None))
-            if became_member and new.user.id == self._bot_id:
+            if (
+                became_member
+                and new.user.id == self._bot_id
+                and change.chat.type in {"group", "supergroup"}
+            ):
+                update_id = getattr(update, "update_id", None)
                 await handler(
-                    BotAddedToChat(ChatRef(NAME, str(change.chat.id)), self._user(change.from_user))
+                    BotAddedToChat(
+                        ChatRef(NAME, str(change.chat.id)),
+                        self._user(change.from_user) if change.from_user else None,
+                        f"{self._bot_id}:{update_id}" if type(update_id) is int else None,
+                    )
                 )
 
     async def _map_message(self, message: Any) -> IncomingMessage | None:

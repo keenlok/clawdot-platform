@@ -383,7 +383,7 @@ async def test_member_and_poll_events_are_mapped_from_authenticated_relay() -> N
                 "update": {
                     "update_id": 41,
                     "my_chat_member": {
-                        "chat": {"id": -100},
+                        "chat": {"id": -100, "type": "group"},
                         "from": user,
                         "old_chat_member": {"status": "left"},
                         "new_chat_member": {"status": "member", "user": bot},
@@ -511,3 +511,53 @@ async def test_bridge_download_backoff_cap_matches_direct(monkeypatch) -> None:
 def test_bridge_download_settings_are_bounded() -> None:
     with pytest.raises(ValueError):
         BridgeTelegramPlatform(FakeClient(), download_retries=6)
+
+
+@pytest.mark.parametrize("has_actor", [True, False])
+@pytest.mark.parametrize(
+    "chat_type,old_status,new_status,restricted,expected",
+    [
+        ("group", "left", "member", False, True),
+        ("supergroup", "left", "restricted", True, True),
+        ("group", "left", "restricted", False, False),
+        ("group", "member", "administrator", False, False),
+        ("group", "administrator", "member", False, False),
+        ("private", "left", "member", False, False),
+        ("channel", "left", "member", False, False),
+    ],
+)
+async def test_bridge_bot_join_preserves_inviter_and_event_key(
+    chat_type, old_status, new_status, restricted, expected, has_actor
+):
+    platform = BridgeTelegramPlatform(FakeClient())
+    platform._bot_id = 123
+    delivered = []
+
+    async def handler(event):
+        delivered.append(event)
+
+    platform._handler = handler
+    await platform._deliver(
+        {
+            "update": {
+                "update_id": 101,
+                "my_chat_member": {
+                    "chat": {"id": -100 if chat_type != "private" else 12, "type": chat_type},
+                    "from": {"id": 5, "first_name": "A", "is_bot": False} if has_actor else None,
+                    "old_chat_member": {"status": old_status},
+                    "new_chat_member": {
+                        "status": new_status,
+                        "is_member": restricted,
+                        "user": {"id": 123, "first_name": "bot", "is_bot": True},
+                    },
+                },
+            }
+        }
+    )
+    assert len(delivered) == int(expected)
+    if expected:
+        if has_actor:
+            assert delivered[0].added_by.ref == UserRef("tg", "5")
+        else:
+            assert delivered[0].added_by is None
+        assert delivered[0].event_key == "123:101"

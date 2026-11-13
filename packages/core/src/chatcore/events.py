@@ -163,6 +163,8 @@ class MemberLeft:
 class BotAddedToChat:
     chat: ChatRef
     added_by: User | None = None
+    # Adapter-authenticated bot/update identity; distinguishes replay from rejoin.
+    event_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
