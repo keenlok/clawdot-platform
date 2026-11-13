@@ -1550,3 +1550,51 @@ async def test_send_photo_rejects_dimension_sum_over_telegram_limit():
     assert _image_size(data) == (5001, 5000)
     with pytest.raises(PlatformError, match="InvalidPhoto"):
         await make_platform().send_photo(ChatRef("tg", "123"), "large.png", data)
+
+
+@pytest.mark.parametrize("has_actor", [True, False])
+@pytest.mark.parametrize(
+    "chat_type,old_status,new_status,restricted,expected",
+    [
+        ("group", "left", "member", False, True),
+        ("supergroup", "left", "restricted", True, True),
+        ("group", "left", "restricted", False, False),
+        ("group", "member", "administrator", False, False),
+        ("group", "administrator", "member", False, False),
+        ("private", "left", "member", False, False),
+        ("channel", "left", "member", False, False),
+    ],
+)
+async def test_bot_join_preserves_inviter_and_replay_key_only_for_group_joins(
+    chat_type, old_status, new_status, restricted, expected, has_actor
+):
+    platform = make_platform()
+    platform._bot_id = 99
+    handler = AsyncMock()
+    platform._handler = handler
+    update = SimpleNamespace(
+        update_id=101,
+        my_chat_member=SimpleNamespace(
+            chat=Chat(-100 if chat_type != "private" else 12, chat_type),
+            from_user=user(12) if has_actor else None,
+            old_chat_member=SimpleNamespace(user=user(99, is_bot=True), status=old_status),
+            new_chat_member=SimpleNamespace(
+                user=user(99, is_bot=True), status=new_status, is_member=restricted
+            ),
+        ),
+        message=None,
+        edited_message=None,
+        channel_post=None,
+        edited_channel_post=None,
+        callback_query=None,
+        chat_member=None,
+    )
+    await platform._handle_update(update)
+    assert handler.await_count == int(expected)
+    if expected:
+        event = handler.call_args.args[0]
+        if has_actor:
+            assert event.added_by.ref == UserRef("tg", "12")
+        else:
+            assert event.added_by is None
+        assert event.event_key == "99:101"

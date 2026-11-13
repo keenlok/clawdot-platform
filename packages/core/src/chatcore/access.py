@@ -60,7 +60,7 @@ class AccessPolicy:
                 chat = ChatRef.parse(key)
             except (TypeError, ValueError):
                 continue
-            if is_global_scope(chat):
+            if is_global_scope(chat) or (self._snapshot and key in self._snapshot.blocked_groups):
                 continue
             if overrides.get(key, key in self.bootstrap_chats):
                 allowed.add(key)

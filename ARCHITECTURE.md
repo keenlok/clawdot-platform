@@ -32,7 +32,7 @@ earlier history (`clawdot-platform-history`) remains private.
 | Deploy target | Selected and operated by each downstream application (§6) |
 | Web page tool | A single `fetch_web_page`: HTTP fetch plus text extraction, with no headless browser |
 | Expense currency | SGD by default. A **trip** sets its own currencies, and each trip chooses whether to settle in SGD or per currency (§4) |
-| Where it answers | The allowlisted group(s), plus **DMs from people who are members** of those groups |
+| Where it answers | Enabled groups (manual or trusted invitations; explicit denials win), plus **DMs from people who are members** of those groups |
 | Stock integration | Read-only public API only for v1 |
 
 ## 2. Tools exposed to the LLM
@@ -795,6 +795,22 @@ for bootstrap, commands, confirmation behavior and invite order.
 
 Original production rollout/verification details are preserved in the
 private architecture archive (`clawdot-deployments/docs/archives/platform-ac5a4b0/ARCHITECTURE.md`).
+
+### Trusted group invitations (2026-11-13)
+Owners and owner-approved trusted inviters may admit new Telegram groups through authenticated
+bot join events. The administration store atomically checks current trust, restrictions,
+explicit blocks and disabled overrides before writing a persistent enabled group, provenance
+and audit entry. Event keys distinguish a replay from a genuine rejoin. Admission precedes
+privacy hooks and content handling; hooks remain best effort after a process failure.
+
+Only owners may confirm `/admin trust`, `/admin untrust`, `/admin blockgroup` and
+`/admin unblockgroup` in a DM. Trust grants no setup/moderation/admin role or content access.
+Untrust affects future admission only. Blocking writes a disabled override as well; unblocking
+does not enable the group. Existing access consumers use the same effective allowed-group set.
+The protected bridge retains its independent fixed transport allowlist; free onboarding of
+unknown groups requires direct Telegram transport. No broker authority is expanded.
+See [the plan](docs/plans/2026-11-13-trusted-group-invites.md) and
+[administration setup](docs/admin-setup.md). Apply additive migration 0011 on upgrade.
 
 ## 11. Telegram account replacement
 

@@ -583,7 +583,7 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
             return
         bot_update = update.get("my_chat_member")
         if isinstance(bot_update, Mapping):
-            await self._deliver_bot_membership(bot_update)
+            await self._deliver_bot_membership(bot_update, update["update_id"])
 
     async def _emit(self, event: Event) -> None:
         if self._handler is not None:
@@ -798,7 +798,7 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
         elif old_member and not new_member:
             await self._emit(MemberLeft(ref, self._user(user)))
 
-    async def _deliver_bot_membership(self, update: Mapping[str, object]) -> None:
+    async def _deliver_bot_membership(self, update: Mapping[str, object], update_id: int) -> None:
         chat, old, new, actor = (
             update.get(key) for key in ("chat", "old_chat_member", "new_chat_member", "from")
         )
@@ -807,6 +807,7 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
         new_user = new.get("user")
         if (
             isinstance(new_user, Mapping)
+            and chat.get("type") in {"group", "supergroup"}
             and new_user.get("id") == self._bot_id
             and not self._member_status(old.get("status"), old.get("is_member"))
             and self._member_status(new.get("status"), new.get("is_member"))
@@ -815,6 +816,7 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
                 BotAddedToChat(
                     ChatRef(NAME, str(chat.get("id"))),
                     self._user(actor) if isinstance(actor, Mapping) else None,
+                    f"{self._bot_id}:{update_id}",
                 )
             )
 

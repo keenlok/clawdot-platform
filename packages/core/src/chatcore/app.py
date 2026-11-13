@@ -297,10 +297,23 @@ class BotApp:
                 case ButtonPress():
                     await self._on_press(event)
                 case BotAddedToChat():
-                    if not self.access.is_chat_allowed(event.chat):
+                    if event.chat.platform != self.platform.name:
+                        return
+                    if self.access.store is not None:
+                        outcome = await self.access.store.admit_group(
+                            group=event.chat,
+                            inviter=event.added_by.ref if event.added_by else None,
+                            owners=self.access.owners,
+                            bootstrap_chats=self.access.bootstrap_chats,
+                            event_key=event.event_key,
+                        )
+                        await self.access.refresh()
+                    else:
+                        outcome = "allowed" if self.access.is_chat_allowed(event.chat) else "denied"
+                    if outcome == "denied" or not self.access.is_chat_allowed(event.chat):
                         log.info("leaving non-allowlisted chat %s", event.chat.key)
                         await self.platform.leave(event.chat)
-                    else:
+                    elif outcome != "duplicate":
                         for plugin in self.plugins:
                             try:
                                 await plugin.on_bot_added(event.chat, self.platform, self.stores)
