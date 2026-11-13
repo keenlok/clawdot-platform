@@ -6,7 +6,7 @@ import logging
 import unicodedata
 
 from chatcore.access import AccessPolicy
-from chatcore.files import FilePlatform, PhotoPlatform
+from chatcore.files import FilePlatform, PhotoPlatform, PhotoReceiptPlatform
 from chatcore.images import ImageUnavailable, download_image, is_image
 from chatcore.llm.types import ImagePart
 from chatcore.platform import ChatPlatform
@@ -211,7 +211,34 @@ class ImagePlugin(BasePlugin):
                 )
                 if not await may_generate(self.access, ctx):
                     return ToolResult.error("Image delivery is no longer allowed.")
-                if isinstance(ctx.platform, PhotoPlatform):
+                if self.settings.IMAGE_EDIT_ENABLED and isinstance(
+                    ctx.platform, PhotoReceiptPlatform
+                ):
+                    receipt = await ctx.platform.send_photo_with_receipt(
+                        ctx.chat, "image.png", data, caption=caption, thread_id=ctx.thread_id
+                    )
+                    try:
+                        if (
+                            receipt.message.chat != ctx.chat
+                            or receipt.message.thread_id != ctx.thread_id
+                            or receipt.attachment is None
+                        ):
+                            raise ValueError("Invalid photo receipt")
+                        await ctx.stores.repo.log_bot_message(
+                            ctx.chat,
+                            receipt.message.message_id,
+                            caption,
+                            thread_id=ctx.thread_id,
+                            attachments=(receipt.attachment,),
+                            attachment_requester_key=ctx.user.ref.key,
+                        )
+                    except Exception as exc:
+                        log.warning("image reference recording failed error=%s", type(exc).__name__)
+                        return ToolResult(
+                            "Image sent successfully, but its reference could not be saved. "
+                            "For another edit, ask the person to upload the image again."
+                        )
+                elif isinstance(ctx.platform, PhotoPlatform):
                     await ctx.platform.send_photo(
                         ctx.chat, "image.png", data, caption=caption, thread_id=ctx.thread_id
                     )

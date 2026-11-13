@@ -401,7 +401,7 @@ class AgentResponder:
         if not vision or not app.platform.capabilities.files:
             return []
         attachments = list(message.attachments)
-        if replied and not replied.is_bot:
+        if replied and (not replied.is_bot or replied.attachment_requester_key):
             attachments.extend(replied.attachments)
         return await download_images(
             app.platform, attachments, chat=message.chat, limit=_MAX_IMAGES, cache=downloads
@@ -605,6 +605,7 @@ class AgentResponder:
         if ambient_text:
             turns.append(Message.user(ambient_text))
         replied = None
+        image_reply = None
         if (
             message.reply_to
             and message.reply_to.chat == message.chat
@@ -614,6 +615,15 @@ class AgentResponder:
             )
         ):
             reply_id = message.reply_to.message_id
+            exact = await app.stores.repo.get_message(message.chat, reply_id)
+            if (
+                exact is not None
+                and exact.chat == message.chat
+                and exact.thread_id == message.thread_id
+                and exact.is_bot
+                and exact.attachment_requester_key
+            ):
+                image_reply = exact
             mapping = await store.conversation_for_message(message.chat, reply_id)
             allow_quote = True
             if mapping is not None:
@@ -627,6 +637,8 @@ class AgentResponder:
                 replied.chat != message.chat or replied.thread_id != message.thread_id
             ):
                 replied = None
+        if image_reply is None:
+            image_reply = replied if replied and not replied.is_bot else None
         human_urls = _urls(text)
         row = replied
         visited: set[str] = set()
@@ -659,7 +671,7 @@ class AgentResponder:
             attachment
             for attachment in (
                 *message.attachments,
-                *(replied.attachments if replied and not replied.is_bot else ()),
+                *(image_reply.attachments if image_reply else ()),
             )
             if is_image(attachment)
         )
@@ -668,8 +680,10 @@ class AgentResponder:
             for attachments, owner in (
                 (message.attachments, message.user.ref.key),
                 (
-                    replied.attachments if replied and not replied.is_bot else (),
-                    replied.user.key if replied and not replied.is_bot else "",
+                    image_reply.attachments if image_reply else (),
+                    (image_reply.attachment_requester_key or image_reply.user.key)
+                    if image_reply
+                    else "",
                 ),
             )
             for attachment in attachments
@@ -678,7 +692,7 @@ class AgentResponder:
         if tool_ctx is not None:
             tool_ctx.turn.attachment_owners = attachment_owners
         images = await self._images(
-            message, app, replied=replied, downloads=downloads, vision=vision
+            message, app, replied=image_reply, downloads=downloads, vision=vision
         )
         described: list[tuple[int, object]] = []
         skipped: dict[int, str] = {}

@@ -1,9 +1,10 @@
 """Optional outgoing-file capability, independent of the required platform contract."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from chatcore.events import ChatRef, MessageRef
+from chatcore.events import Attachment, ChatRef, MessageRef
 
 
 @runtime_checkable
@@ -63,3 +64,26 @@ class PhotoAlbumPlatform(Protocol):
         caption: str | None = None,
         thread_id: str | None = None,
     ) -> MessageRef: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PhotoReceipt:
+    """A successfully sent photo and its optional platform download reference."""
+
+    message: MessageRef
+    attachment: Attachment | None
+
+
+@runtime_checkable
+class PhotoReceiptPlatform(Protocol):
+    """Optional photo delivery with a reusable platform file reference."""
+
+    async def send_photo_with_receipt(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> PhotoReceipt: ...

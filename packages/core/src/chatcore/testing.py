@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from chatcore.events import (
     Attachment,
+    AttachmentKind,
     ButtonPress,
     ChatRef,
     Event,
@@ -17,6 +18,7 @@ from chatcore.events import (
     User,
     UserRef,
 )
+from chatcore.files import PhotoReceipt
 from chatcore.llm.types import Completion, Message, ToolChoice, ToolSpec
 from chatcore.platform import Capabilities, EventHandler, PlatformError
 from chatcore.store.base import Stores
@@ -203,6 +205,22 @@ class FakePlatform:
         ref = MessageRef(chat, f"b{next(self._ids)}", thread_id)
         self.sent_photos.append(SentPhoto(chat, filename, data, caption, thread_id, ref))
         return ref
+
+    async def send_photo_with_receipt(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> PhotoReceipt:
+        ref = await self.send_photo(chat, filename, data, caption=caption, thread_id=thread_id)
+        attachment = Attachment(
+            f"photo-{ref.message_id}", AttachmentKind.PHOTO, filename, "image/png", len(data)
+        )
+        self.files[attachment.id] = data
+        return PhotoReceipt(ref, attachment)
 
     async def send_photos(
         self,

@@ -95,6 +95,7 @@ def _message_from_row(row: Row) -> StoredMessage:
             for a in json.loads(row["attachments"])
         ),
         reply_to_id=row["reply_to_id"],
+        attachment_requester_key=row.get("attachment_requester_key"),
         username=row.get("username"),
         mentions=mentions_for_source(mentions_from_data(mention_value), row["text"]),
     )
@@ -223,11 +224,14 @@ class PgCoreRepo:
         *,
         thread_id: str | None,
         reply_to_id: str | None = None,
+        attachments: tuple[Attachment, ...] = (),
+        attachment_requester_key: str | None = None,
     ) -> None:
         await self.db.execute(
             """INSERT INTO messages (chat_key, message_id, thread_id, user_key, display_name, text,
-                                     reply_to_id, is_bot, sent_at)
-               VALUES ($1, $2, $3, $4, 'bot', $5, $6, true, now())
+                                     reply_to_id, is_bot, sent_at, attachments,
+                                     attachment_requester_key)
+               VALUES ($1, $2, $3, $4, 'bot', $5, $6, true, now(), $7, $8)
                ON CONFLICT (chat_key, message_id) DO NOTHING""",
             chat.key,
             message_id,
@@ -235,6 +239,19 @@ class PgCoreRepo:
             f"{chat.platform}:bot",
             text,
             reply_to_id,
+            json.dumps(
+                [
+                    {
+                        "id": a.id,
+                        "kind": a.kind.value,
+                        "filename": a.filename,
+                        "mime_type": a.mime_type,
+                        "size_bytes": a.size_bytes,
+                    }
+                    for a in attachments
+                ]
+            ),
+            attachment_requester_key,
         )
 
     async def recent_messages(
@@ -366,7 +383,10 @@ class PgCoreRepo:
     async def purge_user(self, chat: ChatRef, user: UserRef) -> int:
         async with self.db.transaction() as tx:
             messages = await tx.execute(
-                "DELETE FROM messages WHERE chat_key=$1 AND user_key=$2", chat.key, user.key
+                "DELETE FROM messages WHERE chat_key=$1 "
+                "AND (user_key=$2 OR attachment_requester_key=$2)",
+                chat.key,
+                user.key,
             )
             await tx.execute("UPDATE messages SET mentions='[]'::jsonb WHERE chat_key=$1", chat.key)
             pending = await tx.execute(

@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [Replying to generated photos](2026-11-13-image-reply-handoff.md) | Shipped inactive | v0.14.0 (this PR), default editing off: persist outgoing photo receipts with requester attribution and resolve exact-photo replies for successive edits; preserve group ownership checks |
 | [Trusted group invitations](2026-11-13-trusted-group-invites.md) | Live limited | v0.13.0: trusted invitations, owner group blocks, persistent audited admission in direct transport; protected bridge transport stays fixed |
 | [Formatted HTML output execution](2026-11-12-formatted-html-output-execution.md) | Record | Codex execution plan in two runs (A: Telegram text baseline, core cards, renderer `/card`, albums, output budget; B: `cards` plugin and expense cards): `gpt-6-luna` executes, `gpt-6.1-sol` reviews, Claude final review |
 | [Formatted HTML output (summary cards)](2026-11-11-formatted-html-output.md) | Shipped inactive | [PR #33](https://github.com/keenlok/clawdot-platform/pull/33), released in v0.11.0, disabled by default; qualification pending. Fixed-template HTML cards rendered to PNG by `browser-renderer` (new no-JS, no-network `/card` endpoint) and sent as Telegram photos with a short text reply; Telegram text baseline (native blockquotes, aligned narrow tables); `cards` plugin with `send_card` (8,000-character cards, multi-page albums, skill-scoped output budget); reuses `PhotoPlatform` from image generation; ledger-backed expense balance cards |

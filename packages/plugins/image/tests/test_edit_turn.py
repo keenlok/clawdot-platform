@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from chatcore.access import AccessPolicy
 from chatcore.agent import AgentResponder, AgentSettings
 from chatcore.app import BotApp
@@ -168,3 +169,195 @@ async def test_group_reply_to_another_members_photo_is_refused():
     client.images.edit.assert_not_awaited()
     client.images.generate.assert_not_awaited()
     assert platform.sent_photos == []
+
+
+async def test_successive_replies_edit_the_actual_generated_photo():
+    app, platform, provider, client = _build()
+    await app.handle(_photo())
+    first = platform.sent_photos[-1]
+    original = (await app.stores.repo.recent_messages(GROUP, limit=20))[0]
+    conversation_store = app.responder._store(app)
+    conversation = await conversation_store.create_conversation(GROUP, None, ALICE.ref)
+    stored = await app.stores.repo.get_message(GROUP, first.ref.message_id)
+    assert stored is not None, "Generated photos must be recorded for replies"
+    assert stored.is_bot
+    assert stored.attachment_requester_key == ALICE.ref.key
+    assert stored.attachments
+    for version in (b"second", b"third"):
+        provider.responses.extend(
+            [_edit_call(), Completion(Message.assistant("Edited."), "end_turn")]
+        )
+        prior = platform.sent_photos[-1]
+        await conversation_store.map_messages(
+            GROUP,
+            conversation.id,
+            [prior.ref.message_id],
+            primary_message_id=original.message_id,
+            is_bot=True,
+            user=ALICE.ref,
+        )
+        client.images.edit.return_value = SimpleNamespace(
+            data=[SimpleNamespace(b64_json=base64.b64encode(PNG + version).decode())]
+        )
+        await app.handle(
+            replace(
+                message(REQUEST, sender=ALICE, mention=True),
+                reply_to=prior.ref,
+                reply_to_bot=True,
+            )
+        )
+        assert client.images.edit.await_args.kwargs["image"][1] == prior.data
+        assert len(platform.sent_photos) == client.images.edit.await_count
+
+
+async def test_reply_to_generated_photo_preserves_group_requester_check():
+    app, platform, provider, client = _build()
+    await app.handle(_photo())
+    provider.responses.extend(
+        [_edit_call(), Completion(Message.assistant("Unavailable."), "end_turn")]
+    )
+    await app.handle(
+        replace(
+            message(REQUEST, sender=BOB, mention=True),
+            reply_to=platform.sent_photos[0].ref,
+            reply_to_bot=True,
+        )
+    )
+    assert client.images.edit.await_count == 1
+    tool_text = [
+        part.text
+        for msg in provider.calls[-1]["messages"]
+        if msg.role == "tool"
+        for part in msg.content
+        if hasattr(part, "text")
+    ]
+    assert any("only use your own photos" in text for text in tool_text)
+
+
+async def test_forgetting_requester_removes_generated_photo_references():
+    app, platform, provider, client = _build()
+    await app.handle(_photo())
+    ref = platform.sent_photos[0].ref
+    assert await app.stores.repo.get_message(GROUP, ref.message_id) is not None
+    await app.stores.repo.purge_user(GROUP, ALICE.ref)
+    assert await app.stores.repo.get_message(GROUP, ref.message_id) is None
+
+
+async def test_record_failure_reports_sent_photo_without_retry(monkeypatch):
+    app, platform, provider, client = _build()
+    original = app.stores.repo.log_bot_message
+
+    async def failing_record(*args, **kwargs):
+        if kwargs.get("attachments"):
+            raise RuntimeError("storage unavailable")
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(app.stores.repo, "log_bot_message", failing_record)
+    await app.handle(_photo())
+    assert len(platform.sent_photos) == 1
+    assert client.images.edit.await_count == 1
+    texts = [
+        part.text
+        for msg in provider.calls[-1]["messages"]
+        if msg.role == "tool"
+        for part in msg.content
+        if hasattr(part, "text")
+    ]
+    assert any("Image sent successfully" in text for text in texts)
+
+
+async def test_missing_generated_file_never_substitutes_original():
+    app, platform, provider, client = _build()
+    await app.handle(_photo())
+    stored = await app.stores.repo.get_message(GROUP, platform.sent_photos[0].ref.message_id)
+    assert stored is not None
+    platform.files.pop(stored.attachments[0].id)
+    provider.responses.extend(
+        [_edit_call(), Completion(Message.assistant("Upload it again."), "end_turn")]
+    )
+    await app.handle(
+        replace(
+            message(REQUEST, sender=ALICE, mention=True),
+            reply_to=platform.sent_photos[0].ref,
+            reply_to_bot=True,
+        )
+    )
+    assert client.images.edit.await_count == 1
+    assert len(platform.sent_photos) == 1
+
+
+async def test_unattributed_bot_photo_is_not_an_edit_reference():
+    app, platform, provider, client = _build()
+    await app.stores.repo.log_bot_message(
+        GROUP,
+        "unattributed",
+        "A photo",
+        thread_id=None,
+        attachments=(Attachment("photo-1", AttachmentKind.PHOTO),),
+    )
+    await app.handle(
+        replace(
+            message(REQUEST, sender=ALICE, mention=True),
+            reply_to=MessageRef(GROUP, "unattributed"),
+            reply_to_bot=True,
+        )
+    )
+    client.images.edit.assert_not_awaited()
+    assert platform.sent_photos == []
+
+
+async def test_output_in_another_topic_is_not_an_edit_reference():
+    app, platform, provider, client = _build()
+    await app.stores.repo.log_bot_message(
+        GROUP,
+        "other-topic",
+        "A photo",
+        thread_id="7",
+        attachments=(Attachment("photo-1", AttachmentKind.PHOTO),),
+        attachment_requester_key=ALICE.ref.key,
+    )
+    await app.handle(
+        replace(
+            message(REQUEST, sender=ALICE, mention=True),
+            reply_to=MessageRef(GROUP, "other-topic"),
+            reply_to_bot=True,
+        )
+    )
+    client.images.edit.assert_not_awaited()
+    assert platform.sent_photos == []
+
+
+async def test_cross_chat_reply_is_not_an_edit_reference():
+    from chatcore.events import ChatRef
+
+    app, platform, provider, client = _build()
+    await app.stores.repo.log_bot_message(
+        GROUP,
+        "output",
+        "A photo",
+        thread_id=None,
+        attachments=(Attachment("photo-1", AttachmentKind.PHOTO),),
+        attachment_requester_key=ALICE.ref.key,
+    )
+    await app.handle(
+        replace(
+            message(REQUEST, sender=ALICE, mention=True),
+            reply_to=MessageRef(ChatRef(PLATFORM, "other"), "output"),
+            reply_to_bot=True,
+        )
+    )
+    client.images.edit.assert_not_awaited()
+    assert platform.sent_photos == []
+
+
+@pytest.mark.parametrize("reference,expected", [(1, JPEG), (2, PNG)])
+async def test_current_photo_precedes_replied_output_in_reference_numbers(reference, expected):
+    app, platform, provider, client = _build()
+    await app.handle(_photo())
+    prior = platform.sent_photos[-1]
+    provider.responses.extend(
+        [_edit_call(reference), Completion(Message.assistant("Edited."), "end_turn")]
+    )
+    await app.handle(replace(_photo(), reply_to=prior.ref, reply_to_bot=True))
+    assert client.images.edit.await_count == 2
+    assert client.images.edit.await_args.kwargs["image"][1] == expected

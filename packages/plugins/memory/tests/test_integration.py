@@ -454,6 +454,8 @@ async def _prepare_erasure_schema(connection, schema: str) -> None:
         "0008_message_attribution.sql",
         "0009_budget_admin.sql",
         "0010_privacy_erasures.sql",
+        "0011_trusted_group_invites.sql",
+        "0012_output_photo_attribution.sql",
     ):
         await connection.execute((core_migrations / filename).read_text())
     memory_migrations = Path(__file__).parents[1] / "src/chatcore_memory/migrations"

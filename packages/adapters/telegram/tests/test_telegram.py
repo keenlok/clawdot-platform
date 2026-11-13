@@ -1598,3 +1598,22 @@ async def test_bot_join_preserves_inviter_and_replay_key_only_for_group_joins(
         else:
             assert event.added_by is None
         assert event.event_key == "99:101"
+
+
+async def test_photo_receipt_uses_returned_file_without_sending_twice():
+    from chatcore.files import PhotoReceiptPlatform
+
+    bot = AsyncMock()
+    bot.send_photo.return_value = SimpleNamespace(
+        message_id=19,
+        photo=[PhotoSize("small", "u1", 10, 10, 50), PhotoSize("large", "u2", 100, 100, 500)],
+    )
+    platform = make_platform(bot)
+    assert isinstance(platform, PhotoReceiptPlatform)
+    receipt = await platform.send_photo_with_receipt(
+        ChatRef("tg", "123"), "image.png", PNG, caption="Edited", thread_id="7"
+    )
+    assert receipt.message == MessageRef(ChatRef("tg", "123"), "19", "7")
+    assert receipt.attachment.id == "large"
+    assert receipt.attachment.size_bytes == 500
+    bot.send_photo.assert_awaited_once()

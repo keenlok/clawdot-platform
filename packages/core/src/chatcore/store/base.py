@@ -95,6 +95,8 @@ class StoredMessage:
     reply_to_id: str | None = None
     username: str | None = None
     mentions: tuple[Mention, ...] = ()
+    attachment_requester_key: str | None = None
+    """Trusted requester attribution for bot output files; never taken from incoming messages."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +118,8 @@ class CoreRepo(Protocol):
         *,
         thread_id: str | None,
         reply_to_id: str | None = None,
+        attachments: tuple[Attachment, ...] = (),
+        attachment_requester_key: str | None = None,
     ) -> None: ...
     async def recent_messages(
         self, chat: ChatRef, *, limit: int, thread_id: str | None = None

@@ -25,7 +25,7 @@ from chatcore.events import (
     User,
     UserRef,
 )
-from chatcore.files import PhotoAlbumPlatform, PhotoPlatform, VoicePlatform
+from chatcore.files import PhotoAlbumPlatform, PhotoPlatform, PhotoReceipt, VoicePlatform
 from chatcore.images import error_label
 from chatcore.platform import Capabilities, EventHandler, PlatformError
 from chatcore.polls import PollLimits, PollResult, SentPoll
@@ -670,6 +670,36 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
         caption: str | None = None,
         thread_id: str | None = None,
     ) -> MessageRef:
+        msg = await self._send_photo_message(
+            chat, filename, data, caption=caption, thread_id=thread_id
+        )
+        return MessageRef(chat, str(msg.message_id), thread_id)
+
+    async def send_photo_with_receipt(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> PhotoReceipt:
+        msg = await self._send_photo_message(
+            chat, filename, data, caption=caption, thread_id=thread_id
+        )
+        attachments = self._attachments(msg) if getattr(msg, "photo", None) else []
+        photo = next((item for item in attachments if item.kind == AttachmentKind.PHOTO), None)
+        return PhotoReceipt(MessageRef(chat, str(msg.message_id), thread_id), photo)
+
+    async def _send_photo_message(
+        self,
+        chat: ChatRef,
+        filename: str,
+        data: bytes,
+        *,
+        caption: str | None = None,
+        thread_id: str | None = None,
+    ) -> Any:
         if (
             not isinstance(filename, str)
             or not _PHOTO_FILENAME.fullmatch(filename)
@@ -693,7 +723,7 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
             caption=caption,
             message_thread_id=int(thread_id) if thread_id else None,
         )
-        return MessageRef(chat, str(msg.message_id), thread_id)
+        return msg
 
     async def send_photos(
         self,
