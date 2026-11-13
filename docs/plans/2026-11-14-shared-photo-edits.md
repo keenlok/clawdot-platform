@@ -86,3 +86,8 @@ checking, changed-file formatting, diff checks and gitleaks pass. Global formatt
 The final combined full-suite run and hosted CI are release/merge gates; final results and the
 actual downstream rollout receipt are recorded on the associated PRs. No independent review or
 paid live-image test is claimed.
+
+The combined v0.15.1 run passed 4,359 tests (57 skips, one expected failure), and PR CI passed.
+Before merge, v0.15.2 (`703c626`) landed with bounded inviter argument descriptions. Integrated
+that maintenance commit without changing the shared-photo implementation, preserving its new
+metadata regression. Re-ran relevant checks and required CI on the merged tree.
