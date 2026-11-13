@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-13
+
+### Added
+
+- Natural-language, owner-only DM management of trusted inviters. Request several people by
+  exact known name or @username and confirm one preview; up to 20 trust/untrust changes commit
+  atomically with per-person audit entries. Unknown/ambiguous people require clarification.
+  This grants no other role or content access; existing commands and group-denial precedence
+  remain unchanged. No new migration or dependency is required.
+- Optional `Tool.context_allowed` predicate and context-aware registry offering/calling keep
+  narrowly restricted tools out of unauthorized requests in both legacy and skills routing.
+  Existing tools without a predicate behave as before; guarded tools require a ToolContext.
+
 ## [0.14.0] - 2026-11-13
 
 ### Fixed
@@ -388,7 +401,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/keenlok/clawdot-platform/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/keenlok/clawdot-platform/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/keenlok/clawdot-platform/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/keenlok/clawdot-platform/compare/v0.12.0...v0.12.1

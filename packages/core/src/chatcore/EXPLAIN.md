@@ -18,6 +18,10 @@ tool's confirmation rules. The result returns to the model for a reply. Slash co
 the model. Explainer commands read maintained documentation and never demonstrate a write by
 performing it. Explainer text is evidence about behavior, not a request to execute its examples.
 
+Owners can manage invitation permission for known people in their private DM using natural
+language. One batch confirmation lists resolved identities before grants or revocations commit.
+This grants no other admin role or content access; unknown/ambiguous names need clarification.
+
 ## Storage
 The three-store architecture describes complementary services, not a requirement for each plugin.
 Postgres can hold durable messages, conversation turns, memories and plugin records. Valkey holds

@@ -14,8 +14,10 @@ from chatcore.administration.store import (
     Restriction,
     StaleChangeError,
     authorize_change,
+    authorize_inviter_batch,
     check_target,
     group_admission_decision,
+    inviter_batch_changes,
     validate_change,
 )
 from chatcore.events import ChatRef, UserRef
@@ -177,6 +179,58 @@ class PgAdministrationStore:
                     group.key,
                 )
             return result
+
+    async def apply_inviter_batch(
+        self,
+        *,
+        actor: UserRef,
+        owners: frozenset[str],
+        expected_revision: int,
+        operation: str,
+        users: tuple[UserRef, ...],
+        protected: frozenset[str] = frozenset(),
+    ) -> AccessSnapshot:
+        changes = inviter_batch_changes(actor, operation, users)
+        async with self.db.transaction() as tx:
+            revision = await tx.fetchval(
+                "SELECT revision FROM administration_revision WHERE singleton=true FOR UPDATE"
+            )
+            if revision is None:
+                raise RuntimeError("Administration revision row is missing")
+            if revision != expected_revision:
+                raise StaleChangeError("Administration settings changed; please retry")
+            changes = authorize_inviter_batch(
+                await self._snapshot(tx, revision), actor, owners, changes, protected
+            )
+            if changes:
+                revision += 1
+                for change in changes:
+                    if operation == "trust":
+                        await tx.execute(
+                            "INSERT INTO administration_trusted_inviters(user_key,granted_by) "
+                            "VALUES($1,$2) ON CONFLICT(user_key) DO NOTHING",
+                            change.user.key,
+                            actor.key,
+                        )
+                    else:
+                        await tx.execute(
+                            "DELETE FROM administration_trusted_inviters WHERE user_key=$1",
+                            change.user.key,
+                        )
+                    await tx.execute(
+                        "INSERT INTO administration_audit"
+                        "(revision,actor_key,operation,chat_key,subject_key) "
+                        "VALUES($1,$2,$3,$4,$5)",
+                        revision,
+                        actor.key,
+                        operation,
+                        change.group.key,
+                        change.user.key,
+                    )
+                await tx.execute(
+                    "UPDATE administration_revision SET revision=$1 WHERE singleton=true", revision
+                )
+        return await self.snapshot()
 
     async def apply(
         self,

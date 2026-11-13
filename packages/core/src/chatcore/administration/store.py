@@ -99,6 +99,17 @@ class AdministrationStore(Protocol):
         event_key: str | None = None,
     ) -> AdmissionResult: ...
 
+    async def apply_inviter_batch(
+        self,
+        *,
+        actor: UserRef,
+        owners: frozenset[str],
+        expected_revision: int,
+        operation: str,
+        users: tuple[UserRef, ...],
+        protected: frozenset[str] = frozenset(),
+    ) -> AccessSnapshot: ...
+
     async def snapshot(self) -> AccessSnapshot: ...
 
     async def audit(
@@ -332,6 +343,44 @@ def group_admission_decision(
     return "admitted"
 
 
+def inviter_batch_changes(
+    actor: UserRef, operation: str, users: tuple[UserRef, ...]
+) -> tuple[AdminChange, ...]:
+    """Only inviter grants/revocations can enter this atomic batch API."""
+    if operation not in {"trust", "untrust"}:
+        raise ValueError("Only trust and untrust can be batched")
+    if not isinstance(users, (tuple, list)) or not 1 <= len(users) <= 20:
+        raise ValueError("Select between 1 and 20 people")
+    changes = []
+    seen = set()
+    for user in users:
+        if not isinstance(user, UserRef):
+            raise ValueError("Invalid user target")
+        change = AdminChange(operation, global_scope(actor.platform), user)
+        validate_change(change)
+        if user.key not in seen:
+            changes.append(change)
+            seen.add(user.key)
+    return tuple(changes)
+
+
+def authorize_inviter_batch(
+    snapshot: AccessSnapshot,
+    actor: UserRef,
+    owners: frozenset[str],
+    changes: tuple[AdminChange, ...],
+    protected: frozenset[str],
+) -> tuple[AdminChange, ...]:
+    for change in changes:
+        authorize_change(snapshot, actor, owners, change)
+        check_target(snapshot, actor, owners, protected, change)
+    return tuple(
+        change
+        for change in changes
+        if (change.user.key in snapshot.trusted_inviters) != (change.operation == "trust")
+    )
+
+
 class MemoryAdministrationStore:
     def __init__(self, repo: CoreRepo | None = None) -> None:
         self.repo = repo
@@ -391,6 +440,43 @@ class MemoryAdministrationStore:
                 return ()
             entries = [e for e in self._audit if groups is None or e.group in groups]
             return tuple(reversed(entries[-max(0, limit) :]))
+
+    async def apply_inviter_batch(
+        self,
+        *,
+        actor: UserRef,
+        owners: frozenset[str],
+        expected_revision: int,
+        operation: str,
+        users: tuple[UserRef, ...],
+        protected: frozenset[str] = frozenset(),
+    ) -> AccessSnapshot:
+        changes = inviter_batch_changes(actor, operation, users)
+        async with self._lock:
+            if expected_revision != self._revision:
+                raise StaleChangeError("Administration settings changed; please retry")
+            changes = authorize_inviter_batch(
+                self._snapshot_unlocked(), actor, owners, changes, protected
+            )
+            if changes:
+                self._revision += 1
+                now = datetime.now(UTC)
+                for change in changes:
+                    if operation == "trust":
+                        self._trusted_inviters.add(change.user.key)
+                    else:
+                        self._trusted_inviters.discard(change.user.key)
+                    self._audit.append(
+                        AuditEntry(
+                            self._revision,
+                            actor.key,
+                            operation,
+                            change.group.key,
+                            change.user.key,
+                            now,
+                        )
+                    )
+            return self._snapshot_unlocked()
 
     async def apply(
         self,

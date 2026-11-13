@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # How the bot works
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/core/src/chatcore/EXPLAIN.md) · sha256:8b4f92701068ca6411990756ee498c345b4fc2d8d9672530b69df8c195bc288f
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/core/src/chatcore/EXPLAIN.md) · sha256:c942664ec47649ed9f19b1d68a266f030a03f44922fc6bd5b7b0b225a36ab9cf
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -17,6 +17,10 @@ context. The model may request a tool. Code validates and executes that request,
 tool's confirmation rules. The result returns to the model for a reply. Slash commands can bypass
 the model. Explainer commands read maintained documentation and never demonstrate a write by
 performing it. Explainer text is evidence about behavior, not a request to execute its examples.
+
+Owners can manage invitation permission for known people in their private DM using natural
+language. One batch confirmation lists resolved identities before grants or revocations commit.
+This grants no other admin role or content access; unknown/ambiguous names need clarification.
 
 ## Storage
 The three-store architecture describes complementary services, not a requirement for each plugin.

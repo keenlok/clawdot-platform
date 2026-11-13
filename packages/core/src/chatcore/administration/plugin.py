@@ -8,6 +8,8 @@ from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from chatcore.access import AccessPolicy
+from chatcore.administration.gates import build_gates
+from chatcore.administration.inviter_tools import build_tools, commit_batch
 from chatcore.administration.store import (
     AdminChange,
     AdministrationStore,
@@ -31,6 +33,16 @@ from chatcore.limits import (
 from chatcore.pending import PendingAction
 from chatcore.plugin import BasePlugin, Command, CommandContext
 from chatcore.security import injection
+from chatcore.skills import Skill
+
+INVITER_MANAGEMENT_INSTRUCTIONS = (
+    "Manage invitation permission only for the owner in their private DM. When asked to let "
+    "friends add/invite this bot to groups, call manage_trusted_inviters with trust and all "
+    "requested people in one batch. Use untrust to remove that permission. Use exact known "
+    "names or @usernames; never guess identities or IDs. Ask for clarification if unknown or "
+    "ambiguous. The tool previews resolved people for one confirmation; never claim they are "
+    "trusted until confirmed. This grants no other admin role or content access."
+)
 
 USAGE = """Usage:
 /admin groups | admins | moderators | restrictions | audit
@@ -80,13 +92,42 @@ class AdministrationPlugin(BasePlugin):
         self.protected = protected
         self.limits = limits
 
+    def tools(self):
+        return build_tools(self)
+
+    def tool_gates(self):
+        return build_gates(self)
+
+    def skills(self):
+        return [
+            Skill(
+                "invitation_management",
+                "Let trusted friends invite this bot to new groups, or revoke that permission",
+                (
+                    "let Alex and Ben invite you to groups",
+                    "trust these five friends to add you to groups",
+                    "remove Ben's permission to invite you",
+                    "allow my friends to add this bot lah",
+                    "让这些朋友邀请你进群",
+                    "取消他的加群邀请权限",
+                ),
+                ("manage_trusted_inviters",),
+                instructions=INVITER_MANAGEMENT_INSTRUCTIONS,
+                keywords=("invite", "trust", "invitation permission", "邀请", "信任", "加群"),
+                commands=("admin",),
+                max_steps=2,
+            )
+        ]
+
     def commands(self) -> list[Command]:
         return [Command("admin", "Configure groups and delegated setup access", self._command)]
 
     def action_handlers(self):
-        return {"change": self}
+        return {"change": self, "inviter_batch": self}
 
     async def commit(self, action: PendingAction, ctx: CommandContext) -> str:
+        if action.kind == "inviter_batch":
+            return await commit_batch(self, action, ctx)
         return await self._commit(action, ctx)
 
     async def _command(self, ctx: CommandContext, args: str) -> str | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
@@ -13,6 +14,8 @@ from chatcore.pending import PendingAction
 from chatcore.platform import Capabilities, ChatPlatform
 from chatcore.security import injection
 from chatcore.store.base import Stores
+
+log = logging.getLogger(__name__)
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -113,6 +116,20 @@ class Tool:
     direct_after: frozenset[str] = frozenset()
     """Untrusted tool outputs that do not block this direct write."""
 
+    context_allowed: Callable[[ToolContext], bool] | None = None
+    """Optional request guard, enforced for offering and calling in every skills mode."""
+
+    def allows_context(self, ctx: ToolContext | None) -> bool:
+        if self.context_allowed is None:
+            return True
+        if ctx is None:
+            return False
+        try:
+            return self.context_allowed(ctx) is True
+        except Exception as exc:
+            log.warning("tool context guard failed: %s", type(exc).__name__)
+            return False
+
     def __post_init__(self) -> None:
         if not _NAME.match(self.name):
             raise ValueError(f"invalid tool name {self.name!r}")
@@ -142,15 +159,19 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
-    def available(self, *, is_admin: bool) -> list[Tool]:
-        return [t for t in self._tools.values() if is_admin or not t.admin_only]
+    def available(self, *, is_admin: bool, ctx: ToolContext | None = None) -> list[Tool]:
+        return [
+            t
+            for t in self._tools.values()
+            if (is_admin or not t.admin_only) and t.allows_context(ctx)
+        ]
 
-    def specs(self, *, is_admin: bool) -> list[ToolSpec]:
-        return [t.spec for t in self.available(is_admin=is_admin)]
+    def specs(self, *, is_admin: bool, ctx: ToolContext | None = None) -> list[ToolSpec]:
+        return [t.spec for t in self.available(is_admin=is_admin, ctx=ctx)]
 
     async def call(self, name: str, arguments: dict[str, Any], ctx: ToolContext) -> ToolResult:
         tool = self.get(name)
-        if tool is None or (tool.admin_only and not ctx.is_admin):
+        if tool is None or (tool.admin_only and not ctx.is_admin) or not tool.allows_context(ctx):
             return ToolResult.error(f"unknown tool {name!r}")
         unknown = sorted(set(arguments) - set(tool.parameters.get("properties", {})))
         if unknown:

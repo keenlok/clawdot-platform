@@ -679,3 +679,89 @@ async def test_postgres_admission_respects_restrictions_and_revocation_persists(
         )
         == "denied"
     )
+
+
+async def test_postgres_inviter_batch_is_one_revision_with_per_person_audit(db):
+    store, owner = PgAdministrationStore(db), UserRef("tg", "1")
+    people = tuple(UserRef("tg", str(i)) for i in range(2, 7))
+    owners = frozenset({owner.key})
+    snapshot = await store.apply_inviter_batch(
+        actor=owner, owners=owners, expected_revision=0, operation="trust", users=people
+    )
+    assert snapshot.revision == 1 and snapshot.trusted_inviters == frozenset(u.key for u in people)
+    audit = await store.audit()
+    assert len(audit) == 5 and {row.revision for row in audit} == {1}
+    assert {row.subject for row in audit} == {u.key for u in people}
+    with pytest.raises(StaleChangeError):
+        await store.apply_inviter_batch(
+            actor=owner, owners=owners, expected_revision=0, operation="untrust", users=people
+        )
+    assert await store.snapshot() == snapshot
+    assert (
+        await store.apply_inviter_batch(
+            actor=owner, owners=owners, expected_revision=1, operation="trust", users=people
+        )
+        == snapshot
+    )
+    revoked = await store.apply_inviter_batch(
+        actor=owner, owners=owners, expected_revision=1, operation="untrust", users=people
+    )
+    assert revoked.revision == 2 and not revoked.trusted_inviters
+
+
+async def test_postgres_inviter_batch_rolls_back_earlier_people_when_second_audit_fails(db):
+    class FailingTransaction:
+        def __init__(self, tx):
+            self.tx = tx
+            self.audits = 0
+
+        async def execute(self, sql, *args):
+            if "INSERT INTO administration_audit" in sql:
+                self.audits += 1
+                if self.audits == 2:
+                    raise RuntimeError("injected batch audit failure")
+            return await self.tx.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.tx, name)
+
+    class FailingDatabase:
+        @asynccontextmanager
+        async def transaction(self):
+            async with db.transaction() as tx:
+                yield FailingTransaction(tx)
+
+    owner = UserRef("tg", "1")
+    with pytest.raises(RuntimeError, match="injected batch"):
+        await PgAdministrationStore(FailingDatabase()).apply_inviter_batch(
+            actor=owner,
+            owners=frozenset({owner.key}),
+            expected_revision=0,
+            operation="trust",
+            users=tuple(UserRef("tg", str(i)) for i in range(2, 7)),
+        )
+    snapshot = await PgAdministrationStore(db).snapshot()
+    assert snapshot.revision == 0 and not snapshot.trusted_inviters
+    assert await PgAdministrationStore(db).audit() == ()
+
+
+async def test_postgres_inviter_batches_compete_on_the_same_revision(db):
+    owner = UserRef("tg", "1")
+    store = PgAdministrationStore(db)
+    results = await asyncio.gather(
+        *(
+            store.apply_inviter_batch(
+                actor=owner,
+                owners=frozenset({owner.key}),
+                expected_revision=0,
+                operation="trust",
+                users=tuple(UserRef("tg", str(i)) for i in range(start, start + 5)),
+            )
+            for start in (2, 7)
+        ),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(item, StaleChangeError) for item in results) == 1
+    snapshot = await store.snapshot()
+    assert snapshot.revision == 1 and len(snapshot.trusted_inviters) == 5
+    assert len(await store.audit()) == 5
