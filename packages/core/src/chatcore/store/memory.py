@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from chatcore.attribution import mentions_for_source
-from chatcore.events import ChatRef, IncomingMessage, User, UserRef
+from chatcore.events import Attachment, ChatRef, IncomingMessage, User, UserRef
 from chatcore.pending import PendingAction
 from chatcore.store.base import ChatSettings, StoredMessage
 
@@ -102,6 +102,8 @@ class MemoryCoreRepo:
         *,
         thread_id: str | None,
         reply_to_id: str | None = None,
+        attachments: tuple[Attachment, ...] = (),
+        attachment_requester_key: str | None = None,
     ) -> None:
         self._messages[chat.key].append(
             StoredMessage(
@@ -114,6 +116,8 @@ class MemoryCoreRepo:
                 thread_id=thread_id,
                 is_bot=True,
                 reply_to_id=reply_to_id,
+                attachments=attachments,
+                attachment_requester_key=attachment_requester_key,
             )
         )
 
@@ -235,7 +239,11 @@ class MemoryCoreRepo:
 
     async def purge_user(self, chat: ChatRef, user: UserRef) -> int:
         messages = self._messages.get(chat.key, [])
-        kept = [replace(row, mentions=()) for row in messages if row.user != user]
+        kept = [
+            replace(row, mentions=())
+            for row in messages
+            if row.user != user and row.attachment_requester_key != user.key
+        ]
         removed = len(messages) - len(kept)
         self._messages[chat.key] = kept
         pending_ids = [

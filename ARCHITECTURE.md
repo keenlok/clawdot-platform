@@ -1226,3 +1226,13 @@ behaviour is unchanged, which the existing suite confirms. sb_bot turns it on.
 the optional env `CONVERSATION_CONTINUE_MINUTES` (default 60, listed in `.env.example`).
 Conversations start empty after deploy: older bot messages aren't mapped, so replying to one
 starts a new conversation with that message as context.
+
+### Generated-photo follow-up references
+
+With photo editing enabled, receipt-capable platforms retain outgoing photo file identifiers and
+requester attribution in message history, not image bytes. Explicit replies select that exact output
+before conversation-origin remapping; current-message photos still come first. Bot outputs without
+trusted requester attribution are not editing inputs. Group checks use the originating requester.
+Normal message retention, chat erasure and requester erasure remove these references. The optional
+`PhotoReceiptPlatform` capability leaves `PhotoPlatform.send_photo` compatible; document/bridge
+delivery without receipts cannot support durable output editing.

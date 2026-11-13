@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 
 import asyncpg
@@ -56,6 +57,7 @@ async def test_migrations_apply_once_and_detect_edits(db, tmp_path):
         "chatcore/0009_budget_admin.sql",
         "chatcore/0010_privacy_erasures.sql",
         "chatcore/0011_trusted_group_invites.sql",
+        "chatcore/0012_output_photo_attribution.sql",
     ]
     assert await migrations.apply(db, CORE) == []
 
@@ -132,6 +134,7 @@ async def test_message_attribution_migration_upgrades_existing_rows(db, tmp_path
         "chatcore/0009_budget_admin.sql",
         "chatcore/0010_privacy_erasures.sql",
         "chatcore/0011_trusted_group_invites.sql",
+        "chatcore/0012_output_photo_attribution.sql",
     ]
     row = await db.fetchrow(
         "SELECT username,mentions FROM messages WHERE chat_key=$1 AND message_id=$2",
@@ -233,3 +236,35 @@ async def test_display_time_service_persists_preferences_and_scopes_resets_and_p
     assert await first.resolve(dm, alice, is_dm=True) == ("UTC", "fallback")
     assert await first.resolve(group, alice, is_dm=False) == ("Asia/Singapore", "group")
     assert await PgDisplayTimeStore(db).purge_chat(group) == 1
+
+
+async def test_output_photo_survives_repository_restart_and_requester_erasure(db):
+    await migrations.apply(db, CORE)
+    repo = PgCoreRepo(db)
+    photo = Attachment("platform-photo", AttachmentKind.PHOTO, size_bytes=2048)
+    await repo.log_bot_message(
+        GROUP,
+        "output",
+        "Edited photo",
+        thread_id="7",
+        attachments=(photo,),
+        attachment_requester_key=user("alice").ref.key,
+    )
+    await repo.log_bot_message(
+        GROUP,
+        "other-output",
+        "Other photo",
+        thread_id=None,
+        attachments=(photo,),
+        attachment_requester_key=user("bob").ref.key,
+    )
+    restarted = PgCoreRepo(db)
+    stored = await restarted.get_message(GROUP, "output")
+    assert stored.is_bot and stored.thread_id == "7"
+    assert stored.attachments == (photo,)
+    assert stored.attachment_requester_key == user("alice").ref.key
+    assert await restarted.purge_user(GROUP, user("alice").ref) == 1
+    assert await repo.get_message(GROUP, "output") is None
+    assert await repo.get_message(GROUP, "other-output") is not None
+    await repo.purge_older_than(datetime.now(UTC) + timedelta(days=1))
+    assert await repo.get_message(GROUP, "other-output") is None

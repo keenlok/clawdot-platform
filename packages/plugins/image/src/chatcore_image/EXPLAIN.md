@@ -18,7 +18,10 @@ generates one PNG and sends it with a short caption. `/image usage` shows today'
 ## Storage
 Prompts are sent to OpenAI and the generated PNG is held in memory for upload to the chat. The
 plugin does not retain prompts or cache images. Usage counters are process local and reset when the
-bot restarts.
+bot restarts. With editing enabled and a receipt-capable platform (direct Telegram), the bot
+retains the delivered photo's platform file reference and requester attribution in message history.
+This supports replies and successive edits across restarts; image bytes are not cached. Normal
+history retention and requester erasure remove these references.
 
 ## Safety
 Access is checked before generation and again before delivery. Prompt length, daily per user and
@@ -43,7 +46,9 @@ under the operator's account terms and settings.
 ### Reference photos
 When enabled, the image tool can create an edited image from a photo the person explicitly
 points to in their message or reply. In groups, only the requester's own photos can be used.
-The photo and prompt are sent to OpenAI, and edits share the generation caps.
+The photo and prompt are sent to OpenAI, and edits share the generation caps. Replying to a
+generated photo edits that version and preserves its originating requester for group checks.
+Older untracked outputs and platforms without photo receipts require uploading the photo again.
 
 ### Activation gate
 Activation stays blocked until the qualification in
