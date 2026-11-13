@@ -41,9 +41,11 @@ class TurnState:
     """Request-only raw attachment bytes, never persisted or sent to the model."""
     fetches: int = 0
     attachments: tuple[Attachment, ...] = ()
-    """Image attachments of the current human message and its human reply, for image tools."""
+    """Image attachments of the current human message and its scoped reply, for image tools."""
     attachment_owners: tuple[str, ...] = ()
     """Sender user key for each entry of ``attachments``, in the same order."""
+    explicit_reply_attachment_ids: frozenset[str] = frozenset()
+    """Image IDs from the exact explicit reply, validated to this chat/topic by core."""
     vision: bool = False
     """Whether the main model can see images this turn."""
     images_remaining: int = 0

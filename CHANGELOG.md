@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-14
+
+### Changed
+
+- Any authorized group member may edit a photo they explicitly reply to in that same chat/topic,
+  including another member's upload or a stored bot-generated photo. Core supplies exact-reply
+  provenance to the image handler; indirect text replies and history do not grant this authority.
+  Editing-on instructions state the shared-photo rule. Existing opt-in settings, quotas, privacy
+  cleanup and current-upload/DM behavior remain unchanged. No migration or dependency is added.
+
+
+
 ## [0.15.2] - 2026-11-14
 
 ### Fixed

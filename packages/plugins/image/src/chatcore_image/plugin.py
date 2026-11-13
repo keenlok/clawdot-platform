@@ -28,12 +28,13 @@ IMAGE_GENERATION_INSTRUCTIONS = (
     "adjust the description."
 )
 IMAGE_EDIT_INSTRUCTIONS = (
-    "You can edit photos. When the person asks to change, restyle or base a picture on a photo "
-    "they sent or replied to, call generate_image with reference (1 if there is one photo) and a "
-    "prompt describing the result; the photo itself is sent. Never say you can't use it, and "
-    "don't describe it instead. Never use other photos. Never edit a real person into sexual, "
-    "violent, humiliating or deceptive scenes."
+    "You can edit photos. When asked to edit one sent now or directly replied to, call "
+    "generate_image with reference (1 for one photo) and a prompt describing the result. "
+    "In groups, anyone may edit a directly replied-to photo. Never say you can't use it or "
+    "substitute a description. Never use unrelated photos. Never edit a real person into "
+    "sexual, violent, humiliating or deceptive scenes."
 )
+
 GENERATE_DESCRIPTION = "Create one requested image from a text description and send it to the chat."
 EDIT_DESCRIPTION = (
     "Create one requested image and send it to the chat, either from a text description or by "
@@ -182,8 +183,14 @@ class ImagePlugin(BasePlugin):
                 if reference < 1 or reference > len(owned):
                     return ToolResult.error(f"There are {len(owned)} images; pick 1–{len(owned)}.")
                 attachment, owner = owned[reference - 1]
-                if not ctx.is_dm and owner != ctx.user.ref.key:
-                    return ToolResult.error("In groups I can only use your own photos.")
+                if (
+                    not ctx.is_dm
+                    and owner != ctx.user.ref.key
+                    and attachment.id not in ctx.turn.explicit_reply_attachment_ids
+                ):
+                    return ToolResult.error(
+                        "In groups, reply directly to the photo you want to edit."
+                    )
             if not self.generation_available or not await may_generate(self.access, ctx):
                 return ToolResult.error("Image generation is unavailable here.")
             if ctx.turn.tool_attempts.get(TOOL):

@@ -148,27 +148,18 @@ async def test_group_reply_to_own_photo_is_edited():
     await _assert_edited(platform, client)
 
 
-async def test_group_reply_to_another_members_photo_is_refused():
+async def test_group_reply_to_another_members_photo_is_edited():
     app, platform, provider, client = _build()
     photo = _photo(sender=BOB, text="", mention=False)
     await app.handle(photo)
-    request = replace(
-        message(REQUEST, sender=ALICE, mention=True),
-        reply_to=MessageRef(GROUP, photo.message_id),
+    await app.handle(
+        replace(
+            message(REQUEST, sender=ALICE, mention=True),
+            reply_to=MessageRef(GROUP, photo.message_id),
+        )
     )
-    await app.handle(request)
-    tool_results = [
-        part.text
-        for call in provider.calls[1:]
-        for msg in call["messages"]
-        if msg.role == "tool"
-        for part in msg.content
-        if hasattr(part, "text")
-    ]
-    assert any("In groups I can only use your own photos." in text for text in tool_results)
-    client.images.edit.assert_not_awaited()
-    client.images.generate.assert_not_awaited()
-    assert platform.sent_photos == []
+    await _assert_edited(platform, client)
+    assert "In groups, anyone may edit a directly replied-to photo." in provider.calls[0]["system"]
 
 
 async def test_successive_replies_edit_the_actual_generated_photo():
@@ -210,28 +201,21 @@ async def test_successive_replies_edit_the_actual_generated_photo():
         assert len(platform.sent_photos) == client.images.edit.await_count
 
 
-async def test_reply_to_generated_photo_preserves_group_requester_check():
+async def test_any_group_member_can_edit_a_generated_photo():
     app, platform, provider, client = _build()
     await app.handle(_photo())
-    provider.responses.extend(
-        [_edit_call(), Completion(Message.assistant("Unavailable."), "end_turn")]
-    )
+    original = platform.sent_photos[0]
+    provider.responses.extend([_edit_call(), Completion(Message.assistant("Edited."), "end_turn")])
     await app.handle(
         replace(
             message(REQUEST, sender=BOB, mention=True),
-            reply_to=platform.sent_photos[0].ref,
+            reply_to=original.ref,
             reply_to_bot=True,
         )
     )
-    assert client.images.edit.await_count == 1
-    tool_text = [
-        part.text
-        for msg in provider.calls[-1]["messages"]
-        if msg.role == "tool"
-        for part in msg.content
-        if hasattr(part, "text")
-    ]
-    assert any("only use your own photos" in text for text in tool_text)
+    assert client.images.edit.await_count == 2
+    assert client.images.edit.await_args.kwargs["image"][1] == original.data
+    assert len(platform.sent_photos) == 2
 
 
 async def test_forgetting_requester_removes_generated_photo_references():
@@ -286,7 +270,7 @@ async def test_missing_generated_file_never_substitutes_original():
     assert len(platform.sent_photos) == 1
 
 
-async def test_unattributed_bot_photo_is_not_an_edit_reference():
+async def test_directly_replied_stored_bot_photo_needs_no_owner_attribution():
     app, platform, provider, client = _build()
     await app.stores.repo.log_bot_message(
         GROUP,
@@ -302,8 +286,7 @@ async def test_unattributed_bot_photo_is_not_an_edit_reference():
             reply_to_bot=True,
         )
     )
-    client.images.edit.assert_not_awaited()
-    assert platform.sent_photos == []
+    await _assert_edited(platform, client)
 
 
 async def test_output_in_another_topic_is_not_an_edit_reference():
@@ -361,3 +344,30 @@ async def test_current_photo_precedes_replied_output_in_reference_numbers(refere
     await app.handle(replace(_photo(), reply_to=prior.ref, reply_to_bot=True))
     assert client.images.edit.await_count == 2
     assert client.images.edit.await_args.kwargs["image"][1] == expected
+
+
+async def test_other_members_photo_from_text_reply_mapping_is_still_rejected():
+    app, platform, provider, client = _build()
+    photo = _photo(sender=BOB, text="", mention=False)
+    await app.handle(photo)
+    await app.stores.repo.log_bot_message(GROUP, "text-only", "Here is an answer.", thread_id=None)
+    store = app.responder._store(app)
+    conversation = await store.create_conversation(GROUP, None, BOB.ref)
+    await store.map_messages(
+        GROUP,
+        conversation.id,
+        ["text-only"],
+        primary_message_id=photo.message_id,
+        is_bot=True,
+        user=BOB.ref,
+    )
+    await app.handle(
+        replace(
+            message(REQUEST, sender=ALICE, mention=True),
+            reply_to=MessageRef(GROUP, "text-only"),
+            reply_to_bot=True,
+        )
+    )
+    client.images.edit.assert_not_awaited()
+    client.images.generate.assert_not_awaited()
+    assert platform.sent_photos == []

@@ -174,7 +174,7 @@ async def test_tools_receive_current_and_human_reply_images_with_main_vision_off
     assert any("2 image attachment(s)" in m.text for m in sent_messages)
 
 
-async def test_bot_reply_images_are_not_exposed_to_tools():
+async def test_explicit_bot_photo_reply_exposes_scoped_images_to_tools():
     from dataclasses import replace
 
     from chatcore.events import Attachment, AttachmentKind, MessageRef
@@ -183,9 +183,11 @@ async def test_bot_reply_images_are_not_exposed_to_tools():
 
     seen = []
     invocations = []
+    reply_ids = []
 
     async def inspect(ctx):
         invocations.append(ctx.turn.attachments)
+        reply_ids.append(ctx.turn.explicit_reply_attachment_ids)
         seen.extend(ctx.turn.attachments)
         return ToolResult("saw images")
 
@@ -234,6 +236,7 @@ async def test_bot_reply_images_are_not_exposed_to_tools():
     )
     await app.handle(incoming)
     assert len(provider.calls) == 2
-    assert invocations == [()]
-    assert seen == []
-    assert not any("image attachment(s)" in m.text for m in provider.calls[0]["messages"])
+    assert invocations == [prior.attachments]
+    assert seen == list(prior.attachments)
+    assert reply_ids == [frozenset({"bot-image"})]
+    assert any("1 image attachment(s)" in m.text for m in provider.calls[0]["messages"])
