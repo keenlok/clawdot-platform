@@ -199,7 +199,7 @@ async def test_legacy_registry_hides_owner_tool_from_admins_and_groups():
         assert denied.is_error and denied.pending_action is None
 
 
-@pytest.mark.parametrize("mode", ["off", "on"])
+@pytest.mark.parametrize("mode", ["off", "on", "shadow"])
 async def test_natural_request_offers_one_five_person_confirmation_and_requires_owner_click(mode):
     from dataclasses import replace
 
@@ -232,7 +232,9 @@ async def test_natural_request_offers_one_five_person_confirmation_and_requires_
     responder = AgentResponder(
         provider,
         system_prompt="Help the owner manage invitations.",
-        settings=AgentSettings(skills=SkillSettings(mode=SkillsMode(mode), router="keyword")),
+        settings=AgentSettings(
+            skills=SkillSettings(mode=SkillsMode(mode), chats=frozenset({"*"}), router="keyword")
+        ),
         limits=Limits(ctx.stores.cache),
     )
     app = BotApp(
@@ -249,6 +251,9 @@ async def test_natural_request_offers_one_five_person_confirmation_and_requires_
         ),
         chat=ctx.chat,
     )
+    from chatcore.skill_turn import effective_mode
+
+    assert effective_mode(responder.settings.skills, incoming.chat) is SkillsMode(mode)
     await app.handle(incoming)
     assert "manage_trusted_inviters" in {tool.name for tool in provider.calls[0]["tools"]}
     prompts = [item for item in ctx.platform.sent if item.action_id]
@@ -265,7 +270,7 @@ async def test_natural_request_offers_one_five_person_confirmation_and_requires_
     assert (await plugin.store.snapshot()).revision == 1
 
 
-@pytest.mark.parametrize("mode", ["off", "on"])
+@pytest.mark.parametrize("mode", ["off", "on", "shadow"])
 async def test_natural_invitation_tool_is_absent_from_non_owner_admin_provider_requests(mode):
     from dataclasses import replace
 
@@ -290,7 +295,11 @@ async def test_natural_invitation_tool_is_absent_from_non_owner_admin_provider_r
         responder=AgentResponder(
             provider,
             system_prompt="rules",
-            settings=AgentSettings(skills=SkillSettings(mode=SkillsMode(mode), router="keyword")),
+            settings=AgentSettings(
+                skills=SkillSettings(
+                    mode=SkillsMode(mode), chats=frozenset({"*"}), router="keyword"
+                )
+            ),
             limits=Limits(ctx.stores.cache),
         ),
         bot_name="testbot",
