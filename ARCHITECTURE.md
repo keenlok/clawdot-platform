@@ -812,6 +812,20 @@ unknown groups requires direct Telegram transport. No broker authority is expand
 See [the plan](docs/plans/2026-11-13-trusted-group-invites.md) and
 [administration setup](docs/admin-setup.md). Apply additive migration 0011 on upgrade.
 
+### Natural-language invitation batches (2026-11-13)
+
+An owner may request trust/untrust for known people in their own DM. The narrow
+`manage_trusted_inviters` tool resolves exact observed names/@usernames from groups the owner
+currently belongs to, freezes stable IDs and returns one mandatory confirmation. Unknown,
+ambiguous, bot or cross-platform targets do not stage a write. All changes commit atomically
+under one administration revision lock, with per-person audit entries. No new SQL is needed.
+
+This explicitly extends invitation management beyond commands; no other administration action
+is exposed. Owner/DM gates, an opt-in tool context guard for every routing mode, handlers and
+store commits each enforce their relevant boundary. Existing tools without a context guard
+retain their behavior. Trust still grants no other role/content access, and untrust affects
+future admissions only. See [the plan](docs/plans/2026-11-13-natural-inviter-batches.md).
+
 ## 11. Telegram account replacement
 
 Telegram account provisioning and replacement are downstream operator actions. The original

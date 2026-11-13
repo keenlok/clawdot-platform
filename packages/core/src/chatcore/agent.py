@@ -471,7 +471,9 @@ class AgentResponder:
             if skills_on
             else sorted(
                 tool.name
-                for tool in app.tools.available(is_admin=app.access.is_admin(message.user.ref))
+                for tool in app.tools.available(
+                    is_admin=app.access.is_admin(message.user.ref), ctx=tool_ctx
+                )
             )
         )
         sections = [_SPEAKER_INSTRUCTION]
@@ -1134,7 +1136,7 @@ class AgentResponder:
             app.tools,
             list(skill_turn.offered.values())
             if on_mode
-            else app.tools.specs(is_admin=ctx.is_admin),
+            else app.tools.specs(is_admin=ctx.is_admin, ctx=ctx),
         )
         persisted: list[Message] = []
         pending_action_requested = False
@@ -1218,7 +1220,7 @@ class AgentResponder:
                     request_tools = (
                         list(skill_turn.offered.values())
                         if on_mode
-                        else app.tools.specs(is_admin=ctx.is_admin)
+                        else app.tools.specs(is_admin=ctx.is_admin, ctx=ctx)
                     )
                     request_snapshot = skill_turn.offered_snapshot() if on_mode else frozenset()
                     request = {
@@ -1423,7 +1425,7 @@ class AgentResponder:
                                 tools=(
                                     list(skill_turn.offered.values())
                                     if on_mode
-                                    else app.tools.specs(is_admin=ctx.is_admin)
+                                    else app.tools.specs(is_admin=ctx.is_admin, ctx=ctx)
                                 ),
                                 tool_choice="none",
                                 max_tokens=skill_turn.output_tokens(

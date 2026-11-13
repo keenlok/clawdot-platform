@@ -29,6 +29,21 @@ that the returned chat ID is negative and belongs to the intended group, then re
 lookup bot. For a person, use the positive numeric Telegram user ID. Usernames, invite links,
 Telegram group-admin status, and IDs from another platform do not grant bot permissions.
 
+## Natural-language batches in your DM
+
+Owners can send one message such as “Let Alex, Ben, Chris, Dana and Eli invite you to groups.”
+Use exact known names or @usernames. The bot resolves observed people from enabled groups you
+currently belong to and shows one confirmation listing the stable identities for the batch.
+Nothing changes until you confirm. Up to 20 people can be handled atomically; unknown or
+ambiguous names need clarification, and an invalid target prevents partial changes.
+
+You can also say “Remove Alex and Ben's permission to invite you.” Their existing enabled
+groups remain enabled. This is owner-only in your own DM; it grants invitation permission,
+not administrator, setup, moderation or content access. Existing slash commands remain available.
+The bot cannot resolve an arbitrary stranger's username: have them speak in a shared enabled
+group first, or use the existing ID-based commands. Names in the preview are untrusted data;
+check the exact people before confirming.
+
 ## Let trusted friends invite the bot
 
 In your private conversation with the bot, run `/admin trust tg:123456789` using your friend's
