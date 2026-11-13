@@ -27,9 +27,9 @@ def build_tools(plugin: AdministrationPlugin) -> list[Tool]:
     return [
         Tool(
             "manage_trusted_inviters",
-            "Owner-only, private-DM invitation permission management for known people. "
+            "Owner DM only: manage known people's invitation permissions. "
             "Resolve names or @usernames and preview one confirmed batch. Trust lets them "
-            "invite this bot to new groups; it grants no other admin role or content access. "
+            "invite this bot to groups; no other admin role or content access. "
             "Untrust affects future invitations only. Never guess identities; "
             "ask if unknown or ambiguous.",
             {

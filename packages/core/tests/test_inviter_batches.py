@@ -384,3 +384,9 @@ async def test_context_guard_fails_closed_without_context_or_when_callback_raise
     assert not registry.specs(is_admin=True, ctx=ctx)
     assert (await registry.call("guarded", {}, ctx)).is_error
     assert "private guard details" not in caplog.text
+
+
+async def test_inviter_tool_description_fits_application_metadata_budget():
+    plugin, _, _, _ = await make_plugin()
+    tool = plugin.tools()[0]
+    assert len(tool.description) <= 300

@@ -122,3 +122,7 @@ new context argument. The original on-mode test had no enabled chats and fell ba
 Approved usability scope requires genuine off/on/shadow coverage: enable chats explicitly,
 assert effective routing mode, pass context through all skill registry filters, retain
 owner-only negative checks, and release the repair as v0.15.1 before downstream rollout.
+
+The final app suite enforces a 300-character tool description budget. Shorten the new
+324-character description without changing behavior, add a core bound regression, and
+release v0.15.2. Update the private catalog expectations for the intended new tool/skill.
