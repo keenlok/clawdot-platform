@@ -1,6 +1,6 @@
 # Image edit: the model never passes `reference`
 
-**Status (2026-11-12):** Planned. Bug fix for [image reference photos](2026-11-12-image-reference-photos.md) (v0.12.0). Approved by the owner on 2026-11-13, with Claude implementing.
+**Status (2026-11-13):** Merged in [PR #40](https://github.com/keenlok/clawdot-platform/pull/40), released in v0.12.1; live re-test pending. Bug fix for [image reference photos](2026-11-12-image-reference-photos.md) (v0.12.0). Approved by the owner on 2026-11-13, with Claude implementing.
 
 **Execution:** Claude plans, implements and self-reviews, by owner choice for this small text fix (Codex CLI is installed; the owner skipped delegation). The execution section below is written so Codex could run it.
 
