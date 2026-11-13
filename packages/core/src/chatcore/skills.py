@@ -362,6 +362,6 @@ class SkillSet:
                     variants.extend(await gate.variant_hints(ctx.chat, ctx.is_dm))
                 except Exception as exc:
                     log.warning("tool gate failed tool=%s error=%s", name, type(exc).__name__)
-        allowed = {tool.name for tool in self.registry.available(is_admin=ctx.is_admin)}
+        allowed = {tool.name for tool in self.registry.available(is_admin=ctx.is_admin, ctx=ctx)}
         offered = list(dict.fromkeys(name for name in offered if name in allowed))
         return SkillAvailability(state, tuple(offered), hints, tuple(dict.fromkeys(variants)))

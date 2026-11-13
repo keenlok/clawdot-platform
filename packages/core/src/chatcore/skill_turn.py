@@ -135,7 +135,7 @@ async def _availability_from_snapshot(
                 variants.extend(await gate.variant_hints(ctx.chat, ctx.is_dm))
             except Exception as exc:
                 log.warning("tool gate failed tool=%s error=%s", tool_name, type(exc).__name__)
-    available = {tool.name for tool in app.tools.available(is_admin=ctx.is_admin)}
+    available = {tool.name for tool in app.tools.available(is_admin=ctx.is_admin, ctx=ctx)}
     offered = list(dict.fromkeys(tool for tool in offered if tool in available))
     return SkillAvailability(state, tuple(offered), hints, tuple(dict.fromkeys(variants)))
 
@@ -229,7 +229,7 @@ class SkillTurn:
         all_availability = {}
         if mode is SkillsMode.SHADOW:
             gate_started = time.perf_counter()
-            tools = app.tools.available(is_admin=True)
+            tools = app.tools.available(is_admin=True, ctx=ctx)
             by_gate = {}
             for tool in tools:
                 gate = app.skills.gate(tool.name)
@@ -323,7 +323,7 @@ class SkillTurn:
                 if name != "use_skill":
                     assert app.tools.get(name) is not None
                     assert name in {
-                        tool.name for tool in app.tools.available(is_admin=ctx.is_admin)
+                        tool.name for tool in app.tools.available(is_admin=ctx.is_admin, ctx=ctx)
                     }
         turn.initial_offered = frozenset(offered_names)
         turn.step_cap = turn._current_step_cap()

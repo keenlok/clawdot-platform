@@ -114,3 +114,11 @@ names and mismatched identities never stage partial work; group membership is ch
 reading directory rows. Batch authority and every target are revalidated under the commit lock.
 Names are untrusted preview data, labels are bounded, and duplicate/no-op identities do not create
 redundant grants. No real friend grants or group messages have been sent. No independent review.
+
+## Integration correction
+
+The private app regression found that SkillSet and SkillTurn registry filters omitted the
+new context argument. The original on-mode test had no enabled chats and fell back to off.
+Approved usability scope requires genuine off/on/shadow coverage: enable chats explicitly,
+assert effective routing mode, pass context through all skill registry filters, retain
+owner-only negative checks, and release the repair as v0.15.1 before downstream rollout.

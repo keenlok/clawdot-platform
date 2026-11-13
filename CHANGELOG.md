@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-14
+
+### Fixed
+
+- Preserve owner-DM context while filtering skill tools, including natural-language inviter batches.
+- Exercise explicitly enabled skills routing in inviter regression tests.
+
 ## [0.15.0] - 2026-11-13
 
 ### Added
