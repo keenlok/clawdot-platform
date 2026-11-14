@@ -19,7 +19,7 @@ from chatcore.app import BotApp
 from chatcore.conversation import ConversationPlugin
 from chatcore.events import Attachment, AttachmentKind, MessageRef, User, UserRef
 from chatcore.limits import Limits
-from chatcore.llm.types import Completion, Message, ToolCall
+from chatcore.llm.types import Completion, ImagePart, Message, ToolCall
 from chatcore.skill_turn import SkillSettings
 from chatcore.skills import SkillsMode
 from chatcore.testing import GROUP, PLATFORM, FakePlatform, ScriptedProvider, memory_stores, message
@@ -28,6 +28,7 @@ from chatcore_image.service import ImageError
 from pydantic import SecretStr
 
 JPEG = b"\xff\xd8\xff" + b"photo-bytes"
+NEW_JPEG = b"\xff\xd8\xff" + b"new-photo-bytes"
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x03\xe8\x00\x00\x03\xe8" + b"image"
 ALICE = User(UserRef(PLATFORM, "alice"), "Alice", "alice")
 BOB = User(UserRef(PLATFORM, "bob"), "Bob", "bob")
@@ -207,22 +208,51 @@ async def test_retry_replying_to_own_non_image_request_offers_no_image_tool(earl
     _no_image(client, platform)
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "is this watercolour?",
-        "what cartoon is this?",
-        "describe this anime",
-        "translate this cartoon",
-        "please explain this anime style",
-    ],
-)
-async def test_photo_question_or_other_task_naming_a_style_offers_no_image_tool(text):
+NOT_IMAGE_ACTIONS = [
+    "is this watercolour?",
+    "what cartoon is this?",
+    "describe this anime",
+    "translate this cartoon",
+    "please explain this anime style",
+    "thanks",
+    "can you edit photos?",
+    "look at my lunch",
+    "what is this?",
+    "when was this taken",
+]
+
+
+def _assert_offered_without_action(request):
+    """The tool and its restraint guidance are present; nothing here runs a generation."""
+    assert "generate_image" in _offered(request)
+    assert "## image_generation" in request["system"]
+    assert "Usable photo reference numbers this turn: 1." in request["system"]
+    assert "A photo alone is not a request" in request["system"]
+    assert "Answer questions, translation requests and thanks normally." in request["system"]
+    assert "Generate only when the person explicitly asks for an image." in request["system"]
+
+
+@pytest.mark.parametrize("text", NOT_IMAGE_ACTIONS)
+async def test_photo_reply_without_an_image_action_is_offered_but_never_auto_generates(text):
+    # Scripted no-action completion: proves the platform makes no image call by itself. It
+    # does not prove a real model stays quiet.
     app, platform, provider, client, _ = _build([TEXT])
     photo = _photo()
     await app.handle(photo)
     await app.handle(_say(text, reply_to=photo.message_id))
-    assert "generate_image" not in _offered(provider.calls[0])
+    assert len(provider.calls) == 1
+    _assert_offered_without_action(provider.calls[0])
+    assert _called(provider) == []
+    _no_image(client, platform)
+
+
+@pytest.mark.parametrize("caption", ["@testbot", "@testbot what is this?", "@testbot 翻译一下"])
+async def test_captioned_or_bare_photo_is_offered_but_never_auto_generates(caption):
+    app, platform, provider, client, _ = _build([TEXT])
+    await app.handle(_photo(text=caption, mention=True))
+    assert len(provider.calls) == 1
+    _assert_offered_without_action(provider.calls[0])
+    assert _called(provider) == []
     _no_image(client, platform)
 
 
@@ -260,32 +290,34 @@ async def test_dynamically_loaded_skill_without_a_photo_gets_the_no_substitute_n
     _no_image(client, platform)
 
 
-async def test_dynamically_loaded_skill_names_the_current_usable_photo_and_edits_next_step():
-    # Same step: the load is honoured, the not-yet-offered image call is refused.
-    both = Completion(
-        Message.assistant(
-            "",
-            (
-                ToolCall("load-1", "use_skill", {"name": "image_generation"}),
-                _image_call(1, "early").message.tool_calls[0],
-            ),
-        ),
-        "tool_use",
-    )
-    app, platform, provider, client, _ = _build([both, _image_call(1, "call-2"), DONE])
+async def test_unlisted_wording_with_a_replied_photo_is_offered_from_the_first_step():
+    # Before the photo-context change this wording needed a use_skill load first.
+    app, platform, provider, client, _ = _build([_image_call(1), DONE])
     photo = _photo()
     await app.handle(photo)
     await app.handle(_say("the usual, like before", reply_to=photo.message_id))
-    first, second = provider.calls[0], provider.calls[1]
-    assert "generate_image" not in _offered(first)
-    loaded, refused = _tool_texts(second)
-    assert "Usable photo reference numbers this turn: 1." in loaded
-    assert "A photo alone is not a request" in loaded
-    assert "No usable photo" not in loaded
-    assert "Tool not available in this turn" in refused
-    assert "generate_image" in _offered(second)
+    first = provider.calls[0]
+    assert "generate_image" in _offered(first)
+    assert "Usable photo reference numbers this turn: 1." in first["system"]
+    assert "No usable photo" not in first["system"]
+    assert _called(provider) == ["generate_image"]
     client.images.edit.assert_awaited_once()
     assert client.images.edit.await_args.kwargs["image"][1] == JPEG
+    client.images.generate.assert_not_awaited()
+
+
+async def test_dynamically_loaded_skill_with_editing_off_ignores_a_replied_photo():
+    app, platform, provider, client, _ = _build([_load_image_skill(), TEXT], edit=False)
+    photo = _photo()
+    await app.handle(photo)
+    await app.handle(_say("the usual, like before", reply_to=photo.message_id))
+    first, second = provider.calls
+    assert "generate_image" not in _offered(first)
+    (loaded,) = _tool_texts(second)
+    assert "Usable photo reference" not in loaded
+    spec = next(spec for spec in second["tools"] if spec.name == "generate_image")
+    assert "reference" not in spec.parameters["properties"]
+    _no_image(client, platform)
 
 
 async def test_dynamically_loaded_skill_with_editing_off_adds_no_reference_note():
@@ -314,18 +346,6 @@ async def test_sticky_image_skill_is_requester_local_and_survives_another_speake
     assert "generate_image" in _offered(provider.calls[0])
     assert "generate_image" not in _offered(provider.calls[1])
     assert "generate_image" in _offered(provider.calls[2])
-    _no_image(client, platform)
-
-
-@pytest.mark.parametrize(
-    "text", ["thanks", "can you edit photos?", "look at my lunch", "what is this?"]
-)
-async def test_photo_reply_without_an_image_action_offers_no_image_tool(text):
-    app, platform, provider, client, _ = _build([TEXT])
-    photo = _photo()
-    await app.handle(photo)
-    await app.handle(_say(text, reply_to=photo.message_id))
-    assert "generate_image" not in _offered(provider.calls[0])
     _no_image(client, platform)
 
 
@@ -358,13 +378,83 @@ async def test_other_members_photo_reached_through_a_text_reply_is_not_edit_cont
     _no_image(client, platform)
 
 
-async def test_editing_disabled_never_treats_a_photo_as_edit_context():
+@pytest.mark.parametrize("text", ["iron man pls", "use this face", "what is this?"])
+async def test_editing_disabled_never_treats_a_photo_as_edit_context(text):
     app, platform, provider, client, _ = _build([TEXT], edit=False)
     photo = _photo()
     await app.handle(photo)
-    await app.handle(_say("iron man pls", reply_to=photo.message_id))
+    await app.handle(_say(text, reply_to=photo.message_id))
     assert "generate_image" not in _offered(provider.calls[0])
     _no_image(client, platform)
+
+
+async def test_photo_does_not_override_a_denied_user_gate(monkeypatch):
+    async def denied(access, ctx):
+        return False
+
+    monkeypatch.setattr("chatcore_image.gates.may_generate", denied)
+    app, platform, provider, client, _ = _build([TEXT])
+    await app.handle(_photo(text="@testbot use this face", mention=True))
+    assert len(provider.calls) == 1
+    assert "generate_image" not in _offered(provider.calls[0])
+    _no_image(client, platform)
+
+
+async def test_new_photo_replying_to_a_text_answer_does_not_gain_the_earlier_output():
+    app, platform, provider, client, _ = _build([_image_call(1), DONE, _image_call(1, "c2"), DONE])
+    await app.handle(_photo(text="@testbot make this photo a watercolour", mention=True))
+    output = platform.sent_photos[-1]
+    answer = platform.sent[-1]
+    platform.files["photo-2"] = NEW_JPEG
+    fresh = replace(
+        message(
+            "@testbot use this face",
+            sender=ALICE,
+            mention=True,
+            attachments=[Attachment("photo-2", AttachmentKind.PHOTO)],
+        ),
+        reply_to=answer.ref,
+        reply_to_bot=True,
+    )
+    await app.handle(fresh)
+    request = provider.calls[2]
+    assert "generate_image" in _offered(request)
+    stored_output = await app.stores.repo.get_message(GROUP, output.ref.message_id)
+    output_ids = {item.id for item in stored_output.attachments}
+    assert output_ids
+    assert client.images.edit.await_count == 2
+    # Reference 1 is the photo sent now; the generated output is not a reference at all.
+    assert client.images.edit.await_args.kwargs["image"][1] == NEW_JPEG
+    seen = [part.data for part in request["messages"][-1].content if isinstance(part, ImagePart)]
+    assert seen[0] == NEW_JPEG
+    assert output.data not in seen
+    assert output.data != JPEG
+    assert "Usable photo reference numbers this turn: 1." in request["system"]
+
+
+async def test_new_photo_replying_to_a_plain_text_answer_is_offered_with_only_that_photo():
+    # No earlier image turn, so nothing is inherited: the photo alone makes the skill active.
+    app, platform, provider, client, _ = _build([_image_call(1), DONE])
+    await app.stores.repo.log_bot_message(GROUP, "text-only", "An answer.", thread_id=None)
+    platform.files["photo-2"] = NEW_JPEG
+    await app.handle(
+        replace(
+            message(
+                "@testbot use this face",
+                sender=ALICE,
+                mention=True,
+                attachments=[Attachment("photo-2", AttachmentKind.PHOTO)],
+            ),
+            reply_to=MessageRef(GROUP, "text-only"),
+            reply_to_bot=True,
+        )
+    )
+    request = provider.calls[0]
+    assert "generate_image" in _offered(request)
+    assert "Usable photo reference numbers this turn: 1." in request["system"]
+    client.images.edit.assert_awaited_once()
+    assert client.images.edit.await_args.kwargs["image"][1] == NEW_JPEG
+    client.images.generate.assert_not_awaited()
 
 
 async def test_inherited_skill_without_a_photo_asks_for_one_instead_of_substituting():

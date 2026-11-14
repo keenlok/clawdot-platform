@@ -28,16 +28,19 @@ IMAGE_GENERATION_INSTRUCTIONS = (
     "then reply in one or two sentences saying what was made. If it fails, say so and offer to "
     "adjust the description."
 )
+# With the generation text this stays within the 766 characters shipped in v0.17.0, so apps
+# that append their own additions keep the same headroom under the 800-character cap.
 IMAGE_EDIT_INSTRUCTIONS = (
-    "You can edit photos. When asked to edit one sent now or directly replied to, call "
-    "generate_image with reference (1 for one photo) and a prompt describing the result. "
-    "In groups, anyone may edit a directly replied-to photo. Never say you can't use it or "
-    "substitute a description. Never use unrelated photos. Never edit a real person into "
-    "sexual, violent, humiliating or deceptive scenes."
+    "Edit photos sent now or directly replied to; call generate_image with reference. In groups, "
+    "anyone may edit a directly replied-to photo. Never use unrelated photos. Never put real "
+    "people in sexual, violent, humiliating or deceptive scenes; explain content refusals. "
+    "Report actual tool errors; don't invent format or capability errors."
 )
 
 GENERATE_SUMMARY = "Create a picture from a description"
-EDIT_SUMMARY = "Create a picture from a description, or edit or restyle a photo sent or replied to"
+EDIT_SUMMARY = (
+    "Create a picture from a description, or edit a photo attached or directly replied to"
+)
 GENERATE_DESCRIPTION = "Create one requested image from a text description and send it to the chat."
 EDIT_DESCRIPTION = (
     "Create one requested image and send it to the chat, either from a text description or by "

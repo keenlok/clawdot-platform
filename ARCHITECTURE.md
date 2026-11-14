@@ -1273,10 +1273,24 @@ Included in the v0.17.0 release; downstream applications adopt the reviewed immu
   `context` hooks see what tool handlers later check. Hooks may match the person's wording to
   decide activation; they must not copy it into trusted text or treat it as permission.
 - **Pins never authorize.** A pin only makes a skill active. The image pin
-  (`chatcore_image/routing.py`) fires for a short follow-up only with a usable photo, a directly
-  replied-to generated photo, or the requester's own replied-to image request. There is no
-  pending-intent state and no cross-requester carryover; the phrases are not router keywords.
-  The handler's access, provenance, once-per-turn and quota checks are unchanged.
+  (`chatcore_image/routing.py`) fires in two cases. *Photo context* (revised 2026-11-14, plan
+  [`2026-11-14-image-routing-context-reassessment.md`](docs/plans/2026-11-14-image-routing-context-reassessment.md)):
+  when editing is enabled and the turn has at least one photo that the handler's own
+  `may_use_reference` predicate accepts (sent with the message, or directly replied to), the
+  skill is active whatever the text says. The v0.17.0 lexical photo test (edit verb, style word,
+  politeness, 160-character cap, other-task word list) is removed: it missed plain requests
+  such as "use this face" and rejected edits containing "when". *No photo*: only a retry phrase
+  or terse polite subject replying to the requester's own image request, as before. There is
+  no pending-intent state, no cross-requester carryover and no recovery of photos from history;
+  the phrases are not router keywords. **Offering is not executing:** a photo alone, a question,
+  a translation request or thanks is now offered `generate_image` but must get a normal answer;
+  restraint rests on the skill instructions, the per-turn reference note and the model, with the
+  once-per-turn limit, quotas and spend caps as the backstop. Trade-off accepted: every eligible
+  photo turn carries the image instructions and takes one of the `SKILLS_MAX_ACTIVE` (3) slots
+  ahead of router hits, so a third routed skill can be crowded out to `use_skill`. The
+  handler's access, provenance, once-per-turn and quota checks are unchanged, as is the
+  editing-off path. Content refusals (for example a real person in a violent scene) stay
+  prohibited by the instructions and must name the content reason, not a missing tool.
 - **Capability evidence.** For a named topic `read_explainer` prints live gate results before
   the documentation text. With skills on, core sets `TurnState.offered_tools` each step and the
   explainer adds "in your tools now" or the skill to load, built from gate states, the offered
@@ -1298,6 +1312,6 @@ Included in the v0.17.0 release; downstream applications adopt the reviewed immu
   still arrive on the next step and handlers re-check.
 - **Keyword rule.** `chatcore.skills.keyword_matches` is the router's keyword test (ASCII
   keywords on word boundaries, others as substrings). The image plugin uses it to recognize the
-  requester's earlier image request, so "withdraw a payment" is not a `draw a` request. Image
-  follow-up rules reject reading, describing, translating and information questions before
-  any style match; a question activates only as a polite instruction to change the photo.
+  requester's earlier image request, so "withdraw a payment" is not a `draw a` request. The
+  no-photo follow-up rules reject acknowledgements, questions and other tasks (reading,
+  describing, translating); photo turns no longer consult them.

@@ -5,6 +5,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-14
+
+### Fixed
+
+- Photo edit requests no longer depend on wording. With `IMAGE_EDIT_ENABLED` on, any turn that
+  has a photo the requester may edit (sent with the message, or directly replied to) makes the
+  image skill active. v0.17.0 required a listed edit verb, style word or "please", capped the
+  text at 160 characters and rejected messages containing words such as "when", so requests like
+  "use this face" or "generate it now" with a photo were not offered `generate_image`.
+
+### Changed
+
+- **Behaviour change:** on such photo turns `generate_image` is now offered even when the message
+  is a question, a translation request, thanks or a photo with no text. Offering is not
+  executing: the skill instructions and per-turn note tell the model to answer normally unless
+  the current message asks for an image, to ask for a photo instead of substituting a text-only
+  picture, and not to invent format, size or capability errors. Actual tool errors remain
+  authoritative. When declining for content, it should give that reason rather than claim the
+  tool is missing. This is guidance to the model, not a guarantee; quotas, the
+  one-image-per-turn limit and spend caps are unchanged and remain the backstop.
+- Each eligible photo turn now carries the image skill instructions and uses one of the
+  `SKILLS_MAX_ACTIVE` slots (default 3) ahead of router hits; a third routed skill on that turn
+  stays reachable through `use_skill`.
+- The edit skill summary now reads "Create a picture from a description, or edit a photo
+  attached or directly replied to". Edit instructions total 715 characters with the generation
+  text (v0.17.0 was 766), so apps that append
+  `skill_instruction_additions` for `image_generation` keep their headroom under the
+  800-character cap; apps that snapshot the resulting prompt should refresh it.
+- Unchanged: who may generate or edit, which photos count as references, topic and reset
+  scoping, no-photo keyword/router/`use_skill` routing, the requester's own "try again" reply
+  path, editing-off behaviour, and the skills-off request. No migration, setting or dependency.
+
 ## [0.17.0] - 2026-11-14
 
 ### Fixed
@@ -464,7 +496,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/keenlok/clawdot-platform/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/keenlok/clawdot-platform/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/keenlok/clawdot-platform/compare/v0.15.1...v0.15.2

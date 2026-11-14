@@ -54,7 +54,7 @@ def _edit_call(reference=1):
     )
 
 
-def _build():
+def _build(responses=None):
     stores = memory_stores()
     platform = FakePlatform()
     platform.files["photo-1"] = JPEG
@@ -74,7 +74,12 @@ def _build():
     )
     plugin.service._client = client
     provider = ScriptedProvider(
-        [_edit_call(), Completion(Message.assistant("Here it is as a watercolour."), "end_turn")]
+        list(responses)
+        if responses is not None
+        else [
+            _edit_call(),
+            Completion(Message.assistant("Here it is as a watercolour."), "end_turn"),
+        ]
     )
     app = BotApp(
         platform,
@@ -113,7 +118,9 @@ def _assert_offered_edit(request):
     reference = tool.parameters["properties"]["reference"]["description"]
     assert "replied to" in reference and "1" in reference
     assert "call generate_image with reference" in request["system"]
-    assert "Never say you can't" in request["system"]
+    assert "Report actual tool errors" in request["system"]
+    assert "don't invent format or capability errors" in request["system"]
+    assert "Usable photo reference numbers this turn: 1." in request["system"]
     last = request["messages"][-1]
     assert [part for part in last.content if isinstance(part, ImagePart)] == [
         ImagePart(JPEG, "image/jpeg")
@@ -371,3 +378,72 @@ async def test_other_members_photo_from_text_reply_mapping_is_still_rejected():
     client.images.edit.assert_not_awaited()
     client.images.generate.assert_not_awaited()
     assert platform.sent_photos == []
+
+
+# Normalized phrases from docs/plans/2026-11-14-image-routing-context-reassessment.md. None has
+# a router keyword, a listed edit verb plus target, or "please"; two use "when"; one is long.
+PLAN_CASES = [
+    "generate a photo of someone climbing a tower",
+    "ok now make sure u use his face when u generate the Titan",
+    "generate it now!!",
+    "use this face",
+    "ok now use my face instead",
+    "make him look like he's scaling the tower, preserve his face and body when u generate "
+    "the Titan",
+]
+LONG_REQUEST = (
+    "take the person in this photo and put them on a quiet beach at sunset with soft warm "
+    "light, keep the face and clothes exactly as they are, and paint the sky in gentle "
+    "orange and pink tones without adding anyone else"
+)
+
+
+@pytest.mark.parametrize("text", [*PLAN_CASES, LONG_REQUEST])
+async def test_edit_paraphrase_with_a_captioned_photo_reaches_the_edit_with_that_photo(text):
+    app, platform, provider, client = _build()
+    await app.handle(_photo(text="@testbot " + text))
+    _assert_offered_edit(provider.calls[0])
+    await _assert_edited(platform, client)
+
+
+@pytest.mark.parametrize("text", PLAN_CASES)
+async def test_edit_paraphrase_replying_to_another_members_photo_reaches_the_edit(text):
+    app, platform, provider, client = _build()
+    photo = _photo(sender=BOB, text="", mention=False)
+    await app.handle(photo)
+    await app.handle(
+        replace(
+            message("@testbot " + text, sender=ALICE, mention=True),
+            reply_to=MessageRef(GROUP, photo.message_id),
+        )
+    )
+    _assert_offered_edit(provider.calls[0])
+    await _assert_edited(platform, client)
+
+
+async def test_long_request_is_over_the_old_length_cap():
+    assert len(LONG_REQUEST) > 160
+
+
+async def test_scripted_content_refusal_makes_no_image_call_and_keeps_availability_guidance():
+    # Wiring only: a scripted refusal shows that a text answer on a photo turn runs nothing and
+    # that the policy and "name the reason" guidance reach the model. It says nothing about
+    # whether a real model refuses, or how it words it.
+    refusal = Completion(
+        Message.assistant("I won't put a real person into a violent scene."), "end_turn"
+    )
+    app, platform, provider, client = _build([refusal])
+    await app.handle(
+        _photo(text="@testbot make it an anime scene where soldiers attack the person")
+    )
+    assert len(provider.calls) == 1
+    request = provider.calls[0]
+    _assert_offered_edit(request)
+    system = request["system"]
+    assert "sexual, violent, humiliating or deceptive" in system
+    assert "explain content refusals" in system
+    assert "wasn't attempted" in system
+    client.images.edit.assert_not_awaited()
+    client.images.generate.assert_not_awaited()
+    assert platform.sent_photos == []
+    assert platform.texts[-1] == "I won't put a real person into a violent scene."
