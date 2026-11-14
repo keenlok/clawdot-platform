@@ -14,7 +14,8 @@ from chatcore.plugin import BasePlugin, Command, CommandContext
 from chatcore.skills import Skill
 from chatcore.tools.registry import Tool, ToolContext, ToolResult
 
-from chatcore_image.permissions import may_generate
+from chatcore_image.permissions import may_generate, may_use_reference
+from chatcore_image.routing import KEYWORDS, pinned, reference_note
 from chatcore_image.service import ImageError, ImageService
 from chatcore_image.settings import SIZES, ImageSettings
 
@@ -35,6 +36,8 @@ IMAGE_EDIT_INSTRUCTIONS = (
     "sexual, violent, humiliating or deceptive scenes."
 )
 
+GENERATE_SUMMARY = "Create a picture from a description"
+EDIT_SUMMARY = "Create a picture from a description, or edit or restyle a photo sent or replied to"
 GENERATE_DESCRIPTION = "Create one requested image from a text description and send it to the chat."
 EDIT_DESCRIPTION = (
     "Create one requested image and send it to the chat, either from a text description or by "
@@ -183,11 +186,7 @@ class ImagePlugin(BasePlugin):
                 if reference < 1 or reference > len(owned):
                     return ToolResult.error(f"There are {len(owned)} images; pick 1–{len(owned)}.")
                 attachment, owner = owned[reference - 1]
-                if (
-                    not ctx.is_dm
-                    and owner != ctx.user.ref.key
-                    and attachment.id not in ctx.turn.explicit_reply_attachment_ids
-                ):
+                if not may_use_reference(ctx, attachment, owner):
                     return ToolResult.error(
                         "In groups, reply directly to the photo you want to edit."
                     )
@@ -274,10 +273,18 @@ class ImagePlugin(BasePlugin):
     def skills(self) -> list[Skill]:
         if not self.generation_available:
             return []
+        edit_enabled = self.settings.IMAGE_EDIT_ENABLED
+
+        async def pin(ctx: ToolContext) -> bool:
+            return pinned(ctx, edit_enabled=edit_enabled)
+
+        async def context(ctx: ToolContext) -> str | None:
+            return reference_note(ctx) if edit_enabled else None
+
         return [
             Skill(
                 "image_generation",
-                "Create a picture from a description",
+                EDIT_SUMMARY if edit_enabled else GENERATE_SUMMARY,
                 (
                     "draw a cat wearing a space helmet",
                     "make a picture of a sunset over the Singapore skyline",
@@ -289,33 +296,7 @@ class ImagePlugin(BasePlugin):
                     "create a logo idea for a bubble tea shop",
                 ),
                 (TOOL,),
-                keywords=(
-                    "draw a",
-                    "draw an",
-                    "draw me",
-                    "draw my",
-                    "picture of",
-                    "image of",
-                    "generate an image",
-                    "make an image",
-                    "make this photo",
-                    "make this picture",
-                    "turn this photo",
-                    "turn this into",
-                    "edit this photo",
-                    "this photo into",
-                    "illustrate",
-                    "illustration",
-                    "画一",
-                    "画个",
-                    "画张",
-                    "帮我画",
-                    "生成图片",
-                    "把这张",
-                    "照片改成",
-                    "照片变成",
-                    "图片改成",
-                ),
+                keywords=KEYWORDS,
                 commands=("image",),
                 max_steps=4,
                 instructions=(
@@ -323,6 +304,8 @@ class ImagePlugin(BasePlugin):
                     if self.settings.IMAGE_EDIT_ENABLED
                     else IMAGE_GENERATION_INSTRUCTIONS
                 ),
+                context=context,
+                pin=pin,
             )
         ]
 

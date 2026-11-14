@@ -1253,3 +1253,51 @@ history grant no shared-edit authority. Requester attribution remains metadata f
 Normal message retention, chat erasure and requester erasure remove these references. The optional
 `PhotoReceiptPlatform` capability leaves `PhotoPlatform.send_photo` compatible; document/bridge
 delivery without receipts cannot support durable output editing.
+
+### Skill discovery and contextual image follow-ups (2026-11-14)
+
+Plan: [`docs/plans/2026-11-14-image-routing-capability-claims.md`](docs/plans/2026-11-14-image-routing-capability-claims.md).
+Included in the v0.17.0 release; downstream applications adopt the reviewed immutable pin.
+
+- **Catalog.** A skill catalog holds at most `MAX_CATALOG_SKILLS` (64) declared plus generated
+  skills; a larger one fails at start-up. The `use_skill` argument enum lists every loadable
+  skill (active, loaded and `UNCONFIGURED` ones excluded). The 1,000-character description
+  shortens all summaries evenly, then lists names only; it never decides which names are legal.
+  Loading still offers tools from the next step and re-runs the gates.
+- **Routing context.** `AgentResponder._reply_scope` resolves the replied-to message and the
+  turn's photo references once, from stored rows only, before `SkillTurn.build`. It fills
+  `TurnState.attachments`, `attachment_owners`, `explicit_reply_attachment_ids` and
+  `TurnState.routing` (`RoutingContext`: current text, and the replied-to human message's author
+  and text when it is in this chat/topic and newer than the last reset, plus whether the exact
+  reply target is a recorded bot image). `_context` reuses the same object, so skill `pin` and
+  `context` hooks see what tool handlers later check. Hooks may match the person's wording to
+  decide activation; they must not copy it into trusted text or treat it as permission.
+- **Pins never authorize.** A pin only makes a skill active. The image pin
+  (`chatcore_image/routing.py`) fires for a short follow-up only with a usable photo, a directly
+  replied-to generated photo, or the requester's own replied-to image request. There is no
+  pending-intent state and no cross-requester carryover; the phrases are not router keywords.
+  The handler's access, provenance, once-per-turn and quota checks are unchanged.
+- **Capability evidence.** For a named topic `read_explainer` prints live gate results before
+  the documentation text. With skills on, core sets `TurnState.offered_tools` each step and the
+  explainer adds "in your tools now" or the skill to load, built from gate states, the offered
+  set and skill identifiers only. The result stays untrusted. When the full wrapper wording
+  would push a reply over its size limit (3,500 UTF-16 units for `/explain`), a shorter fixed
+  header and note are used; maintained text and status lines are not cut for it. Skills-on
+  prompts add fixed guidance: a tool missing from the current offer proves neither enabled nor
+  disabled, because `use_skill` also lists `OFF` and `NOT_ALLOWED` skills and refuses them
+  with their hint; off, not-allowed or unconfigured is stated only from this turn's runtime
+  availability, and quota or provider failure only from that operation's own error result,
+  never from setup documentation, fetched text or earlier messages. This lowers false claims;
+  it cannot guarantee model wording. Skills-off requests are unchanged.
+- **Skill context on load.** `chatcore.skills.render_skill_context` is the one renderer for
+  `Skill.context`: at most 400 characters, otherwise dropped with only the length logged;
+  errors logged by class name; non-text ignored. The system prompt uses it for skills active at
+  the start of a turn and `use_skill` appends the same text to its result, so a skill loaded
+  mid-turn gets the same per-turn note (for images: the usable reference numbers, or that there
+  is none and no text-only substitute may be made). Rendering context grants nothing: tools
+  still arrive on the next step and handlers re-check.
+- **Keyword rule.** `chatcore.skills.keyword_matches` is the router's keyword test (ASCII
+  keywords on word boundaries, others as substrings). The image plugin uses it to recognize the
+  requester's earlier image request, so "withdraw a payment" is not a `draw a` request. Image
+  follow-up rules reject reading, describing, translating and information questions before
+  any style match; a question activates only as a polite instruction to change the photo.

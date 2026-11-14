@@ -302,9 +302,11 @@ async def test_use_skill_enum_evaluates_catalog_and_excludes_unconfigured(monkey
     assert names[:3] == ["conversation", "feature", "third_feature"]
     assert "other_feature" not in names
     assert len(spec.description) <= 1000
-    assert spec.description.splitlines() == [
-        f"{name} — {app.skills.get(name).summary}" for name in names
-    ]
+    # Twelve 120-character summaries exceed the budget: summaries are shortened evenly, and
+    # every loadable skill stays both described and selectable.
+    assert names[-1] == "catalog_11"
+    assert [line.split(" — ", 1)[0] for line in spec.description.splitlines()] == names
+    assert all("…" in line for line in spec.description.splitlines() if "catalog_" in line)
 
 
 async def test_use_skill_arguments_are_validated_without_echoing_names():

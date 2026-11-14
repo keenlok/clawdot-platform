@@ -13,7 +13,14 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 from chatcore.llm.types import ToolSpec
-from chatcore.skills import Gate, GateState, SkillAvailability, SkillsMode, render_hint
+from chatcore.skills import (
+    Gate,
+    GateState,
+    SkillAvailability,
+    SkillsMode,
+    render_hint,
+    render_skill_context,
+)
 from chatcore.threads import current_conversation
 from chatcore.tools.registry import ToolContext, ToolResult
 
@@ -414,6 +421,10 @@ class SkillTurn:
         content = f"Loaded {name}: tools {tool_list} are available from your next step."
         if skill.instructions:
             content += " " + skill.instructions
+        # Same per-turn context an initially active skill gets in the system prompt.
+        contextual = await render_skill_context(skill, ctx, logger=log)
+        if contextual:
+            content += ("\n" if skill.instructions else " ") + contextual
         rendered_hints = [self._render_hint(hint) for hint in available.hints]
         if rendered_hints:
             content += " Unavailable tools: " + " ".join(rendered_hints)
@@ -439,25 +450,20 @@ class SkillTurn:
         if not names or len(self.loaded) >= self.settings.max_loads:
             self.offered.pop("use_skill", None)
             return
-        lines = []
-        for name in names:
-            summary = " ".join(self._app.skills.get(name).summary.split())
-            line = f"{name} — {summary}"
-            if sum(len(existing) + 1 for existing in lines) + len(line) > 1000:
-                break
-            lines.append(line)
-        if not lines:
-            return
         self.offered["use_skill"] = ToolSpec(
             "use_skill",
-            "\n".join(lines),
+            _catalog_description(
+                [(name, " ".join(self._app.skills.get(name).summary.split())) for name in names]
+            ),
             {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
                         "description": "Skill name",
-                        "enum": [line.split(" — ", 1)[0] for line in lines],
+                        # Every loadable skill stays selectable, even when the description
+                        # had to shorten or drop summaries; SkillSet.build bounds the count.
+                        "enum": names,
                     }
                 },
                 "required": ["name"],
@@ -621,6 +627,42 @@ class SkillTurn:
                 bool(unavailable & (set(valid_called) | routed_tools))
             )
         return fields
+
+
+_CATALOG_CHARS = 1000
+_MIN_SUMMARY_CHARS = 16
+
+
+def _catalog_description(entries: Sequence[tuple[str, str]]) -> str:
+    """Describe every loadable skill within the catalog budget.
+
+    Full ``name — summary`` lines are used when they fit. Otherwise every summary is shortened
+    to the same length, so a late skill is described as well as an early one. When even short
+    summaries do not fit, the names alone are listed. Names that still do not fit remain legal
+    values of the argument enum.
+    """
+
+    def render(limit: int) -> str:
+        return "\n".join(
+            f"{name} — {summary if len(summary) <= limit else summary[: limit - 1] + '…'}"
+            for name, summary in entries
+        )
+
+    longest = max((len(summary) for _name, summary in entries), default=0)
+    full = render(longest)
+    if len(full) <= _CATALOG_CHARS:
+        return full
+    for limit in range(longest - 1, _MIN_SUMMARY_CHARS - 1, -1):
+        text = render(limit)
+        if len(text) <= _CATALOG_CHARS:
+            return text
+    prefix = "Skills: "
+    listed = []
+    for name, _summary in entries:
+        if len(prefix) + len(", ".join([*listed, name])) > _CATALOG_CHARS - 2:
+            return prefix + ", ".join(listed) + ", …"
+        listed.append(name)
+    return prefix + ", ".join(listed)
 
 
 def _meta_error(text: str) -> ToolResult:

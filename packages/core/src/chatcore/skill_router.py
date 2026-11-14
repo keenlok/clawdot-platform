@@ -6,13 +6,12 @@ import asyncio
 import contextlib
 import logging
 import math
-import re
 import time
 from dataclasses import dataclass
 from typing import Literal
 
 from chatcore.embed import Embedder
-from chatcore.skills import SkillSet
+from chatcore.skills import SkillSet, keyword_matches
 
 log = logging.getLogger(__name__)
 
@@ -141,16 +140,8 @@ class SkillRouter:
         hits = []
         for name in self.skills.names():
             skill = self.skills.get(name)
-            for keyword in skill.keywords:
-                if keyword.isascii() and keyword.isalnum():
-                    found = re.search(rf"\b{re.escape(keyword.casefold())}\b", folded)
-                elif keyword.isascii():
-                    found = re.search(rf"(?<!\w){re.escape(keyword.casefold())}(?!\w)", folded)
-                else:
-                    found = keyword.casefold() in folded
-                if found:
-                    hits.append(RouteHit(name, "keyword"))
-                    break
+            if any(keyword_matches(keyword, folded) for keyword in skill.keywords):
+                hits.append(RouteHit(name, "keyword"))
         return hits
 
 

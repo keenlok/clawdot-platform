@@ -63,12 +63,57 @@ class Skill:
     max_output_tokens: int | None = None
     sticky_turns: int = 2  # How many later requester turns may inherit this skill.
     context: Callable[[ToolContext], Awaitable[str | None]] | None = None
-    """Trusted per-turn text appended to ``instructions`` while active. Build it only from
-    validated, enumerated values. Text over 400 characters is dropped and logged; errors are
-    logged by class name and skipped."""
+    """Trusted per-turn text appended to ``instructions`` while active, including when the
+    skill is loaded with ``use_skill``. Build it only from validated, enumerated values. Text
+    over 400 characters is dropped and logged; errors are logged by class name and skipped
+    (``render_skill_context``)."""
     pin: Callable[[ToolContext], Awaitable[bool]] | None = None
     """Return true to make the skill active this turn without a router hit.
     Errors count as false."""
+
+
+def keyword_matches(keyword: str, folded_text: str) -> bool:
+    """Whether a declared skill keyword occurs in already casefolded text.
+
+    This is the router's keyword rule, exported so a plugin that reuses its own declared
+    keywords (for example to recognize an earlier request) cannot drift from routing. ASCII
+    keywords match only on word boundaries, so ``draw a`` is not found in "withdraw a
+    payment"; other keywords, such as Chinese phrases, match as substrings.
+    """
+    needle = keyword.casefold()
+    if keyword.isascii() and keyword.isalnum():
+        return re.search(rf"\b{re.escape(needle)}\b", folded_text) is not None
+    if keyword.isascii():
+        return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", folded_text) is not None
+    return needle in folded_text
+
+
+MAX_SKILL_CONTEXT_CHARS = 400
+
+
+async def render_skill_context(
+    skill: Skill, ctx: ToolContext, *, logger: logging.Logger = log
+) -> str:
+    """Run ``skill.context`` under its contract and return the text to append, or ``""``.
+
+    The one renderer for a skill that is active at the start of a turn and for one loaded
+    later with ``use_skill``. Text over ``MAX_SKILL_CONTEXT_CHARS`` is dropped and only its
+    length is logged; an error is logged by class name only; a non-text or empty result is
+    ignored. ``logger`` lets a caller keep its established logger name.
+    """
+    if skill.context is None:
+        return ""
+    try:
+        contextual = await skill.context(ctx)
+    except Exception as exc:
+        logger.warning("skill context failed skill=%s error=%s", skill.name, type(exc).__name__)
+        return ""
+    if not isinstance(contextual, str) or not contextual:
+        return ""
+    if len(contextual) > MAX_SKILL_CONTEXT_CHARS:
+        logger.warning("skill context too long skill=%s chars=%d", skill.name, len(contextual))
+        return ""
+    return contextual
 
 
 # Offered on every routed turn unless an app passes its own list (``()`` opts out).
@@ -81,6 +126,12 @@ DEFAULT_GENERAL_TOOLS: tuple[str, ...] = (
     "search_web",
     "fetch_web_page",
 )
+
+
+# Upper bound on declared plus generated skills. ``use_skill`` lists every loadable skill name
+# in its argument enum, so the catalog must be bounded; a larger catalog fails at start-up
+# instead of silently hiding late skills.
+MAX_CATALOG_SKILLS = 64
 
 
 class SkillsMode(StrEnum):
@@ -263,6 +314,10 @@ class SkillSet:
                 generated_name,
                 len(names),
             )
+        if len(loaded) > MAX_CATALOG_SKILLS:
+            raise ValueError(
+                f"skill catalog has {len(loaded)} skills; the limit is {MAX_CATALOG_SKILLS}"
+            )
         return cls(registry, loaded, owners, gates, general, tuple(generated))
 
     @staticmethod
@@ -308,6 +363,15 @@ class SkillSet:
 
     def gate(self, tool: str) -> ToolGate | None:
         return self._gates.get(tool)
+
+    def skills_for_tool(self, tool: str) -> tuple[str, ...]:
+        """Names of skills whose required tools include ``tool``, in catalog order.
+
+        Loading such a skill offers the tool whenever the tool's own gate is available, so this
+        is a safe "load this to get that tool" mapping. Optional (composite) tools are left out
+        because the composite's availability depends on other tools.
+        """
+        return tuple(name for name, (skill, _owner) in self._skills.items() if tool in skill.tools)
 
     async def evaluate_tool(self, name: str, ctx: ToolContext) -> Gate:
         tool = self.registry.get(name)
