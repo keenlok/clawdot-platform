@@ -112,9 +112,17 @@ def test_offered_text_is_unchanged_when_editing_is_off_and_points_to_reference_w
     assert reference.startswith("Pass this whenever the person asks to change")
     assert "a single photo is 1" in reference
     assert "call generate_image with reference" in IMAGE_EDIT_INSTRUCTIONS
-    assert "Never say you can't use it" in IMAGE_EDIT_INSTRUCTIONS
     assert "Never use unrelated photos." in IMAGE_EDIT_INSTRUCTIONS
     assert "In groups, anyone may edit a directly replied-to photo." in IMAGE_EDIT_INSTRUCTIONS
+    assert "sexual, violent, humiliating or deceptive" in IMAGE_EDIT_INSTRUCTIONS
+    # Offering on every eligible photo turn relies on honest refusals (restraint is in the
+    # generation text and the per-turn reference note).
+    assert IMAGE_GENERATION_INSTRUCTIONS.startswith("Generate only when the person explicitly")
+    assert "explain content refusals" in IMAGE_EDIT_INSTRUCTIONS
+    assert "Report actual tool errors" in IMAGE_EDIT_INSTRUCTIONS
+    assert "don't invent format or capability errors" in IMAGE_EDIT_INSTRUCTIONS
+    # No growth over v0.17.0 (766), so app additions keep their headroom under the 800 cap.
+    assert len(IMAGE_GENERATION_INSTRUCTIONS + " " + IMAGE_EDIT_INSTRUCTIONS) <= 766
 
 
 async def test_group_rejects_unproven_other_members_photo_before_download(monkeypatch):
@@ -262,6 +270,9 @@ async def test_download_errors_do_not_call_service(monkeypatch, reason, expected
         context(platform, turn=turn),
     )
     assert result.content == expected
+    if reason == "unsupported_format":
+        assert "I can only use JPEG, PNG or WebP photos." in result.content
+        assert "Report actual tool errors" in IMAGE_EDIT_INSTRUCTIONS
     download.assert_awaited_once()
     plugin.service.generate.assert_not_awaited()
 

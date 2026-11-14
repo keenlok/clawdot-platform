@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Image generation
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:9d4dd7ba912fe41b7970166562ee6c28f7405316773268625b98469340760810
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:2d2d25679ee24fec8cbeca0bfea824de6c23bb484297a88303e2c305ea958732
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -13,9 +13,12 @@ runtime availability lines report whether it is available here and now.
 
 ## Workflow
 The skill is offered only when generation is configured and the platform can send a photo or file.
-A short follow-up activates it only with validated context: a usable photo sent or directly replied
-to, a directly replied-to generated photo, or the requester's own replied-to image request.
-Activation offers the tool; it never generates by itself.
+With photo editing on, a photo the person may edit (sent with the message, or directly replied to)
+makes the skill active whatever the message says, so the wording of an edit request does not
+matter. Without such a photo, a short follow-up activates it only as a reply to the requester's own
+earlier image request. Activation offers the tool; it never generates by itself. A photo alone, a
+question about it, a translation request or thanks gets a normal answer, and the bot creates an
+image only when the current message asks for one.
 The model writes a self-contained prompt and chooses square, portrait or landscape. The plugin
 generates one PNG and sends it with a short caption. `/image usage` shows today's local count.
 
@@ -55,6 +58,10 @@ reached only through text-reply mappings or history cannot be used.
 The photo and prompt are sent to OpenAI, and edits share the generation caps. Replying to a
 generated photo edits that version and preserves requester attribution for retention and erasure.
 Older untracked outputs and platforms without photo receipts require uploading the photo again.
+One photo is used per edit. A new photo sent as a reply to a text message does not bring in an
+earlier generated image, and photos elsewhere in the history are never picked up. The bot may
+decline an edit for its content, such as putting a real person in a sexual, violent, humiliating or
+deceptive scene; that is a content decision, not a sign that image generation is missing.
 
 ### Activation gate
 Activation stays blocked until the qualification in

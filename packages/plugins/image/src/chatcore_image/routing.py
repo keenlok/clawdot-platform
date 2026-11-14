@@ -1,11 +1,15 @@
-"""When a short follow-up should make the image skill active without a router hit.
+"""When the image skill should be active without a router hit.
 
 These rules only decide whether ``generate_image`` is offered this turn. They never authorize
-or run a generation: the model still needs an explicit request, and the tool handler re-checks
-access and photo provenance. They are deliberately narrow. A short phrase counts only together
-with context that core validated for this requester and topic: a usable photo, a directly
-replied-to generated photo, or the requester's own replied-to image request. None of these
-phrases is a router keyword, so without that context they activate nothing.
+or run a generation: the model still needs an explicit request in the current message, and the
+tool handler re-checks access and photo provenance.
+
+With editing on, a photo the handler would accept (sent now, or directly replied to) activates
+the skill whatever the message says. Wording is not interpreted on that path: a word list
+cannot tell "use this face" from "what is this?", so the model decides with the photo, the
+conversation and the skill instructions in front of it. Without such a photo only a narrow
+follow-up to the requester's own replied-to image request activates the skill; those phrases
+are not router keywords, so without that context they activate nothing.
 """
 
 from __future__ import annotations
@@ -87,27 +91,7 @@ _QUESTION_START = re.compile(
     r"^(?:(?:can|could|does|did|are|is|will|would|should|what|how|why|when|who|where|which)\b"
     r"|do (?:you|u|we|i|they)\b|能|可以|可不可以)"
 )
-# A question that is really a polite instruction: "can you make this a cartoon?".
-_REQUEST_START = re.compile(
-    r"^(?:(?:can|could|will|would) (?:you|u)\b|能不能|可不可以|可以|能否|能)"
-)
-_TARGET = re.compile(
-    r"\b(this|that|it|these|those|him|her|me|us|them|photo|picture|image|pic|background)\b"
-    r"|这|那|它|他|她|我"
-)
-_EDIT_VERB = re.compile(
-    r"\b(make|turn|convert|edit|restyle|redraw|recolou?r|transform|cartoonify|photoshop)\b"
-    r"|改成|变成|换成|修图"
-)
-_EDIT_START = re.compile(
-    r"^(?:make|turn|convert|edit|restyle|redraw|recolou?r|transform|cartoonify|photoshop)\b"
-)
-_STYLE = re.compile(
-    r"\b(cartoon|anime|manga|watercolou?r|sketch|painting|pixel art|oil paint|style|filter)\b"
-    r"|卡通|动漫|水彩|素描|风格|滤镜"
-)
-# Requests about a photo that are not image generation, even when they name a style: reading,
-# describing, translating, bookkeeping and information questions.
+# Replies to an earlier image request that are a different task, not a new subject for it.
 _OTHER_TASK = re.compile(
     r"\b(read|translate|summari[sz]e|summary|describe|explain|identify|recogni[sz]e|tell|scan"
     r"|ocr|save|record|log|track|remind|split|receipt|expense|bill|what|who|where|when|why|how"
@@ -147,41 +131,24 @@ def is_image_request(text: str) -> bool:
     return any(keyword_matches(keyword, folded) for keyword in KEYWORDS)
 
 
-def wants_image(
-    text: str,
-    *,
-    has_reference: bool = False,
-    reply_is_generated_photo: bool = False,
-    prior_image_request: bool = False,
-) -> bool:
-    """Whether the current message is a contextual image request worth offering the tool for.
+def wants_image(text: str, *, prior_image_request: bool = False) -> bool:
+    """Whether a message without a usable photo is a follow-up to an earlier image request.
 
-    ``has_reference``: a photo the requester may edit is attached or directly replied to.
-    ``reply_is_generated_photo``: that photo is a recorded bot output the person replied to.
     ``prior_image_request``: the message replies to the requester's own earlier image request.
+    Only a retry phrase ("try again", "can u do so") or a terse polite subject ("iron man pls")
+    counts. Photo turns never reach this function; see ``pinned``.
     """
-    if len(text) > _MAX_CHARS or not (has_reference or prior_image_request):
+    if not prior_image_request or len(text) > _MAX_CHARS:
         return False
     normalized = _normalize(text)
     bare, polite = _without_politeness(normalized)
-    question = text.strip().endswith(("?", "？")) or bare.endswith(("吗", "么"))
     if not bare or bare in _ACKS or bare.startswith(("thank", "谢谢")):
         return False
     if bare in FOLLOW_UPS:
-        return prior_image_request or (has_reference and reply_is_generated_photo)
-    # Reading, describing, translating and information questions are never image actions,
-    # even when they name a style ("describe this anime", "what cartoon is this?").
-    if _OTHER_TASK.search(bare):
-        return False
-    edit = bool(_EDIT_VERB.search(bare) and _TARGET.search(bare))
-    if question or _QUESTION_START.match(bare):
-        # Only a polite instruction to change the photo counts ("can you make this a
-        # cartoon?", "make it anime?"); "is this watercolour?" and "can you edit photos?" are
-        # questions to answer.
-        instruction = _REQUEST_START.match(bare) or _EDIT_START.match(bare)
-        return bool(has_reference and edit and instruction)
-    if has_reference and (edit or _STYLE.search(bare)):
         return True
+    question = text.strip().endswith(("?", "？")) or bare.endswith(("吗", "么"))
+    if question or _QUESTION_START.match(bare) or _OTHER_TASK.search(bare):
+        return False
     terse = len(bare.split()) <= _TERSE_WORDS and len(bare) <= 40
     return polite and terse
 
@@ -204,20 +171,20 @@ def usable_references(ctx: ToolContext) -> tuple[int, ...]:
 
 
 def pinned(ctx: ToolContext, *, edit_enabled: bool) -> bool:
-    """Skill pin: activate for a contextual follow-up backed by validated context."""
+    """Skill pin: a usable photo (editing on), or a follow-up to the requester's own request.
+
+    The photo path uses the handler's own reference predicate and ignores the text, so what is
+    offered and what the handler later accepts cannot differ. It grants nothing by itself.
+    """
+    if edit_enabled and usable_references(ctx):
+        return True
     routing = ctx.turn.routing
-    has_reference = edit_enabled and bool(usable_references(ctx))
     prior = bool(
         routing.reply_author
         and routing.reply_author == ctx.user.ref.key
         and is_image_request(routing.reply_text)
     )
-    return wants_image(
-        routing.text,
-        has_reference=has_reference,
-        reply_is_generated_photo=routing.reply_bot_image,
-        prior_image_request=prior,
-    )
+    return wants_image(routing.text, prior_image_request=prior)
 
 
 def reference_note(ctx: ToolContext) -> str:
@@ -227,11 +194,13 @@ def reference_note(ctx: ToolContext) -> str:
         return (
             "No usable photo is attached or directly replied to this turn, so do not pass "
             "reference. If the person wants a photo changed, ask them to send it or reply "
-            "directly to it; never make a text-only substitute."
+            "directly to it; do not invent format or size errors. Actual tool results are "
+            "authoritative; never make a text-only substitute."
         )
     listed = ", ".join(str(number) for number in numbers)
     return (
         f"Usable photo reference numbers this turn: {listed}. A photo alone is not a request: "
-        "generate only if this message asks for a picture or a change. If a short request is "
-        "unclear, ask one brief question instead of guessing."
+        "generate only if this message asks for a picture or a change. Answer questions, "
+        "translation requests and thanks normally. If a request is unclear, ask one brief "
+        "question instead of guessing."
     )
