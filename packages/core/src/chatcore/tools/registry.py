@@ -25,6 +25,27 @@ def plain_command_form(name: str) -> str:
     return f"/{name}"
 
 
+@dataclass(frozen=True, slots=True)
+class RoutingContext:
+    """Facts about the current human message that core validated once, before skill pins run.
+
+    The wording is the person's own (untrusted): a pin hook may match it to decide whether to
+    offer its skill, but must never copy it into trusted prompt text or treat it as permission.
+    Photo references are in ``TurnState.attachments`` and its companion fields.
+    """
+
+    text: str = ""
+    """The current human request text."""
+    reply_author: str = ""
+    """User key of the human message this one replies to (a reply to a bot answer resolves to
+    the request it answered). Empty unless it is in this chat and topic and newer than the
+    latest context reset."""
+    reply_text: str = ""
+    """That human message's text, under the same conditions."""
+    reply_bot_image: bool = False
+    """True when the exact replied-to message is a recorded bot message carrying an image."""
+
+
 @dataclass(slots=True)
 class TurnState:
     """Mutable per-turn state shared by every tool call in one agent turn."""
@@ -59,6 +80,11 @@ class TurnState:
     """Current human request and same-topic reply-chain URLs, excluding ambient/search data."""
     tool_attempts: dict[str, int] = field(default_factory=dict)
     """Ephemeral per-turn attempt counts for tools that must be used at most once."""
+    routing: RoutingContext = field(default_factory=RoutingContext)
+    """Set by core before skill pins; the same value is used for the rest of the turn."""
+    offered_tools: frozenset[str] | None = None
+    """Tool names offered to the model in the current step when skills are on; ``None`` when
+    tools are not filtered by skills (skills off or shadow, commands). Set only by core."""
 
 
 @dataclass(slots=True)

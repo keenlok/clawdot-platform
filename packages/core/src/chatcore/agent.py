@@ -32,10 +32,16 @@ from chatcore.model_choice import ModelSwitchConfig
 from chatcore.prompts import build_system_prompt
 from chatcore.skill_router import SkillRouter
 from chatcore.skill_turn import SkillSettings, SkillTurn, effective_mode
-from chatcore.skills import SkillsMode
+from chatcore.skills import SkillsMode, render_skill_context
 from chatcore.store.base import Stores
 from chatcore.threads import current_conversation, current_turn_origin
-from chatcore.tools.registry import ToolContext, ToolResult, TurnState, direct_write_allowed
+from chatcore.tools.registry import (
+    RoutingContext,
+    ToolContext,
+    ToolResult,
+    TurnState,
+    direct_write_allowed,
+)
 from chatcore.turn_metrics import TurnMetrics
 
 log = logging.getLogger(__name__)
@@ -104,6 +110,31 @@ _FINAL_ANSWER_INSTRUCTION = (
     "and clearly state if the evidence is insufficient. Do not invent facts, "
     "request more tools, or claim unconfirmed writes succeeded."
 )
+# Skills-on only, so skills-off requests stay byte-identical.
+_FINAL_UNATTEMPTED_INSTRUCTION = (
+    "That is this turn's step or time limit, not a quota, outage or missing setup of any "
+    "feature. If a requested action was not attempted, say it was not attempted and that the "
+    "person can ask again; do not invent a reason."
+)
+_LOAD_SKILL_GUIDANCE = (
+    "More skills: if you need a capability whose tools you don't have, call "
+    "use_skill with its name. Tools it loads are available from your next step. A tool missing "
+    "from your current tools proves neither that its feature is enabled nor that it is "
+    "disabled: a skill use_skill lists may be off or not allowed here, and use_skill then says "
+    "so. When the person explicitly asks for an action, load its skill and attempt it instead "
+    'of reading documentation again, unless an "Unavailable here" note or the use_skill '
+    "result says it is off or not allowed; then tell the person that and don't work around "
+    "it. Setup defaults in documentation do not describe this deployment."
+)
+_CAPABILITY_CLAIMS_GUIDANCE = (
+    "Capability claims: say that a feature is off, not allowed or not configured only when "
+    'this turn\'s runtime availability says so: an "Unavailable here" note, a use_skill result '
+    "or read_explainer's runtime availability lines. Say that a limit or quota was reached or "
+    "that a provider failed only from the error returned by that operation's own attempt in "
+    "this turn. Setup documentation, fetched pages or files and earlier messages are not "
+    "evidence of either. If you did not attempt an action, say it wasn't attempted. This "
+    "turn's tool-step or time limit is not a feature quota."
+)
 _NO_TOOLS_RETRY_INSTRUCTION = (
     "Tool calls are impossible in this response. Any tool-call syntax will be discarded. "
     "Reply in plain text for the user."
@@ -152,6 +183,20 @@ def _empty_answer_fallback(ctx: ToolContext) -> str:
 def _remaining_before_final(loop, deadline: float, reserve_s: float) -> float:
     """Return usable time for tools/provider work while preserving the final-answer reserve."""
     return deadline - loop.time() - reserve_s
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplyScope:
+    """The validated reply target and photo references of one turn (see ``_reply_scope``)."""
+
+    replied: object | None = None
+    image_reply: object | None = None
+    explicit_reply_attachment_ids: frozenset[str] = frozenset()
+    attachments: tuple = ()
+    attachment_owners: tuple[str, ...] = ()
+    reply_author: str = ""
+    reply_text: str = ""
+    reply_bot_image: bool = False
 
 
 @dataclass(slots=True)
@@ -408,6 +453,91 @@ class AgentResponder:
             app.platform, attachments, chat=message.chat, limit=_MAX_IMAGES, cache=downloads
         )
 
+    async def _reply_scope(self, message: IncomingMessage, app, store) -> _ReplyScope:
+        """Resolve the replied-to message and usable photo references for this turn.
+
+        Reads stored message rows only; nothing is downloaded or described. It runs once per
+        turn, before skill pins, and ``_context`` reuses the result, so what routing sees and
+        what tool handlers later check cannot differ.
+        """
+        replied = None
+        image_reply = None
+        exact = None
+        explicit_reply_attachment_ids = frozenset()
+        if (
+            message.reply_to
+            and message.reply_to.chat == message.chat
+            and (
+                message.reply_to.thread_id is None
+                or message.reply_to.thread_id == message.thread_id
+            )
+        ):
+            reply_id = message.reply_to.message_id
+            exact = await app.stores.repo.get_message(message.chat, reply_id)
+            if (
+                exact is not None
+                and exact.chat == message.chat
+                and exact.thread_id == message.thread_id
+            ):
+                explicit_reply_attachment_ids = frozenset(
+                    item.id for item in exact.attachments if is_image(item)
+                )
+                if explicit_reply_attachment_ids:
+                    image_reply = exact
+            mapping = await store.conversation_for_message(message.chat, reply_id)
+            allow_quote = True
+            if mapping is not None:
+                if mapping[0].chat != message.chat or mapping[0].thread_id != message.thread_id:
+                    allow_quote = False
+                else:
+                    reply_id = mapping[1]
+            if allow_quote:
+                replied = await app.stores.repo.get_message(message.chat, reply_id)
+            if replied is not None and (
+                replied.chat != message.chat or replied.thread_id != message.thread_id
+            ):
+                replied = None
+        if image_reply is None:
+            image_reply = replied if replied and not replied.is_bot else None
+        attachments = tuple(
+            attachment
+            for attachment in (
+                *message.attachments,
+                *(image_reply.attachments if image_reply else ()),
+            )
+            if is_image(attachment)
+        )
+        attachment_owners = tuple(
+            owner
+            for owned, owner in (
+                (message.attachments, message.user.ref.key),
+                (
+                    image_reply.attachments if image_reply else (),
+                    (image_reply.attachment_requester_key or image_reply.user.key)
+                    if image_reply
+                    else "",
+                ),
+            )
+            for attachment in owned
+            if is_image(attachment)
+        )
+        reply_author = reply_text = ""
+        if replied is not None and not replied.is_bot:
+            reset_point = await store.reset_point(message.chat, message.thread_id)
+            if reset_point is None or replied.sent_at > reset_point.reset_at:
+                reply_author = replied.user.key
+                reply_text = replied.text or ""
+        return _ReplyScope(
+            replied=replied,
+            image_reply=image_reply,
+            explicit_reply_attachment_ids=explicit_reply_attachment_ids,
+            attachments=attachments,
+            attachment_owners=attachment_owners,
+            reply_author=reply_author,
+            reply_text=reply_text,
+            reply_bot_image=bool(exact is not None and image_reply is exact and exact.is_bot),
+        )
+
     async def _context(
         self,
         message: IncomingMessage,
@@ -421,6 +551,7 @@ class AgentResponder:
         tool_ctx: ToolContext | None = None,
         record_usage: Callable[[Usage], Awaitable[None]] | None = None,
         turn_deadline: float | None = None,
+        reply_scope: _ReplyScope | None = None,
     ):
         turn_model = turn_model or _TurnModel(self.provider, self.settings.vision)
         vision = turn_model.vision
@@ -485,23 +616,10 @@ class AgentResponder:
                 if skill is None:
                     continue
                 content = skill.instructions
-                if skill.context is not None and tool_ctx is not None:
-                    try:
-                        contextual = await skill.context(tool_ctx)
-                    except Exception as exc:
-                        log.warning(
-                            "skill context failed skill=%s error=%s", name, type(exc).__name__
-                        )
-                    else:
-                        if isinstance(contextual, str) and contextual:
-                            if len(contextual) > 400:
-                                log.warning(
-                                    "skill context too long skill=%s chars=%d",
-                                    name,
-                                    len(contextual),
-                                )
-                            else:
-                                content = f"{content}\n{contextual}" if content else contextual
+                if tool_ctx is not None:
+                    contextual = await render_skill_context(skill, tool_ctx, logger=log)
+                    if contextual:
+                        content = f"{content}\n{contextual}" if content else contextual
                 if content:
                     active_sections.append(f"## {name}\n{content}")
             if active_sections:
@@ -523,10 +641,9 @@ class AgentResponder:
         if skills_on and skill_turn.variant_hints:
             sections.append("\n".join(skill_turn.variant_hints))
         if skills_on and "use_skill" in skill_turn.offered:
-            sections.append(
-                "More skills: if you need a capability whose tools you don't have, call "
-                "use_skill with its name. Tools it loads are available from your next step."
-            )
+            sections.append(_LOAD_SKILL_GUIDANCE)
+        if skills_on:
+            sections.append(_CAPABILITY_CLAIMS_GUIDANCE)
         system = build_system_prompt(
             app_prompt,
             chat_settings.persona,
@@ -607,44 +724,10 @@ class AgentResponder:
         ambient_text = _wrap(transcript, tag) if transcript else ""
         if ambient_text:
             turns.append(Message.user(ambient_text))
-        replied = None
-        image_reply = None
-        explicit_reply_attachment_ids = frozenset()
-        if (
-            message.reply_to
-            and message.reply_to.chat == message.chat
-            and (
-                message.reply_to.thread_id is None
-                or message.reply_to.thread_id == message.thread_id
-            )
-        ):
-            reply_id = message.reply_to.message_id
-            exact = await app.stores.repo.get_message(message.chat, reply_id)
-            if (
-                exact is not None
-                and exact.chat == message.chat
-                and exact.thread_id == message.thread_id
-            ):
-                explicit_reply_attachment_ids = frozenset(
-                    item.id for item in exact.attachments if is_image(item)
-                )
-                if explicit_reply_attachment_ids:
-                    image_reply = exact
-            mapping = await store.conversation_for_message(message.chat, reply_id)
-            allow_quote = True
-            if mapping is not None:
-                if mapping[0].chat != message.chat or mapping[0].thread_id != message.thread_id:
-                    allow_quote = False
-                else:
-                    reply_id = mapping[1]
-            if allow_quote:
-                replied = await app.stores.repo.get_message(message.chat, reply_id)
-            if replied is not None and (
-                replied.chat != message.chat or replied.thread_id != message.thread_id
-            ):
-                replied = None
-        if image_reply is None:
-            image_reply = replied if replied and not replied.is_bot else None
+        if reply_scope is None:
+            reply_scope = await self._reply_scope(message, app, store)
+        replied = reply_scope.replied
+        image_reply = reply_scope.image_reply
         human_urls = _urls(text)
         row = replied
         visited: set[str] = set()
@@ -673,31 +756,10 @@ class AgentResponder:
             and (reset_point is None or row.sent_at > reset_point.reset_at)
             for url in _urls(row.text)
         )
-        source_attachments = tuple(
-            attachment
-            for attachment in (
-                *message.attachments,
-                *(image_reply.attachments if image_reply else ()),
-            )
-            if is_image(attachment)
-        )
-        attachment_owners = tuple(
-            owner
-            for attachments, owner in (
-                (message.attachments, message.user.ref.key),
-                (
-                    image_reply.attachments if image_reply else (),
-                    (image_reply.attachment_requester_key or image_reply.user.key)
-                    if image_reply
-                    else "",
-                ),
-            )
-            for attachment in attachments
-            if is_image(attachment)
-        )
+        source_attachments = reply_scope.attachments
         if tool_ctx is not None:
-            tool_ctx.turn.attachment_owners = attachment_owners
-            tool_ctx.turn.explicit_reply_attachment_ids = explicit_reply_attachment_ids
+            tool_ctx.turn.attachment_owners = reply_scope.attachment_owners
+            tool_ctx.turn.explicit_reply_attachment_ids = reply_scope.explicit_reply_attachment_ids
         images = await self._images(
             message, app, replied=image_reply, downloads=downloads, vision=vision
         )
@@ -1051,6 +1113,18 @@ class AgentResponder:
         )
         if callable(getattr(app, "command_form", None)):
             ctx.command_form = lambda name: app.command_form(name, is_dm=message.is_dm)
+        # Resolved once, before skill pins, and reused by _context: routing and tool handlers
+        # must see the same validated photo references.
+        reply_scope = await self._reply_scope(message, app, store)
+        ctx.turn.attachments = reply_scope.attachments
+        ctx.turn.attachment_owners = reply_scope.attachment_owners
+        ctx.turn.explicit_reply_attachment_ids = reply_scope.explicit_reply_attachment_ids
+        ctx.turn.routing = RoutingContext(
+            text=text,
+            reply_author=reply_scope.reply_author,
+            reply_text=reply_scope.reply_text,
+            reply_bot_image=reply_scope.reply_bot_image,
+        )
         mode = effective_mode(self.settings.skills, message.chat)
         skill_turn = None
         if mode is not SkillsMode.OFF:
@@ -1123,6 +1197,7 @@ class AgentResponder:
             ctx,
             record_image_usage,
             deadline,
+            reply_scope,
         )
         ctx.turn.seen_urls = set(urls)
         ctx.turn.attachments = attachments
@@ -1137,6 +1212,9 @@ class AgentResponder:
                 ),
             )
         on_mode = skill_turn is not None and skill_turn.mode is SkillsMode.ON
+        final_instruction = _FINAL_ANSWER_INSTRUCTION + (
+            " " + _FINAL_UNATTEMPTED_INSTRUCTION if on_mode else ""
+        )
         metrics = TurnMetrics(
             app.tools,
             list(skill_turn.offered.values())
@@ -1228,10 +1306,9 @@ class AgentResponder:
                         else app.tools.specs(is_admin=ctx.is_admin, ctx=ctx)
                     )
                     request_snapshot = skill_turn.offered_snapshot() if on_mode else frozenset()
+                    ctx.turn.offered_tools = request_snapshot if on_mode else None
                     request = {
-                        "system": (system + "\n\n" + _FINAL_ANSWER_INSTRUCTION)
-                        if final_answer
-                        else system,
+                        "system": (system + "\n\n" + final_instruction) if final_answer else system,
                         "tools": request_tools,
                         "tool_choice": "none" if final_answer else "auto",
                         "max_tokens": skill_turn.output_tokens(
@@ -1423,7 +1500,7 @@ class AgentResponder:
                                 system=(
                                     system
                                     + "\n\n"
-                                    + _FINAL_ANSWER_INSTRUCTION
+                                    + final_instruction
                                     + "\n\n"
                                     + _NO_TOOLS_RETRY_INSTRUCTION
                                 ),
@@ -1472,7 +1549,7 @@ class AgentResponder:
                                             system=(
                                                 system
                                                 + "\n\n"
-                                                + _FINAL_ANSWER_INSTRUCTION
+                                                + final_instruction
                                                 + "\n\n"
                                                 + _NO_TOOLS_FINAL_INSTRUCTION
                                             ),

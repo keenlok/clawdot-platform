@@ -1,17 +1,21 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Image generation
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:65b1ef968364df7f1f99e09698380e63fd0d11c0d735737fd21c0f2961a39de9
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/image/src/chatcore_image/EXPLAIN.md) · sha256:9d4dd7ba912fe41b7970166562ee6c28f7405316773268625b98469340760810
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
 ## Overview
 The image plugin creates one image from a description when someone explicitly asks for one. It
-sends the image before the bot's short text reply. Generation is disabled by default and requires
-an operator configured OpenAI API key.
+sends the image before the bot's short text reply. The plugin's setup default is off, and an
+operator must configure an OpenAI API key. That default is not this deployment's status: the
+runtime availability lines report whether it is available here and now.
 
 ## Workflow
 The skill is offered only when generation is configured and the platform can send a photo or file.
+A short follow-up activates it only with validated context: a usable photo sent or directly replied
+to, a directly replied-to generated photo, or the requester's own replied-to image request.
+Activation offers the tool; it never generates by itself.
 The model writes a self-contained prompt and chooses square, portrait or landscape. The plugin
 generates one PNG and sends it with a short caption. `/image usage` shows today's local count.
 
@@ -60,7 +64,8 @@ records cost and latency; checks refusal handling; and keeps configured caps wit
 budget.
 
 ## Limitations
-Only one image can be generated per turn. The plugin supports three fixed sizes. Bridge mode sends the PNG as a document. The OpenAI project budget is the
+Only one image can be generated per turn. Daily limits, busy and provider errors are reported only
+by an actual attempt; a turn that never attempted an image did not hit them. The plugin supports three fixed sizes. Bridge mode sends the PNG as a document. The OpenAI project budget is the
 hard spending ceiling because local counters reset on restart.
 
 ## Verification

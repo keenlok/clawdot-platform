@@ -5,6 +5,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-14
+
+### Fixed
+
+- `use_skill` now keeps every loadable skill selectable. Previously the 1,000-character catalog
+  dropped late skills from both the description and the argument enum (image generation was
+  unreachable with 21 eligible skills). Summaries are shortened evenly, then omitted, before a
+  name is ever dropped from the description; the enum always lists all loadable skills.
+- Short image follow-ups reach the image skill when their context is validated: a usable photo
+  sent or directly replied to ("iron man pls"), a directly replied-to generated photo, or the
+  requester's own replied-to image request ("try again", "can u do so"). The same phrases without
+  that context activate nothing, and they are not router keywords. Activation only offers
+  `generate_image`; gates, handler checks, quotas and the explicit direct-reply photo policy are
+  unchanged.
+- `read_explainer` puts live availability ahead of the documentation text, labels it as the
+  current status rather than a setup default, and, with skills on, says whether a tool is offered
+  this step or which skill to load. Skills-on prompts tell the model that a tool missing from the
+  current offer proves neither enabled nor disabled (a listed skill may be off or not allowed,
+  and `use_skill` says so), to state off, not-allowed or unconfigured only from this turn's
+  runtime availability, and quota or provider failure only from that operation's own error
+  result, not from setup documentation, fetched text or earlier messages. This is guidance; it
+  does not guarantee model wording.
+- A skill loaded with `use_skill` now receives its `Skill.context` text in the load result,
+  under the same 400-character and error handling as a skill active from the start of the turn.
+
+### Changed
+
+- The image skill summary covers photo editing when `IMAGE_EDIT_ENABLED` is on, and an active
+  image skill is told which photo reference numbers are usable this turn (or that none is).
+- Core resolves the replied-to message and photo references once, before skill pins, and reuses
+  the result for the prompt and tool handlers. New public names: `chatcore.tools.registry.
+  RoutingContext`, `TurnState.routing`, `TurnState.offered_tools`,
+  `SkillSet.skills_for_tool()`, `chatcore.skills.MAX_CATALOG_SKILLS`,
+  `chatcore.skills.keyword_matches()` and `chatcore.skills.render_skill_context()`.
+- **Upgrade note:** an app whose catalog (declared plus generated skills) exceeds 64 skills now
+  fails at start-up instead of silently hiding late skills. `/explain <topic>` output shows the
+  availability block before the section text. No setting, migration or dependency changes.
+
 ## [0.16.0] - 2026-11-14
 
 ### Changed
@@ -426,7 +464,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/keenlok/clawdot-platform/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/keenlok/clawdot-platform/compare/v0.15.2...v0.16.0
+[0.15.2]: https://github.com/keenlok/clawdot-platform/compare/v0.15.1...v0.15.2
+[0.15.1]: https://github.com/keenlok/clawdot-platform/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/keenlok/clawdot-platform/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/keenlok/clawdot-platform/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/keenlok/clawdot-platform/compare/v0.12.1...v0.13.0

@@ -139,6 +139,7 @@ class BotApp:
                 evaluate_tool=lambda name, ctx: self.skills.evaluate_tool(name, ctx),
                 lookup_tool=lambda name: self.tools.get(name),
                 lookup_gate=lambda name: self.skills.gate(name),
+                lookup_skills=lambda name: self.skills.skills_for_tool(name),
             )
         )
         self.responder: Responder = responder or EchoResponder()

@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [Image follow-up routing and capability claims](2026-11-14-image-routing-capability-claims.md) | Shipped inactive | v0.17.0 release candidate: complete gated skill discovery, evidence-based availability guidance and contextual image routing. All five review findings fixed; Claude executed, Codex reviewed, Claude final review. 4587 tests pass with disposable Postgres; downstream pin and runtime verification follow separately. Photo policy unchanged; real-model qualification not run |
 | [Shared group photo edits](2026-11-14-shared-photo-edits.md) | Shipped inactive | v0.16.0 (this PR), editing off by default: owner-approved explicit same-group photo replies may be edited by any member; scoped provenance rejects indirect history |
 | [Natural-language invitation permissions](2026-11-13-natural-inviter-batches.md) | Live limited | v0.15.2: owner-DM batch name resolution and one confirmed natural-language action for trusted inviters; protected bridge boundary unchanged |
 | [Replying to generated photos](2026-11-13-image-reply-handoff.md) | Shipped inactive | v0.14.0 (this PR), default editing off: persist outgoing photo receipts with requester attribution and resolve exact-photo replies for successive edits; preserve group ownership checks |

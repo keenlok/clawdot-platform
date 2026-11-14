@@ -258,3 +258,167 @@ async def test_natural_language_retrieves_packaged_evidence_in_every_skill_mode(
         "Maintained storage evidence." in item.text for item in provider.calls[1]["messages"]
     )
     assert platform.texts[-1] == "Based on the maintained storage evidence."
+
+
+def _with_skill(feature):
+    from chatcore.skills import Skill
+
+    feature.skills = lambda: [
+        Skill(
+            "feature_skill",
+            "Do the feature",
+            ("feature one", "feature two", "feature three", "feature four"),
+            ("do_feature",),
+        )
+    ]
+    return feature
+
+
+async def test_runtime_availability_precedes_setup_prose_and_is_labelled_current(feature):
+    app, _ = app_for(feature)
+    result = await app.tools.get("read_explainer").handler(ctx_for(app), topic="feature")
+    content = result.content
+    assert result.untrusted
+    assert content.index("do_feature: available") < content.index("Maintained overview evidence.")
+    assert "not the setup defaults" in content
+    assert "quota or provider" in content
+    # Outside a skills-on agent step nothing is said about offers or loading.
+    assert "use_skill" not in content
+
+
+async def test_available_tool_not_offered_this_step_names_its_loadable_skill(feature):
+    app, _ = app_for(_with_skill(feature))
+    ctx = ctx_for(app)
+    ctx.turn.offered_tools = frozenset({"read_explainer", "use_skill"})
+    result = await app.tools.get("read_explainer").handler(ctx, topic="feature")
+    line = next(
+        line for line in result.content.splitlines() if line.startswith("do_feature: available")
+    )
+    assert "not in your tools this step" in line
+    assert "use_skill" in line and "feature_skill" in line
+    assert "secret_tool" not in result.content
+
+
+async def test_offered_tool_is_reported_as_callable_now_without_a_load_step(feature):
+    app, _ = app_for(_with_skill(feature))
+    ctx = ctx_for(app)
+    ctx.turn.offered_tools = frozenset({"read_explainer", "use_skill", "do_feature"})
+    result = await app.tools.get("read_explainer").handler(ctx, topic="feature")
+    line = next(
+        line for line in result.content.splitlines() if line.startswith("do_feature: available")
+    )
+    assert "in your tools now" in line
+    assert "feature_skill" not in line
+
+
+async def test_no_load_route_is_suggested_when_use_skill_is_not_offered(feature):
+    app, _ = app_for(_with_skill(feature))
+    ctx = ctx_for(app)
+    ctx.turn.offered_tools = frozenset({"read_explainer"})
+    result = await app.tools.get("read_explainer").handler(ctx, topic="feature")
+    assert "feature_skill" not in result.content
+    assert "not in your tools this step" in result.content
+
+
+@pytest.mark.parametrize("state", [GateState.OFF, GateState.NOT_ALLOWED])
+async def test_off_and_not_allowed_tools_never_get_a_load_route(feature, state):
+    app, _ = app_for(_with_skill(feature))
+    feature.state = state
+    ctx = ctx_for(app)
+    ctx.turn.offered_tools = frozenset({"read_explainer", "use_skill"})
+    result = await app.tools.get("read_explainer").handler(ctx, topic="feature")
+    assert f"do_feature: {state.value}" in result.content
+    assert "feature_skill" not in result.content
+    assert "switched off" in result.content
+
+
+async def test_forged_offer_state_cannot_reveal_hidden_or_unconfigured_tools(feature):
+    app, _ = app_for(_with_skill(feature))
+    ctx = ctx_for(app)
+    ctx.turn.offered_tools = frozenset({"secret_tool", "use_skill", "not_a_tool"})
+    result = await app.tools.get("read_explainer").handler(ctx, topic="feature")
+    assert "secret_tool" not in result.content
+    feature.state = GateState.UNCONFIGURED
+    result = await app.tools.get("read_explainer").handler(ctx, topic="feature")
+    assert result.is_error and "feature_skill" not in result.content
+
+
+async def test_agent_tells_the_explainer_what_is_offered_each_step(feature):
+    from chatcore.agent import AgentResponder, AgentSettings
+    from chatcore.limits import Limits
+    from chatcore.llm.types import Completion, Message, ToolCall
+    from chatcore.skill_turn import SkillSettings
+    from chatcore.skills import SkillsMode
+    from chatcore.testing import ScriptedProvider
+
+    app, _platform = app_for(_with_skill(feature))
+
+    def read(call_id):
+        return ToolCall(call_id, "read_explainer", {"topic": "feature"})
+
+    provider = ScriptedProvider(
+        [
+            Completion(Message.assistant("", (read("r1"),)), "tool_use"),
+            Completion(
+                Message.assistant("", (ToolCall("l1", "use_skill", {"name": "feature_skill"}),)),
+                "tool_use",
+            ),
+            Completion(Message.assistant("", (read("r2"),)), "tool_use"),
+            Completion(Message.assistant("Explained."), "end_turn"),
+        ]
+    )
+    app.responder = AgentResponder(
+        provider,
+        system_prompt="A helpful bot.",
+        limits=Limits(app.stores.cache),
+        settings=AgentSettings(
+            skills=SkillSettings(mode=SkillsMode.ON, chats=frozenset({GROUP.key}), router="keyword")
+        ),
+    )
+    await app.handle(message("explain internally how feature works", mention=True))
+
+    def tool_texts(call):
+        return [item.text for item in call["messages"] if item.role == "tool"]
+
+    before = "\n".join(tool_texts(provider.calls[1]))
+    after = "\n".join(tool_texts(provider.calls[3]))
+    assert "load skill feature_skill with use_skill" in before
+    assert "do_feature: available — in your tools now" in after
+    # Explaining never ran the feature (its handler raises), and the evidence stays untrusted.
+    assert "Explained." in _platform.texts[-1]
+
+
+async def test_command_stays_within_limit_for_maximum_valid_title_source_and_body(feature):
+    from chatcore.explainers import (
+        ExplainerCatalog,
+        ExplainerDocument,
+        ExplanationSource,
+        utf16_length,
+    )
+
+    app, platform = app_for(feature)
+    plugin = next(p for p in app.plugins if p.name == "explain")
+    original = plugin.catalog.resolve("feature")
+    body = "x" * 2500
+    largest = ExplainerDocument(
+        # A built-in package name, so the identity carries the longest source link.
+        replace(original.spec, title="😀" * 100, package="chatcore_image"),
+        tuple((key, body) for key, _ in original.sections),
+        original.sha256,
+    )
+    plugin.catalog = ExplainerCatalog(
+        [largest], source=ExplanationSource("a" * 39 + "/" + "b" * 100, "a" * 40)
+    )
+    await app.handle(message("/explain@testbot feature verification"))
+    text = platform.texts[-1]
+    assert utf16_length(text) <= 3500
+    # The maintained evidence, its source and the live status are all kept; only the fixed
+    # wrapper wording is shortened.
+    assert body in text
+    assert "Source: https://github.com/" in text and "sha256:" in text
+    assert "omitted" not in text
+    assert text.index("do_feature: available") < text.index(body)
+    assert "handlers still validate each operation" in text
+    result = await app.tools.get("read_explainer").handler(ctx_for(app), topic="feature")
+    assert len(result.content.encode()) <= 16 * 1024
+    assert "not the setup defaults" in result.content
