@@ -1,7 +1,7 @@
 # Image routing context reassessment
 
 - **Date:** 2026-11-14
-- **Status:** Owner-approved and implemented; v0.17.1 release candidate. All 12 bounded real-chat-model replay cases pass with a stub image backend; full Postgres suite passes 4640 tests. Code reviews found no remaining blocker. Merge/release and SBot adoption continue through the previously authorized CI-gated workflow.
+- **Status:** [PR #49](https://github.com/keenlok/clawdot-platform/pull/49), owner-approved and implemented; v0.17.1 release candidate. All 12 bounded real-chat-model replay cases pass with a stub image backend; full Postgres suite passes 4640 tests. Code reviews found no remaining blocker. Merge/release and SBot adoption continue through the previously authorized CI-gated workflow.
 - **Roles:** Claude planned and implemented the main change, then hit its five-hour usage limit (reset reported at 23:20 Asia/Shanghai). Under the repository's unavailable-model fallback, Codex `gpt-6-luna` fixed the truthful-format-error review issue, and Codex `gpt-6.1-sol` plus an independent Codex reviewer completed review. Claude final review was unavailable. Codex qualified the actual chat model and handles release/adoption.
 - **Supersedes:** only the lexical photo-intent heuristic portion of the previously approved image-routing plan. Its permission, reference-provenance and spend rules stand unchanged.
 - **Trigger:** owner report after v0.17.0: "check the recent turns as well, the matching is too limited".
