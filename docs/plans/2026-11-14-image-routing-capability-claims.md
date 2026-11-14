@@ -1,6 +1,6 @@
 # Image follow-up routing and capability claims: proposed design and implementation plan
 
-**Status:** v0.17.0 release candidate on `codex/image-routing-repair` (base `551aeb0`). Claude
+**Status:** [PR #48](https://github.com/keenlok/clawdot-platform/pull/48), v0.17.0 release candidate on `codex/image-routing-repair` (base `551aeb0`). Claude
 implemented both slices and fixed all five review findings; independent Codex review and Claude
 final review found no code blockers. The owner explicitly authorized merge and release on
 2026-11-14, including SBot adoption through the existing CI-gated deployment path. This supersedes
