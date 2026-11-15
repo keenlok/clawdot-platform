@@ -1,6 +1,6 @@
 # Cross-chat confirmation replies
 
-Status: Planned; owner approved the fix on 2026-11-16. Implemented in PR (see index). Claude planned; Codex CLI is installed,
+Status: Planned; owner approved the fix on 2026-11-16. Implemented in [PR #51](https://github.com/keenlok/clawdot-platform/pull/51). Claude planned; Codex CLI is installed,
 so Codex executes and reviews, then Claude does the final review.
 
 ## Problem
