@@ -217,6 +217,9 @@ class LedgerRepo(Protocol):
         self, chat: ChatRef, *, trip_id: str | None = None, general_only: bool = False
     ) -> list[dict]: ...
     async def get_expense(self, chat: ChatRef, expense_id: str) -> dict | None: ...
+    async def export_snapshot(
+        self, chat: ChatRef, *, trip_id: str | None = None, general_only: bool = False
+    ) -> tuple[dict | None, list[dict], list[dict]]: ...
     async def trip_members(self, chat: ChatRef, trip_id: str) -> list[dict]: ...
     async def has_undo(self, chat: ChatRef, actor: UserRef) -> bool: ...
     async def latest_undoable(self, chat: ChatRef, actor: UserRef) -> dict | None: ...
@@ -404,6 +407,17 @@ class MemoryLedgerRepo:
             and (trip_id is None or s["trip_id"] == trip_id)
             and (not general_only or s["trip_id"] is None)
         ]
+
+    async def export_snapshot(
+        self, chat: ChatRef, *, trip_id: str | None = None, general_only: bool = False
+    ) -> tuple[dict | None, list[dict], list[dict]]:
+        """Trip, current expenses and settlements for one scope, read together."""
+        trip = await self.trip(chat, trip_id) if trip_id else None
+        if trip_id and trip is None:
+            raise ValueError("That trip no longer exists in this chat.")
+        expenses = await self.expenses(chat, trip_id=trip_id, general_only=general_only, limit=None)
+        settlements = await self.settlements(chat, trip_id=trip_id, general_only=general_only)
+        return trip, expenses, settlements
 
     async def get_expense(
         self, chat: ChatRef, expense_id: str, *, include_deleted: bool = False
@@ -1074,6 +1088,26 @@ class PostgresLedgerRepo:
             general_only,
         )
         return [_pg_row(row) for row in rows]
+
+    async def export_snapshot(
+        self, chat: ChatRef, *, trip_id: str | None = None, general_only: bool = False
+    ) -> tuple[dict | None, list[dict], list[dict]]:
+        """Read trip, expenses and settlements in one read-only repeatable-read transaction.
+
+        Every statement sees the same committed ledger state, so totals, shares and settlements
+        in one export cannot mix before/after views of a concurrent write.
+        """
+        async with self.db.transaction() as tx:
+            await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            repo = PostgresLedgerRepo(tx)
+            trip = await repo.trip(chat, trip_id) if trip_id else None
+            if trip_id and trip is None:
+                raise ValueError("That trip no longer exists in this chat.")
+            expenses = await repo.expenses(
+                chat, trip_id=trip_id, general_only=general_only, limit=None
+            )
+            settlements = await repo.settlements(chat, trip_id=trip_id, general_only=general_only)
+        return trip, expenses, settlements
 
     async def fx_override(
         self, chat: ChatRef, trip_id: str, currency: str, settle_currency: str

@@ -16,6 +16,7 @@ class GoogleSettings(BaseSettings):
     max_rows: int = Field(default=300, ge=1, le=1000)
     max_columns: int = Field(default=32, ge=8, le=100)
     max_cell_chars: int = Field(default=5000, ge=100, le=20_000)
+    export_max_cells: int = Field(default=200_000, ge=1000, le=2_000_000)
     max_tabs: int = Field(default=32, ge=1, le=100)
     suggestion_rows_per_call: int = Field(default=20, ge=1, le=100)
     suggestion_rows_per_day: int = Field(default=100, ge=1, le=1000)

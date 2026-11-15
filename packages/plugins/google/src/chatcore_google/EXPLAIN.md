@@ -35,6 +35,13 @@ retained human message containing the selected file link. Generic Doc edits bloc
 selected saved reference when another primary exists; an older file can be edited when the current
 request itself names it. Historical source-message provenance alone never bypasses this check.
 
+An expense export creates one new private spreadsheet after confirmation. When the app supplies a
+workbook provider, code builds every tab from one consistent ledger snapshot read at confirmation:
+summary balances, transactions, one tab per participant, suggested and recorded repayments, and the
+raw records with stable IDs. Numbers and dates are typed cells; ledger text is always literal text.
+The file is a snapshot and is never synced. If writing stops part-way, the reply links the file and
+its title keeps "(incomplete)"; nothing is retried automatically.
+
 ## Storage
 Original file contents and saved changes live in Google services, not chat memory. The plugin stores
 trip-file associations and edit-result journal records in its configured repository. Frozen action

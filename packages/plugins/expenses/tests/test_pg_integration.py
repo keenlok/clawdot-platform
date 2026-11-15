@@ -6,7 +6,7 @@ import io
 import json
 import os
 import uuid
-from datetime import UTC, date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from importlib import resources
 
@@ -22,6 +22,7 @@ from chatcore_expenses.balances import ledger_balances
 from chatcore_expenses.export import build_export
 from chatcore_expenses.plugin import ExpensesPlugin
 from chatcore_expenses.repository import MemoryLedgerRepo, PostgresLedgerRepo
+from chatcore_expenses.workbook import build_workbook
 
 
 async def _active_trip(ledger, chat):
@@ -659,6 +660,34 @@ async def test_postgres_and_memory_exports_match():
             for currency, values in expected.items()
             for user, amount in values.items()
         }
+
+        # One read-only repeatable-read snapshot returns the same rows as the separate reads,
+        # and the workbook built from either store is identical apart from stable IDs.
+        models = []
+        for repo in (memory, pg):
+            trip = await _active_trip(repo, chat)
+            snap_trip, snap_expenses, snap_settlements = await repo.export_snapshot(
+                chat, trip_id=str(trip["id"])
+            )
+            assert str(snap_trip["id"]) == str(trip["id"])
+            assert snap_expenses == await repo.expenses(chat, trip_id=trip["id"], limit=None)
+            assert snap_settlements == await repo.settlements(chat, trip_id=trip["id"])
+            book = build_workbook(
+                snap_trip,
+                snap_expenses,
+                snap_settlements,
+                names,
+                now=datetime(2026, 10, 31, tzinfo=UTC),
+                timezone=zone,
+            )
+            text = json.dumps(book.model)
+            ids = [str(trip["id"])] + [str(e["id"]) for e in snap_expenses]
+            for value in ids + [str(s["id"]) for s in snap_settlements]:
+                text = text.replace(value, "ID")
+            models.append(json.loads(text))
+        assert models[0] == models[1]
+        with pytest.raises(ValueError, match="no longer exists"):
+            await pg.export_snapshot(ChatRef(GROUP.platform, "other"), trip_id=str(pg_trip["id"]))
     finally:
         await db.close()
         if admin is not None:

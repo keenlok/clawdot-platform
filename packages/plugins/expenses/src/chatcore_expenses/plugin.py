@@ -48,6 +48,7 @@ from .repository import (
     _trip_change_lines,
 )
 from .split import split_amount
+from .workbook import build_workbook
 
 logger = logging.getLogger(__name__)
 GroupResolver = Callable[[ToolContext], Awaitable[ChatRef | None]]
@@ -1824,15 +1825,11 @@ class ExpensesPlugin(BasePlugin):
             result = await self._export(tool_ctx, trip=scope)
         return result.content
 
-    async def sheet_export_data(
-        self, ctx: ToolContext, trip: str | None = None, general: bool = False
-    ) -> dict:
-        """Public, read-only ledger snapshot for app-injected document exporters.
-
-        Uses the same group/DM and trip resolution as CSV export. Original currency totals
-        include expense records only, never shares/settlements and never an implicit FX rate.
-        """
-        chat = await self._chat(ctx)
+    async def _export_scope(
+        self, ctx: ToolContext, trip: str | None, general: bool, *, chat: ChatRef | None = None
+    ) -> tuple[ChatRef, dict | None, list[dict], list[dict], dict[str, str]]:
+        """Resolve one export scope and read it as one consistent ledger snapshot."""
+        chat = chat or await self._chat(ctx)
         if chat is None:
             raise ValueError("I can't identify your group from this DM. Use the group chat.")
         if (
@@ -1853,16 +1850,23 @@ class ExpensesPlugin(BasePlugin):
                 else await _current_trip(ledger, chat)
             )
         )
-        expenses = await ledger.expenses(
+        selected, expenses, settlements = await ledger.export_snapshot(
             chat,
-            trip_id=selected["id"] if selected else None,
+            trip_id=str(selected["id"]) if selected else None,
             general_only=selected is None,
-            limit=None,
-        )
-        settlements = await ledger.settlements(
-            chat, trip_id=selected["id"] if selected else None, general_only=selected is None
         )
         names = {member.ref.key: member.display_name for member in await self._members(ctx, chat)}
+        return chat, selected, expenses, settlements, names
+
+    async def sheet_export_data(
+        self, ctx: ToolContext, trip: str | None = None, general: bool = False
+    ) -> dict:
+        """Public, read-only ledger snapshot for app-injected document exporters.
+
+        Uses the same group/DM and trip resolution as CSV export. Original currency totals
+        include expense records only, never shares/settlements and never an implicit FX rate.
+        """
+        chat, selected, expenses, settlements, names = await self._export_scope(ctx, trip, general)
         exported = build_export(
             selected,
             expenses,
@@ -1884,6 +1888,34 @@ class ExpensesPlugin(BasePlugin):
             "csv": exported.data,
         }
 
+    async def sheet_export_workbook(
+        self, ctx: ToolContext, trip: str | None = None, general: bool = False
+    ) -> dict:
+        """Public, read-only formatted workbook model for app-injected spreadsheet exporters.
+
+        Same scope rules as ``sheet_export_data``. ``workbook`` is the neutral ``schema: 1``
+        model documented in ``workbook.py``; nothing here writes to the ledger.
+        """
+        chat, selected, expenses, settlements, names = await self._export_scope(ctx, trip, general)
+        workbook = build_workbook(
+            selected,
+            expenses,
+            settlements,
+            names,
+            now=datetime.now(self.timezone),
+            timezone=self.timezone,
+        )
+        return {
+            "chat_key": chat.key,
+            "trip_id": str(selected["id"]) if selected else None,
+            "trip_name": str(selected["name"]) if selected else "General ledger",
+            "workbook": workbook.model,
+            "preview": workbook.preview,
+            "expense_count": workbook.expense_count,
+            "settlement_count": workbook.settlement_count,
+            "snapshot": workbook.snapshot,
+        }
+
     async def _export(
         self, ctx: ToolContext, *, trip: str | None = None, general: bool = False
     ) -> ToolResult:
@@ -1902,29 +1934,12 @@ class ExpensesPlugin(BasePlugin):
         if trip is not None and general:
             return ToolResult.error("Choose a trip or the general ledger, not both.")
 
-        ledger = self._ledger(ctx.stores)
-        if general:
-            selected = None
-        elif trip is not None:
-            try:
-                selected = await _resolve_trip(ledger, chat, trip)
-            except ValueError as exc:
-                return ToolResult.error(str(exc))
-        else:
-            try:
-                selected = await _current_trip(ledger, chat)
-            except ValueError as exc:
-                return ToolResult.error(str(exc))
-        expenses = await ledger.expenses(
-            chat,
-            trip_id=selected["id"] if selected else None,
-            general_only=selected is None,
-            limit=None,
-        )
-        settlements = await ledger.settlements(
-            chat, trip_id=selected["id"] if selected else None, general_only=selected is None
-        )
-        names = {member.ref.key: member.display_name for member in await self._members(ctx, chat)}
+        try:
+            chat, selected, expenses, settlements, names = await self._export_scope(
+                ctx, trip, general, chat=chat
+            )
+        except ValueError as exc:
+            return ToolResult.error(str(exc))
         exported = build_export(
             selected,
             expenses,
