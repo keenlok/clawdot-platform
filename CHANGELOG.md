@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-16
+
+### Fixed
+
+- Cross-chat confirmation requests no longer reply to a message from another chat, avoiding
+  platform delivery failures. A write requested in a DM for a group, such as starting a group
+  trip, previously failed with "Could not request confirmation" instead of posting in the group.
+
 ## [0.18.0] - 2026-11-15
 
 ### Added
@@ -547,7 +555,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/keenlok/clawdot-platform/compare/v0.16.0...v0.17.0

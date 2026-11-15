@@ -54,6 +54,9 @@ class ConfirmService:
         if action.handler_key not in self.handlers:
             raise LookupError(f"no handler for pending action {action.handler_key!r}")
         await self.repo.save_pending(action)
+        if reply_to is not None and reply_to.chat != action.chat:
+            # A reply must be in the same chat; Telegram rejects cross-chat replies.
+            reply_to = None
         if self.platform.capabilities.buttons:
             return await self.platform.confirm(
                 action.chat,
