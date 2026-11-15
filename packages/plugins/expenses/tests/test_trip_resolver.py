@@ -17,7 +17,9 @@ from chatcore_expenses.repository import MemoryLedgerRepo
 async def scope():
     actor = User(UserRef("fake", "alice"), "Alice", "alice")
     stores = Stores(repo=MemoryCoreRepo(), cache=MemoryCache())
-    ctx = ToolContext(ChatRef("fake", "group"), actor, False, FakePlatform(), stores)
+    chat = ChatRef("fake", "group")
+    platform = FakePlatform(members={chat.key: {actor.ref.key}})
+    ctx = ToolContext(chat, actor, False, platform, stores)
     await stores.repo.upsert_member(ctx.chat, actor)
     return ctx, MemoryLedgerRepo()
 
@@ -97,6 +99,7 @@ async def test_public_resolver_dm_uses_only_resolved_group_and_requires_membersh
     ctx, ledger = scope
     trip = await start(ledger, ctx, "China")
     dm = replace(ctx, chat=ChatRef("fake", "alice"), is_dm=True)
+    dm.platform.members[ctx.chat.key] = {ctx.user.ref.key}
     resolver = AsyncMock(return_value=ctx.chat)
     plugin = ExpensesPlugin(ledger=ledger, group_for_dm=resolver)
     assert (await plugin.resolve_trip(dm, "China"))["trip_id"] == str(trip["id"])

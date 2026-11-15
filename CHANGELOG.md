@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-16
+
+### Added
+
+- `ExpensesPlugin(dm_ledger="private")` keeps DM trips and expenses in the DM ledger. Apps can
+  supply current member groups and group titles to let users explicitly choose a group ledger or
+  resolve a unique active or planned group trip by name. Private trips are limited to the requester.
+- The Telegram adapter and `FakePlatform` provide `chat_title(chat)`; apps can pass it to the
+  expenses plugin as `group_title` for private DM group selection.
+
+### Changed
+
+- The expenses gate allows DMs in private-ledger mode. In group-ledger mode, DM behavior and tool
+  specifications remain unchanged.
+
 ## [0.18.1] - 2026-11-16
 
 ### Fixed
@@ -555,7 +570,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...v0.17.1
