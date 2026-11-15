@@ -8,9 +8,10 @@ import re
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -51,11 +52,24 @@ from .split import split_amount
 from .workbook import build_workbook
 
 logger = logging.getLogger(__name__)
+PRIVATE_TRIP_SCOPE_ERROR = (
+    "Private trips only track your own expenses; start a group trip in the group to split costs."
+)
 GroupResolver = Callable[[ToolContext], Awaitable[ChatRef | None]]
+MemberGroups = Callable[[UserRef], Awaitable[list[ChatRef]]]
+GroupTitle = Callable[[ChatRef], Awaitable[str | None]]
 MEMBER_NAME_DESCRIPTION = (
     "Name as the user wrote it (display name, @username, or me). Don't convert a name into an "
     "@username the user didn't type."
 )
+
+
+class TripNotFoundError(ValueError):
+    """The requested trip has no match in this ledger."""
+
+
+class TripAmbiguousError(ValueError):
+    """The requested trip matches multiple candidates in this ledger."""
 
 
 def _member_labels(members: Iterable[User], keys: Iterable[str] | None = None) -> dict[str, str]:
@@ -186,7 +200,7 @@ async def _resolve_trip(ledger: LedgerRepo, chat: ChatRef, ref: str) -> dict:
         if len(prefixes) == 1:
             return prefixes[0]
         if len(prefixes) > 1:
-            raise ValueError(f"Trip ID prefix {ref} matches several trips.")
+            raise TripAmbiguousError(f"Trip ID prefix {ref} matches several trips.")
     exact = [trip for trip in trips if trip["name"].casefold() == ref.casefold()]
     if exact:
         opened = [trip for trip in exact if trip["status"] != "closed"]
@@ -199,9 +213,9 @@ async def _resolve_trip(ledger: LedgerRepo, chat: ChatRef, ref: str) -> dict:
         return matches[0]
     candidates = ", ".join(trip["name"] for trip in (open_matches or matches)[:5])
     if candidates:
-        raise ValueError(f"{ref!r} matches several trips: {candidates}. Which one?")
+        raise TripAmbiguousError(f"{ref!r} matches several trips: {candidates}. Which one?")
     names = ", ".join(trip["name"] for trip in trips[:5]) or "none"
-    raise ValueError(f'Trip "{ref}" not found. Trips: {names}')
+    raise TripNotFoundError(f'Trip "{ref}" not found. Trips: {names}')
 
 
 async def _current_trip(ledger: LedgerRepo, chat: ChatRef) -> dict | None:
@@ -308,7 +322,12 @@ class ExpensesPlugin(BasePlugin):
         limits: Limits | None = None,
         cards: CardRenderClient | None = None,
         cards_theme: str = "light",
+        dm_ledger: Literal["group", "private"] = "group",
+        member_groups: MemberGroups | None = None,
+        group_title: GroupTitle | None = None,
     ) -> None:
+        if dm_ledger not in {"group", "private"}:
+            raise ValueError("dm_ledger must be 'group' or 'private'.")
         self.group_for_dm = group_for_dm
         self.ledger = ledger
         self.timezone = ZoneInfo(timezone)
@@ -317,6 +336,9 @@ class ExpensesPlugin(BasePlugin):
         self.limits = limits
         self.cards = cards
         self.cards_theme = cards_theme
+        self.dm_ledger = dm_ledger
+        self.member_groups = member_groups
+        self.group_title = group_title
 
     def _ledger(self, stores: Stores) -> LedgerRepo:
         if self.ledger is not None:
@@ -328,9 +350,76 @@ class ExpensesPlugin(BasePlugin):
     async def _chat(self, ctx: ToolContext) -> ChatRef | None:
         if not ctx.is_dm:
             return ctx.chat
+        if self.dm_ledger == "private":
+            return ctx.chat
         if self.group_for_dm is None:
             return None
         return await self.group_for_dm(ctx)
+
+    async def _named_group(self, ctx: ToolContext, name: str) -> ChatRef:
+        if self.member_groups is None or self.group_title is None:
+            raise ValueError("Group names from a DM are unavailable; use your private ledger.")
+        requested = _plain_text(name).casefold()
+        groups = await self.member_groups(ctx.user.ref)
+        matches = [
+            chat
+            for chat in groups
+            if (title := await self.group_title(chat)) is not None
+            and title.strip().casefold() == requested
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"I couldn't find exactly one of your groups called {name}.")
+        await self._require_current_group_member(ctx, matches[0])
+        return matches[0]
+
+    @staticmethod
+    async def _require_current_group_member(ctx: ToolContext, chat: ChatRef) -> None:
+        try:
+            member = await ctx.platform.is_member(chat, ctx.user.ref)
+        except PlatformError:
+            raise PermissionError("Current group membership could not be verified.") from None
+        if not member:
+            raise PermissionError("You are no longer a member of that group.")
+
+    async def _tool_context(self, ctx: ToolContext, *, group: str | None, trip: str | None):
+        if not ctx.is_dm or self.dm_ledger != "private":
+            return ctx
+        target = await self._chat(ctx)
+        ledger = self._ledger(ctx.stores)
+        if group:
+            target = await self._named_group(ctx, group)
+        elif trip:
+            try:
+                await _resolve_trip(ledger, target, trip)
+            except TripNotFoundError as private_error:
+                if self.member_groups is None:
+                    raise private_error
+                candidates = []
+                ambiguous = []
+                for candidate in await self.member_groups(ctx.user.ref):
+                    try:
+                        selected = await _resolve_trip(ledger, candidate, trip)
+                    except TripNotFoundError:
+                        continue
+                    except TripAmbiguousError as exc:
+                        await self._require_current_group_member(ctx, candidate)
+                        ambiguous.append((candidate, exc))
+                        continue
+                    if selected["status"] in {"active", "planned"}:
+                        await self._require_current_group_member(ctx, candidate)
+                        candidates.append(candidate)
+                if ambiguous:
+                    raise ValueError(
+                        "The trip name is ambiguous in one of your groups. Name a more specific "
+                        "trip or the group."
+                    ) from ambiguous[0][1]
+                if len(candidates) > 1:
+                    raise ValueError(
+                        f"That trip exists in several groups. Name the group for {trip}."
+                    ) from None
+                if len(candidates) == 1:
+                    target = candidates[0]
+        return replace(ctx, chat=target, is_dm=False) if target != ctx.chat else ctx
 
     async def resolve_trip(self, ctx: ToolContext, trip: str) -> dict:
         """Resolve an explicit, existing trip for app-injected integrations.
@@ -340,11 +429,19 @@ class ExpensesPlugin(BasePlugin):
         """
         if not isinstance(trip, str) or not trip.strip():
             raise ValueError("Say which trip; provide an existing trip name or ID.")
+        original_chat = ctx.chat
+        original_is_dm = ctx.is_dm
+        ctx = await self._tool_context(ctx, group=None, trip=trip)
         chat = await self._chat(ctx)
         if chat is None:
             raise ValueError("I can't identify your group from this DM. Use the group chat.")
-        if not any(member.ref == ctx.user.ref for member in await self._members(ctx, chat)):
-            raise PermissionError("Trip files require current membership in the trip's group.")
+        from_private_dm = self.dm_ledger == "private" and original_is_dm
+        if not (from_private_dm and chat == original_chat):
+            if from_private_dm:
+                # A group reached from a private DM: verify live, membership caches are stale.
+                await self._require_current_group_member(ctx, chat)
+            if not any(member.ref == ctx.user.ref for member in await self._members(ctx, chat)):
+                raise PermissionError("Trip files require current membership in the trip's group.")
         selected = await _resolve_trip(self._ledger(ctx.stores), chat, trip)
         return {
             "chat_key": chat.key,
@@ -355,6 +452,66 @@ class ExpensesPlugin(BasePlugin):
 
     async def _members(self, ctx: ToolContext, chat: ChatRef) -> list[User]:
         return await ctx.stores.repo.find_members(chat)
+
+    @staticmethod
+    def _requester_name(ctx: ToolContext, name: str) -> bool:
+        value = _plain_text(name).lstrip("@").casefold()
+        return value in {
+            "me",
+            "i",
+            ctx.user.ref.id.casefold(),
+            (ctx.user.username or "").casefold(),
+            ctx.user.display_name.casefold(),
+        }
+
+    def _private_dm(self, ctx, chat: ChatRef) -> bool:
+        return self.dm_ledger == "private" and ctx.is_dm and ctx.chat == chat
+
+    @staticmethod
+    def _snapshot_is_personal(snapshot: dict, requester: UserRef) -> bool:
+        if snapshot.get("paid_by") != requester.key:
+            return False
+        shares = snapshot.get("shares") or {}
+        keys = (
+            {item.get("user_key") for item in shares} if isinstance(shares, list) else set(shares)
+        )
+        return keys <= {requester.key}
+
+    async def _private_action_error(self, action: PendingAction, ctx, ledger: LedgerRepo):
+        if not self._private_dm(ctx, action.chat):
+            return None
+        payload = action.payload
+        requester = ctx.user.ref
+        if action.kind == "start_trip" and payload.get("members") != [requester.key]:
+            return PRIVATE_TRIP_SCOPE_ERROR
+        if action.kind == "update_trip" and "members" in payload:
+            if payload["members"] != [requester.key]:
+                return PRIVATE_TRIP_SCOPE_ERROR
+        if action.kind == "update_trip_members":
+            if (
+                payload.get("members_before") != [requester.key]
+                or any(key != requester.key for key in payload.get("add", []))
+                or requester.key in payload.get("remove", [])
+            ):
+                return PRIVATE_TRIP_SCOPE_ERROR
+            current = [
+                row["user_key"]
+                for row in await ledger.trip_members(action.chat, str(payload["trip_id"]))
+            ]
+            final = (set(current) | set(payload.get("add", []))) - set(payload.get("remove", []))
+            if set(current) != {requester.key} or final != {requester.key}:
+                return PRIVATE_TRIP_SCOPE_ERROR
+        if action.kind == "restore_expense":
+            row = await ledger.get_expense(action.chat, payload["expense_id"], include_deleted=True)
+            if row is not None and not self._snapshot_is_personal(
+                _expense_snapshot(row), requester
+            ):
+                return PRIVATE_TRIP_SCOPE_ERROR
+        if action.kind == "undo_expense_change":
+            latest = await ledger.latest_undoable(action.chat, requester)
+            if latest is not None and not self._snapshot_is_personal(latest["snapshot"], requester):
+                return PRIVATE_TRIP_SCOPE_ERROR
+        return None
 
     async def _resolve_member(self, ctx: ToolContext, chat: ChatRef, name: str) -> User:
         name = _plain_text(name)
@@ -478,6 +635,15 @@ class ExpensesPlugin(BasePlugin):
                     User(UserRef.parse(_resolved_payer_key), _resolved_payer_key),
                 )
             else:
+                if (
+                    self.dm_ledger == "private"
+                    and ctx.is_dm
+                    and not self._requester_name(ctx, paid_by)
+                ):
+                    raise ValueError(
+                        "Private trips only track your own expenses; start a group trip in the "
+                        "group to split costs."
+                    )
                 payer = await self._resolve_member(ctx, chat, paid_by)
             if _resolved_participant_keys is not None:
                 known = {item.ref.key: item for item in await self._members(ctx, chat)}
@@ -485,6 +651,13 @@ class ExpensesPlugin(BasePlugin):
                     known.get(key, User(UserRef.parse(key), key))
                     for key in _resolved_participant_keys
                 ]
+            elif (
+                self.dm_ledger == "private"
+                and ctx.is_dm
+                and split_with
+                and any(not self._requester_name(ctx, name) for name in split_with)
+            ):
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             elif split_with:
                 participants = [await self._resolve_member(ctx, chat, name) for name in split_with]
             elif selected and selected.get("members"):
@@ -498,11 +671,18 @@ class ExpensesPlugin(BasePlugin):
                         f"{payer.display_name} isn't on the {selected['name']}'s member list. "
                         "Add them with update_trip_members, or say who shares this."
                     )
+            elif self.dm_ledger == "private" and ctx.is_dm:
+                participants = [ctx.user]
             else:
                 raise ValueError(
                     "Who shares this? (Tip: set trip members with update_trip_members so I can "
                     "split among everyone.)"
                 )
+            private_dm = self.dm_ledger == "private" and ctx.is_dm
+            if private_dm and (
+                payer.ref != ctx.user.ref or any(item.ref != ctx.user.ref for item in participants)
+            ):
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             participant_map = {user.ref.key: user for user in participants}
             participant_keys = list(participant_map)
             split_values = None
@@ -511,6 +691,12 @@ class ExpensesPlugin(BasePlugin):
             elif shares is not None:
                 split_values = {}
                 for name, value in shares.items():
+                    if (
+                        self.dm_ledger == "private"
+                        and ctx.is_dm
+                        and not self._requester_name(ctx, name)
+                    ):
+                        raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
                     member = await self._resolve_member(ctx, chat, name)
                     if split_type == "exact":
                         split_values[member.ref.key] = parse_amount(str(value), currency)
@@ -518,6 +704,12 @@ class ExpensesPlugin(BasePlugin):
                         split_values[member.ref.key] = str(value)
                 if set(split_values) != set(participant_keys):
                     raise ValueError("Share entries must match the split participants.")
+            if (
+                private_dm
+                and split_values is not None
+                and any(key != ctx.user.ref.key for key in split_values)
+            ):
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             share_amounts = split_amount(
                 amount_minor,
                 participant_keys,
@@ -893,6 +1085,10 @@ class ExpensesPlugin(BasePlugin):
             return ToolResult.error("Expense was not found or is not deleted.")
         if expense["created_by"] != ctx.user.ref.key and not ctx.is_admin:
             return ToolResult.error("Only the creator or an admin can restore this expense.")
+        if self._private_dm(ctx, chat) and not self._snapshot_is_personal(
+            _expense_snapshot(expense), ctx.user.ref
+        ):
+            return ToolResult.error(PRIVATE_TRIP_SCOPE_ERROR)
         trip = await ledger.trip(chat, expense["trip_id"]) if expense.get("trip_id") else None
         if trip and trip["status"] == "closed":
             return ToolResult.error("The trip is closed. Reopen it first.")
@@ -916,6 +1112,8 @@ class ExpensesPlugin(BasePlugin):
         if latest is None:
             return ToolResult.error("You have no expense change to undo in this chat.")
         snapshot = latest["snapshot"]
+        if self._private_dm(ctx, chat) and not self._snapshot_is_personal(snapshot, ctx.user.ref):
+            return ToolResult.error(PRIVATE_TRIP_SCOPE_ERROR)
         trip_label = f" ({latest['trip_name']})" if latest.get("trip_name") else " (general ledger)"
         summary = (
             f"Undo your last expense change: {latest['action']} of {snapshot['description']} "
@@ -939,18 +1137,35 @@ class ExpensesPlugin(BasePlugin):
             selected = await self._management_trip(ledger, chat, trip)
             if not selected:
                 return ToolResult.error("There are no open trips to update.")
+            private_dm = self._private_dm(ctx, chat)
+            if private_dm and selected.get("members", []) != [ctx.user.ref.key]:
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             if not add and not remove:
                 raise ValueError("Say who to add or remove.")
+            if private_dm and any(not self._requester_name(ctx, name) for name in add or []):
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             add_keys = []
             for name in add or []:
-                key = (await self._resolve_member(ctx, chat, name)).ref.key
+                member = (
+                    ctx.user
+                    if private_dm and self._requester_name(ctx, name)
+                    else await self._resolve_member(ctx, chat, name)
+                )
+                key = member.ref.key
                 if key not in add_keys:
                     add_keys.append(key)
             remove_keys = []
             for name in remove or []:
-                key = (await self._resolve_member(ctx, chat, name)).ref.key
+                member = (
+                    ctx.user
+                    if private_dm and self._requester_name(ctx, name)
+                    else await self._resolve_member(ctx, chat, name)
+                )
+                key = member.ref.key
                 if key not in remove_keys:
                     remove_keys.append(key)
+            if private_dm and ctx.user.ref.key in remove_keys:
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             payload = {
                 "trip_id": selected["id"],
                 "add": add_keys,
@@ -962,6 +1177,8 @@ class ExpensesPlugin(BasePlugin):
             removed = [key for key in remove_keys if key in old_keys]
             final_keys = [key for key in selected.get("members", []) if key not in removed]
             final_keys.extend(key for key in added if key not in final_keys)
+            if private_dm and final_keys != [ctx.user.ref.key]:
+                raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             labels = _member_labels(await self._members(ctx, chat), [*final_keys, *added, *removed])
             details = []
             if added:
@@ -1121,6 +1338,9 @@ class ExpensesPlugin(BasePlugin):
                 "Please use the group chat or say which group."
             )
         try:
+            if self.dm_ledger == "private" and ctx.is_dm and members:
+                if any(not self._requester_name(ctx, member) for member in members):
+                    raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
             ledger = self._ledger(ctx.stores)
             name = _plain_text(name)
             if not 1 <= len(name) <= 100:
@@ -1162,11 +1382,18 @@ class ExpensesPlugin(BasePlugin):
                 "start_date": start.isoformat() if start else None,
                 "end_date": end.isoformat() if end else None,
             }
-            resolved_members = []
-            for member_name in members or []:
-                member = await self._resolve_member(ctx, chat, member_name)
-                if member.ref.key not in resolved_members:
-                    resolved_members.append(member.ref.key)
+            if self._private_dm(ctx, chat):
+                resolved_members = []
+                for member_name in members or []:
+                    if not self._requester_name(ctx, member_name):
+                        raise ValueError(PRIVATE_TRIP_SCOPE_ERROR)
+                resolved_members = [ctx.user.ref.key]
+            else:
+                resolved_members = []
+                for member_name in members or []:
+                    member = await self._resolve_member(ctx, chat, member_name)
+                    if member.ref.key not in resolved_members:
+                        resolved_members.append(member.ref.key)
             payload["members"] = resolved_members
             lines = [
                 f"{'Start' if status == 'active' else 'Plan'} trip: {name}",
@@ -2763,6 +2990,29 @@ class ExpensesPlugin(BasePlugin):
                     ),
                 ]
             )
+        if self.dm_ledger == "private":
+            for index, tool in enumerate(tools):
+                parameters = {**tool.parameters, "properties": dict(tool.parameters["properties"])}
+                parameters["properties"]["group"] = {
+                    "type": "string",
+                    "description": (
+                        "Only applies in a DM. Name one of your groups when explicitly asking to "
+                        "use that group's ledger."
+                    ),
+                }
+                handler = tool.handler
+
+                async def routed(ctx, *, _handler=handler, **arguments):
+                    group = arguments.pop("group", None)
+                    try:
+                        selected_ctx = await self._tool_context(
+                            ctx, group=group, trip=arguments.get("trip")
+                        )
+                    except (ValueError, PermissionError) as exc:
+                        return ToolResult.error(str(exc))
+                    return await _handler(selected_ctx, **arguments)
+
+                tools[index] = replace(tool, parameters=parameters, handler=routed)
         return tools
 
     def commands(self) -> list[Command]:
@@ -2810,6 +3060,9 @@ class _CommitHandler(PendingActionHandler):
 
     async def commit(self, action: PendingAction, ctx: CommandContext) -> str:
         ledger = self.plugin._ledger(ctx.stores)
+        private_error = await self.plugin._private_action_error(action, ctx, ledger)
+        if private_error:
+            return f"Not saved: {private_error}"
         trip = None
         if action.kind == "end_trip":
             trip = await ledger.trip(action.chat, action.payload["trip_id"])

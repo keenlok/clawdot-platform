@@ -926,6 +926,18 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
             member.status == "restricted" and member.is_member
         )
 
+    async def chat_title(self, chat: ChatRef) -> str | None:
+        if chat.platform != NAME:
+            return None
+        try:
+            result = await self._safe(self._application.bot.get_chat, chat.id)
+        except (PlatformError, TelegramError):
+            return None
+        if getattr(result, "type", None) not in ("group", "supergroup"):
+            return None
+        title = getattr(result, "title", None)
+        return title if isinstance(title, str) and title else None
+
     async def leave(self, chat: ChatRef) -> None:
         await self._safe(self._application.bot.leave_chat, chat.id)
 
