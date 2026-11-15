@@ -46,6 +46,7 @@ class GooglePlugin(BasePlugin):
         service=None,
         attachment_reader=None,
         expenses_provider=None,
+        expenses_workbook_provider=None,
         trip_resolver=None,
     ):
         self.settings, self.access = settings, access
@@ -89,7 +90,7 @@ class GooglePlugin(BasePlugin):
         self.itinerary = ItineraryService(
             service, attachment_reader=attachment_reader, expenses=expenses_provider
         )
-        self.expenses = ExpenseService(service, expenses_provider)
+        self.expenses = ExpenseService(service, expenses_provider, expenses_workbook_provider)
         self.trip_files = TripFilesService(service, trip_resolver)
         service.trip_files = self.trip_files
 
@@ -591,25 +592,33 @@ class GooglePlugin(BasePlugin):
                     writes=True,
                 )
             )
+        if self.expenses.available:
+            tools.append(
+                Tool(
+                    "expenses_export_to_sheet",
+                    (
+                        "Create a formatted multi-tab Google Sheet from a real ledger snapshot; "
+                        "confirm first."
+                        if self.expenses.workbook_provider is not None
+                        else "Export a real ledger snapshot to a new Google Sheet; confirm first."
+                    ),
+                    parameters(
+                        {
+                            "title": text("Optional export spreadsheet title."),
+                            "trip": text("Trip name or ID; omit for current/default trip."),
+                            "general": {
+                                "type": "boolean",
+                                "description": "Export the general ledger, not a trip.",
+                            },
+                        }
+                    ),
+                    self.export,
+                    writes=True,
+                )
+            )
         if self.expenses.provider is not None:
             tools.extend(
                 [
-                    Tool(
-                        "expenses_export_to_sheet",
-                        "Export a real ledger snapshot to a new Google Sheet; confirm first.",
-                        parameters(
-                            {
-                                "title": text("Optional export spreadsheet title."),
-                                "trip": text("Trip name or ID; omit for current/default trip."),
-                                "general": {
-                                    "type": "boolean",
-                                    "description": "Export the general ledger, not a trip.",
-                                },
-                            }
-                        ),
-                        self.export,
-                        writes=True,
-                    ),
                     Tool(
                         "itinerary_link_trip",
                         "Link a trip spreadsheet to an explicit trip; requester confirms.",

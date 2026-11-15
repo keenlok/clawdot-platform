@@ -5,6 +5,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-15
+
+### Added
+
+- **Formatted expense workbook export.** `expenses_export_to_sheet` can now create a readable,
+  multi-tab Google Sheet built in code from one ledger snapshot: **Summary** (per person paid
+  upfront, share, repayments sent/received, rounding adjustment, net balance with "Owed to you" /
+  "You owe", plus original-currency totals), **Transactions** (one row per current expense with
+  per-participant share columns), one tab per participant, **Repayments** (suggested transfers kept
+  apart from recorded repayments) and **Raw ledger** (every expense, share and repayment with
+  stable IDs, user keys, minor units and stored FX rates). Numbers and dates are typed cells
+  formatted to each currency's precision; headers are frozen, filtered and banded; totals are
+  `SUM` formulas; each tab states it is a snapshot that does not update. Convert and per-currency
+  trips and the general ledger are supported; expenses without an FX rate are flagged and excluded
+  from settlement-currency figures with an explicit note, never silently.
+- `ExpensesPlugin.sheet_export_workbook(ctx, trip=None, general=False)` returns the neutral
+  `schema: 1` workbook model (documented in `chatcore_expenses/workbook.py`) with a preview and
+  snapshot time. It never writes to the ledger.
+- `GooglePlugin(expenses_workbook_provider=...)` enables the workbook export. Apps opt in by passing
+  `expenses_plugin.sheet_export_workbook`; without it the CSV-to-sheet export is unchanged.
+- `GOOGLE_EXPORT_MAX_CELLS` (default 200 000, 1 000–2 000 000) bounds one workbook. Larger exports
+  are refused with a clear message instead of being truncated; the workbook path does not use the
+  generic 300-row `GOOGLE_MAX_ROWS` limit that made larger CSV-to-sheet exports fail.
+- `LedgerRepo.export_snapshot(chat, trip_id=None, general_only=False)` reads the trip, current
+  expenses and settlements together; Postgres uses one `REPEATABLE READ, READ ONLY` transaction.
+  Custom `LedgerRepo` implementations must add it.
+
+### Changed
+
+- **Behaviour change (workbook export only):** the confirmation preview shows counts, tabs and
+  net balances instead of every CSV row, and the ledger is read again when the requester confirms,
+  so changes made between preview and confirmation are included. The reply reports the counts and
+  snapshot time actually written.
+- The CSV export (`/export`, `export_expenses`) and `sheet_export_data` now read through
+  `export_snapshot`, so one export cannot mix rows from before and after a concurrent write. Output
+  is unchanged.
+- Workbook writes create the spreadsheet with an "(incomplete)" title, fill it in size-bounded
+  batches and rename it last. If a step fails, the reply links the file, says it is incomplete and
+  that nothing was retried. The existing confirmation reservation still allows at most one file per
+  confirmation. Sharing is unchanged (private to the Google owner).
+- Workbook text cells are literal `stringValue`s without the apostrophe prefix used for generic
+  sheet writes, which Sheets would otherwise display; the renderer cannot express any formula other
+  than its own `SUM` totals. Generic `google_create_sheet`/`google_append` behaviour is unchanged.
+
+### Upgrade notes
+
+- No migration and no new dependency. Pending CSV-style export confirmations created before the
+  upgrade still commit through the old path.
+- To adopt the workbook, pass `expenses_workbook_provider=expenses_plugin.sheet_export_workbook`
+  to `GooglePlugin`, and refresh any app skill text or prompt snapshots that describe the export.
+
 ## [0.17.1] - 2026-11-14
 
 ### Fixed
@@ -496,7 +547,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/keenlok/clawdot-platform/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/keenlok/clawdot-platform/compare/v0.15.2...v0.16.0

@@ -45,5 +45,7 @@ but does not itself delete committed ledger rows. Database loss and operational 
 ## Verification
 Inspect the recorded-entry echo and expense reference, list the expense, and request the selected
 trip's balances. Export the full ledger as CSV to check expenses, shares, settlements and conversion
-details. Use the supported undo, delete or restore operation for mistakes, observing its ownership
+details. When the app wires the Google workbook export, the same snapshot can become a formatted
+spreadsheet with summary, transaction, per-person, repayment and raw-ledger tabs; its balances come
+from the same rounding rules, and it does not update after export. Use the supported undo, delete or restore operation for mistakes, observing its ownership
 and confirmation rules. A general explanation does not prove that a particular entry was committed.

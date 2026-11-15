@@ -7,11 +7,29 @@ from dataclasses import replace
 from chatcore.events import ChatRef
 
 from chatcore_google.service import SHEET
+from chatcore_google.workbook import render_workbook, write_workbook
 
 
 class ExpenseService:
-    def __init__(self, google, provider=None):
+    def __init__(self, google, provider=None, workbook_provider=None):
         self.google, self.provider = google, provider
+        self.workbook_provider = workbook_provider
+
+    @property
+    def available(self):
+        return self.provider is not None or self.workbook_provider is not None
+
+    async def workbook(self, ctx, trip=None, general=False, title=None):
+        """Read one ledger snapshot through the app provider and render it, without writing."""
+        book = await self.workbook_provider(ctx, trip, general)
+        final = title or book["workbook"].get("title") or "Expenses"
+        plan = render_workbook(
+            book["workbook"],
+            title=str(final)[:200],
+            max_cells=self.google.settings.export_max_cells,
+            max_cell_chars=self.google.settings.max_cell_chars,
+        )
+        return book, plan
 
     async def ledger(self, ctx, trip=None, general=False):
         if self.provider is None:
@@ -19,6 +37,8 @@ class ExpenseService:
         return await self.provider(ctx, trip, general)
 
     async def propose_export(self, ctx, *, title=None, trip=None, general=False):
+        if self.workbook_provider is not None:
+            return await self.propose_workbook(ctx, title=title, trip=trip, general=general)
         await self.google.authorize(ctx, write=True)
         ledger = await self.ledger(ctx, trip, general)
         if len(ledger["csv"]) > self.google.settings.max_bytes:
@@ -32,6 +52,56 @@ class ExpenseService:
         )
         action.payload.update(ledger_chat=ledger["chat_key"], ledger_trip=ledger["trip_id"])
         return replace(action, kind="expenses_export")
+
+    async def propose_workbook(self, ctx, *, title=None, trip=None, general=False):
+        await self.google.authorize(ctx, write=True)
+        if title is not None and (
+            not isinstance(title, str) or not title.strip() or len(title) > 200
+        ):
+            raise ValueError("Provide a title of 1–200 characters.")
+        book, plan = await self.workbook(ctx, trip, general, title)
+        owner = await self.google.client.identity()
+        _, revision = await self.google.repo.settings(ctx.chat.key)
+        payload = {
+            "owner_email": self.google.settings.owner_email,
+            "owner": owner,
+            "revision": revision,
+            "title": title,
+            "workbook": 1,
+            "ledger_chat": book["chat_key"],
+            "ledger_trip": book["trip_id"],
+        }
+        summary = (
+            f"Create formatted expense workbook: {plan.title}\n"
+            f"Owner: {self.google.settings.owner_email}\n"
+            "Target: new private Google Sheet (sharing unchanged)\n\n"
+            f"{book['preview']}\n\n"
+            "The ledger is read again when you confirm, so changes made before then are "
+            "included. The file is a snapshot and will not update afterwards."
+        )
+        action = await self.google.action(ctx, "expenses_export", payload, summary)
+        return action
+
+    async def commit_workbook(self, action, ctx, payload):
+        book, plan = await self.workbook(
+            ctx, payload["ledger_trip"], payload["ledger_trip"] is None, payload.get("title")
+        )
+        if book["chat_key"] != payload["ledger_chat"] or book["trip_id"] != payload["ledger_trip"]:
+            raise ValueError("Expense group/scope changed; request a fresh export.")
+        await self.google.reserve(action, ctx)
+        url, failure = await write_workbook(self.google.client, plan)
+        if failure:
+            return (
+                f"Created {url}, but the workbook is incomplete ({failure}). Its title ends "
+                "with “(incomplete)”. Nothing was retried; check or delete it, then request a "
+                "new export."
+            )
+        return (
+            f"Created {url}: {book['expense_count']} expenses and {book['settlement_count']} "
+            f"recorded repayments, snapshot {book.get('snapshot', 'at confirmation')}. "
+            "Private to the Google owner (sharing unchanged). It is a snapshot and does not "
+            "update when the ledger changes."
+        )
 
     async def propose_link(self, ctx, url, trip):
         await self.google.authorize(ctx, write=True)
@@ -81,6 +151,10 @@ class ExpenseService:
         payload = await self.google.verify_commit(action, ctx)
         if action.kind not in {"expenses_export", "itinerary_link"}:
             raise ValueError("Unknown expense export action.")
+        if action.kind == "expenses_export" and payload.get("workbook"):
+            if self.workbook_provider is None:
+                raise ValueError("Workbook export is unavailable in this deployment.")
+            return await self.commit_workbook(action, ctx, payload)
         current = await self.ledger(ctx, payload["ledger_trip"], payload["ledger_trip"] is None)
         if (
             current["chat_key"] != payload["ledger_chat"]

@@ -137,3 +137,25 @@ async def test_uncertain_remote_write_does_not_become_generic_retry_advice(googl
     result = await confirm.on_press(press(action.id, sender=ctx.user), commit)
     assert "may have completed" in result and "Check the file" in result
     assert "Please try again" not in result
+
+
+async def test_expense_export_tool_follows_injected_providers(google_service):
+    service, _, _, _ = google_service
+
+    async def provider(ctx, trip, general):
+        raise AssertionError("not called while listing tools")
+
+    def tools(**kwargs):
+        plugin = GooglePlugin(service.settings, service.access, service=service, **kwargs)
+        return {tool.name: tool for tool in plugin.tools()}
+
+    assert "expenses_export_to_sheet" not in tools()
+    legacy = tools(expenses_provider=provider)
+    assert legacy["expenses_export_to_sheet"].description.startswith("Export a real ledger")
+    assert "itinerary_link_trip" in legacy
+    only_workbook = tools(expenses_workbook_provider=provider)
+    export = only_workbook["expenses_export_to_sheet"]
+    assert export.writes and "formatted multi-tab" in export.description
+    assert "itinerary_link_trip" not in only_workbook
+    both = tools(expenses_provider=provider, expenses_workbook_provider=provider)
+    assert {"expenses_export_to_sheet", "itinerary_link_trip"} <= both.keys()

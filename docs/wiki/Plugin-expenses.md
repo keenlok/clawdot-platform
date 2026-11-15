@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Expenses and trips
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/expenses/src/chatcore_expenses/EXPLAIN.md) · sha256:5dba130e2dcd90f2a57486843d629ad9a13e1fc9eed2f0e1943b655bdf4bcdd2
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/expenses/src/chatcore_expenses/EXPLAIN.md) · sha256:deda0eac47fc1aa3bd41a536a5ccf80a1333d5afedc9d343c4efdda0da63ac3c
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -45,5 +45,7 @@ but does not itself delete committed ledger rows. Database loss and operational 
 ## Verification
 Inspect the recorded-entry echo and expense reference, list the expense, and request the selected
 trip's balances. Export the full ledger as CSV to check expenses, shares, settlements and conversion
-details. Use the supported undo, delete or restore operation for mistakes, observing its ownership
+details. When the app wires the Google workbook export, the same snapshot can become a formatted
+spreadsheet with summary, transaction, per-person, repayment and raw-ledger tabs; its balances come
+from the same rounding rules, and it does not update after export. Use the supported undo, delete or restore operation for mistakes, observing its ownership
 and confirmation rules. A general explanation does not prove that a particular entry was committed.

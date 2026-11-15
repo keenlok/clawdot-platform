@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Google files and bounded edits
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:2fe650e711acf51c146f3c4c411ed20e1ab762074f5a537ba7cfc26dc51f1a3d
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:e4939319e51f8a25b2c90caf633002d19100e65dcc1ad9b38aa1c5a785973658
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -34,6 +34,13 @@ names the association decision. `trip_attach_file` may use `source_message_ref` 
 retained human message containing the selected file link. Generic Doc edits block an implicitly
 selected saved reference when another primary exists; an older file can be edited when the current
 request itself names it. Historical source-message provenance alone never bypasses this check.
+
+An expense export creates one new private spreadsheet after confirmation. When the app supplies a
+workbook provider, code builds every tab from one consistent ledger snapshot read at confirmation:
+summary balances, transactions, one tab per participant, suggested and recorded repayments, and the
+raw records with stable IDs. Numbers and dates are typed cells; ledger text is always literal text.
+The file is a snapshot and is never synced. If writing stops part-way, the reply links the file and
+its title keeps "(incomplete)"; nothing is retried automatically.
 
 ## Storage
 Original file contents and saved changes live in Google services, not chat memory. The plugin stores
