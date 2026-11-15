@@ -1,6 +1,6 @@
 # Private DM trips
 
-Status: Planned; owner approved on 2026-11-16. Claude planned; Codex CLI is installed, so Codex
+Status: Planned; owner approved on 2026-11-16; implemented in [PR #52](https://github.com/keenlok/clawdot-platform/pull/52). Claude planned; Codex CLI is installed, so Codex
 executes and reviews, then Claude does the final review.
 
 ## Problem
