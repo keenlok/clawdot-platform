@@ -765,3 +765,120 @@ async def test_postgres_inviter_batches_compete_on_the_same_revision(db):
     snapshot = await store.snapshot()
     assert snapshot.revision == 1 and len(snapshot.trusted_inviters) == 5
     assert len(await store.audit()) == 5
+
+
+async def test_postgres_dm_grants_persist_and_batch_with_one_revision(db):
+    from chatcore.administration.store import AdminChange, global_scope
+
+    owner = UserRef("tg", "1")
+    people = tuple(UserRef("tg", str(i)) for i in range(2, 5))
+    owners = frozenset({owner.key})
+    expiry = (datetime.now(UTC) + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    store = PgAdministrationStore(db)
+    snapshot = await store.apply_inviter_batch(
+        actor=owner,
+        owners=owners,
+        expected_revision=0,
+        operation="dm_grant",
+        users=people,
+        value=expiry,
+    )
+    assert snapshot.revision == 1
+    assert set(snapshot.dm_grants) == {user.key for user in people}
+    assert len(await store.audit()) == 3
+    reopened = PgAdministrationStore(db)
+    assert set((await reopened.snapshot()).dm_grants) == {user.key for user in people}
+    await reopened.apply(
+        actor=owner,
+        owners=owners,
+        expected_revision=1,
+        change=AdminChange("dm_revoke", global_scope("tg"), people[0]),
+    )
+    assert people[0].key not in (await reopened.snapshot()).dm_grants
+
+
+async def test_postgres_dm_batch_audit_failure_rolls_back_all_grants(db):
+    class FailingTransaction:
+        def __init__(self, tx):
+            self.tx = tx
+            self.audits = 0
+
+        async def execute(self, sql, *args):
+            if "INSERT INTO administration_audit" in sql:
+                self.audits += 1
+                if self.audits == 2:
+                    raise RuntimeError("injected DM audit failure")
+            return await self.tx.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.tx, name)
+
+    class FailingDatabase:
+        @asynccontextmanager
+        async def transaction(self):
+            async with db.transaction() as tx:
+                yield FailingTransaction(tx)
+
+    owner = UserRef("tg", "1")
+    people = (UserRef("tg", "2"), UserRef("tg", "3"), UserRef("tg", "4"))
+    expiry = (datetime.now(UTC) + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+    with pytest.raises(RuntimeError, match="injected DM audit"):
+        await PgAdministrationStore(FailingDatabase()).apply_inviter_batch(
+            actor=owner,
+            owners=frozenset({owner.key}),
+            expected_revision=0,
+            operation="dm_grant",
+            users=people,
+            value=expiry,
+        )
+    store = PgAdministrationStore(db)
+    snapshot = await store.snapshot()
+    assert snapshot.revision == 0 and not snapshot.dm_grants
+    assert await store.audit() == ()
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_postgres_dm_grant_expiry_is_rechecked_after_revision_lock(db, monkeypatch, batch):
+    import chatcore.administration.pg as pg_module
+    import chatcore.administration.store as store_module
+
+    class Clock(datetime):
+        current = datetime.now(UTC)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current if tz else cls.current.replace(tzinfo=None)
+
+    expiry = Clock.current + timedelta(seconds=1)
+    expiry_text = expiry.isoformat()
+    original_validate = store_module.validate_change
+
+    def validate_then_expire(change):
+        original_validate(change)
+        Clock.current = expiry + timedelta(seconds=1)
+
+    monkeypatch.setattr(store_module, "datetime", Clock)
+    monkeypatch.setattr(store_module, "validate_change", validate_then_expire)
+    monkeypatch.setattr(pg_module, "validate_change", validate_then_expire)
+    owner, friend = UserRef("tg", "1"), UserRef("tg", "2")
+    store = PgAdministrationStore(db)
+    with pytest.raises(ValueError, match="future"):
+        if batch:
+            await store.apply_inviter_batch(
+                actor=owner,
+                owners=frozenset({owner.key}),
+                expected_revision=0,
+                operation="dm_grant",
+                users=(friend,),
+                value=expiry_text,
+            )
+        else:
+            await store.apply(
+                actor=owner,
+                owners=frozenset({owner.key}),
+                expected_revision=0,
+                change=AdminChange("dm_grant", global_scope("tg"), friend, expiry_text),
+            )
+    snapshot = await PgAdministrationStore(db).snapshot()
+    assert snapshot.revision == 0 and not snapshot.dm_grants
+    assert await PgAdministrationStore(db).audit() == ()

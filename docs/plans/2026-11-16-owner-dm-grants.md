@@ -177,3 +177,17 @@ widens who `can_dm` admits. The PR description must say so for maintenance revie
 Revoke grants first if the feature should stop immediately. A code rollback ignores the table
 (no one keeps DM access through it); keep the additive table. Live Telegram messages and real
 friend grants are not part of automated checks; the owner grants friends after deployment.
+
+## Review record
+
+Codex (`gpt-6-luna`) executed; Codex (`gpt-6.1-sol`) reviewed twice; Claude did the final
+review. Review 1 found memory-store audit atomicity, a preview identity-spoofing path through
+display names, missing commit-time expiry re-validation and thin tests; fix round 1 resolved
+all of them. Review 2 confirmed those fixes and found hollow target-rejection tests (fixed in
+round 2, tests only). Only `administration/gates.py` changed among the permission files;
+`permissions.py` is reused unchanged.
+
+Known pre-existing limit, not changed here: for any globally blocked or paused DM user, the app
+logs the message and runs plugin `on_message` hooks before sending the restriction notice. The
+responder (model) is never called. Grantees inherit this ordering; tightening it for all
+restricted users is a separate follow-up.

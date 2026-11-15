@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from chatcore.access import AccessPolicy
 from chatcore.administration.gates import build_gates
-from chatcore.administration.inviter_tools import build_tools, commit_batch
+from chatcore.administration.inviter_tools import build_tools, commit_batch, commit_dm_batch
 from chatcore.administration.store import (
     AdminChange,
     AdministrationStore,
@@ -43,10 +43,16 @@ INVITER_MANAGEMENT_INSTRUCTIONS = (
     "ambiguous. The tool previews resolved people for one confirmation; never claim they are "
     "trusted until confirmed. This grants no other admin role or content access."
 )
+DM_ACCESS_INSTRUCTIONS = (
+    "For private DM access, use manage_dm_access with grant or revoke. Resolve exact names or "
+    "explicit tg IDs and preview every target for confirmation. A grant permits only a private "
+    "DM; it grants no group access or other role. Never claim a change before confirmation."
+)
 
 USAGE = """Usage:
 /admin groups | admins | moderators | restrictions | audit
 /admin trusted | trust tg:123456 | untrust tg:123456
+/admin dmgrants | dmgrant tg:123456 [12h] | dmrevoke tg:123456
 /admin blockgroup tg:-100123 | unblockgroup tg:-100123
 /admin enable tg:-100123 | disable tg:-100123
 /admin grant tg:123456 tg:-100123 | revoke tg:123456 tg:-100123
@@ -61,6 +67,12 @@ USAGE = """Usage:
 
 
 def _audit_display_detail(operation: str, detail: str, zone: str) -> str:
+    if operation == "dm_grant" and detail != "none":
+        try:
+            instant = datetime.fromisoformat(detail.replace("Z", "+00:00"))
+            return "until=" + format_instant(instant, zone)
+        except ValueError:
+            return detail
     if operation != "pause" or not detail.startswith("until="):
         return detail
     value = detail.removeprefix("until=")
@@ -102,7 +114,7 @@ class AdministrationPlugin(BasePlugin):
         return [
             Skill(
                 "invitation_management",
-                "Let trusted friends invite this bot to new groups, or revoke that permission",
+                "Manage trusted invitations and owner-granted private DM access",
                 (
                     "let Alex and Ben invite you to groups",
                     "trust these five friends to add you to groups",
@@ -110,10 +122,21 @@ class AdministrationPlugin(BasePlugin):
                     "allow my friends to add this bot lah",
                     "让这些朋友邀请你进群",
                     "取消他的加群邀请权限",
+                    "allow Alex and tg:123 to DM you",
+                    "remove Ben's private DM access",
                 ),
-                ("manage_trusted_inviters",),
-                instructions=INVITER_MANAGEMENT_INSTRUCTIONS,
-                keywords=("invite", "trust", "invitation permission", "邀请", "信任", "加群"),
+                ("manage_trusted_inviters", "manage_dm_access"),
+                instructions=INVITER_MANAGEMENT_INSTRUCTIONS + " " + DM_ACCESS_INSTRUCTIONS,
+                keywords=(
+                    "invite",
+                    "trust",
+                    "invitation permission",
+                    "dm access",
+                    "private dm",
+                    "邀请",
+                    "信任",
+                    "加群",
+                ),
                 commands=("admin",),
                 max_steps=2,
             )
@@ -123,11 +146,13 @@ class AdministrationPlugin(BasePlugin):
         return [Command("admin", "Configure groups and delegated setup access", self._command)]
 
     def action_handlers(self):
-        return {"change": self, "inviter_batch": self}
+        return {"change": self, "inviter_batch": self, "dm_batch": self}
 
     async def commit(self, action: PendingAction, ctx: CommandContext) -> str:
         if action.kind == "inviter_batch":
             return await commit_batch(self, action, ctx)
+        if action.kind == "dm_batch":
+            return await commit_dm_batch(self, action, ctx)
         return await self._commit(action, ctx)
 
     async def _command(self, ctx: CommandContext, args: str) -> str | None:
@@ -160,14 +185,86 @@ class AdministrationPlugin(BasePlugin):
             if not owner:
                 return "Owner access is required for this administration change."
             if len(parts) != 1:
-                return self._usage()
+                return self._usage(owner=owner)
             snapshot = await self.store.snapshot()
             return "Trusted inviters (owners are implicitly trusted):\n" + (
                 "\n".join(sorted(snapshot.trusted_inviters)) or "None"
             )
+        if verb == "dmgrants":
+            if not owner:
+                return "Owner access is required for this administration change."
+            if len(parts) != 1:
+                return self._usage(owner=owner)
+            snapshot = await self.store.snapshot()
+            zone, _ = await display_service(ctx.stores).resolve(ctx.chat, ctx.user.ref, is_dm=True)
+            now = datetime.now(UTC)
+            rows = []
+            for key, grant in sorted(snapshot.dm_grants.items()):
+                if grant.expires_at is not None and grant.expires_at <= now:
+                    continue
+                expiry_text = (
+                    format_instant(grant.expires_at, zone) if grant.expires_at else "until revoked"
+                )
+                rows.append(
+                    f"{key} — by {grant.granted_by} at "
+                    f"{format_instant(grant.granted_at, zone)}; {expiry_text}"
+                )
+            return "Active DM grants:\n" + ("\n".join(rows) or "None")
+        if verb in {"dmgrant", "dmrevoke"}:
+            if not owner:
+                return "Owner access is required for this administration change."
+            if (verb == "dmgrant" and len(parts) not in {2, 3}) or (
+                verb == "dmrevoke" and len(parts) != 2
+            ):
+                return self._usage(owner=owner)
+            try:
+                target = _user(ctx.platform.name, parts[1])
+                expiry = _dm_expiry(parts[2]) if verb == "dmgrant" and len(parts) == 3 else None
+                operation = "dm_grant" if verb == "dmgrant" else "dm_revoke"
+                expiry_value = expiry.isoformat().replace("+00:00", "Z") if expiry else None
+                change = AdminChange(
+                    operation, global_scope(ctx.platform.name), target, expiry_value
+                )
+                validate_change(change)
+                snapshot = await self.store.snapshot()
+                authorize_change(snapshot, ctx.user.ref, self.owners, change)
+                check_target(snapshot, ctx.user.ref, self.owners, self.protected, change)
+            except (ValueError, IndexError):
+                return self._usage(owner=owner)
+            if ctx.confirm is None:
+                return "Administration confirmations are unavailable."
+            zone, _ = await display_service(ctx.stores).resolve(ctx.chat, ctx.user.ref, is_dm=True)
+            if verb == "dmgrant":
+                until = format_instant(expiry, zone) if expiry else "until revoked"
+                summary = (
+                    f"Confirm: allow {target.key} to chat with me in a private DM until {until}. "
+                    "This gives no group access or admin role, and their usage counts toward "
+                    "the daily budget."
+                )
+            else:
+                summary = (
+                    f"Confirm: remove {target.key}'s private DM access; data they created stays."
+                )
+            action = PendingAction.create(
+                chat=ctx.chat,
+                requester=ctx.user.ref,
+                plugin=self.name,
+                kind="change",
+                payload={
+                    "operation": operation,
+                    "group": global_scope(ctx.platform.name).key,
+                    "user": target.key,
+                    "value": expiry_value,
+                    "expected_revision": snapshot.revision,
+                },
+                summary=summary,
+                thread_id=ctx.thread_id,
+            )
+            await ctx.confirm.request(action, ctx.user)
+            return None
         if verb in {"groups", "admins", "moderators", "restrictions", "audit"}:
             if len(parts) != 1:
-                return self._usage()
+                return self._usage(owner=owner)
             if verb == "groups":
                 return await self._groups(ctx, owner, groups)
             if verb == "admins":
@@ -181,10 +278,12 @@ class AdministrationPlugin(BasePlugin):
             change = self._parse_change(ctx.platform.name, parts)
             validate_change(change)
         except (ValueError, IndexError):
-            return self._usage()
+            return self._usage(owner=owner)
         if change.operation in {
             "trust",
             "untrust",
+            "dm_grant",
+            "dm_revoke",
             "blockgroup",
             "unblockgroup",
             "grant",
@@ -330,11 +429,12 @@ class AdministrationPlugin(BasePlugin):
             return AdminChange("persona", _group(platform, parts[1]), value=value)
         raise ValueError("Unknown command")
 
-    def _usage(self) -> str:
+    def _usage(self, *, owner: bool = False) -> str:
         return "\n".join(
             line
             for line in USAGE.splitlines()
-            if self.enable_chatmode or not line.startswith("/admin chatmode")
+            if (self.enable_chatmode or not line.startswith("/admin chatmode"))
+            and (owner or not line.startswith("/admin dmgrants"))
         )
 
     def _menu(self, owner: bool, delegated: bool, moderator: bool) -> str:
@@ -343,6 +443,7 @@ class AdministrationPlugin(BasePlugin):
             lines.extend(
                 [
                     "/admin trusted | trust USER_ID | untrust USER_ID",
+                    "/admin dmgrants | dmgrant USER_ID [DURATION] | dmrevoke USER_ID",
                     "/admin blockgroup GROUP_ID | unblockgroup GROUP_ID",
                     "/admin admins",
                     "/admin moderators | /admin restrictions",
@@ -409,7 +510,7 @@ class AdministrationPlugin(BasePlugin):
         elif len(parts) == 3 and parts[1].lower() == "extra" and parts[2].lower() == "clear":
             change = AdminChange("budget_extra_reset", global_scope(ctx.platform.name))
         else:
-            return self._usage()
+            return self._usage(owner=True)
         validate_change(change)
         if ctx.confirm is None:
             return "Administration confirmations are unavailable."
@@ -647,6 +748,8 @@ class AdministrationPlugin(BasePlugin):
             if operation not in {
                 "trust",
                 "untrust",
+                "dm_grant",
+                "dm_revoke",
                 "blockgroup",
                 "unblockgroup",
                 "enable",
@@ -698,6 +801,16 @@ class AdministrationPlugin(BasePlugin):
         if operation == "budget_reset":
             default_budget = self.limits.default_budget()
             return f"Daily token budget reset to the env default ({default_budget:,})."
+        if operation == "dm_grant":
+            expiry = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+            zone, _ = await display_service(ctx.stores).resolve(ctx.chat, ctx.user.ref, is_dm=True)
+            return (
+                f"DM access granted for {user.key} until {format_instant(expiry, zone)}."
+                if expiry
+                else f"DM access granted for {user.key} until revoked."
+            )
+        if operation == "dm_revoke":
+            return f"DM access removed for {user.key}."
         if operation == "budget_extra":
             return f"Extra allowance saved: {value:,} tokens for today."
         if operation == "budget_extra_reset":
@@ -745,6 +858,17 @@ def _parse_duration(value: str) -> int:
     if not 60 <= seconds <= 30 * 86400:
         raise ValueError("Duration must be from 1m to 30d")
     return seconds
+
+
+def _dm_expiry(value: str) -> datetime:
+    match = re.fullmatch(r"([1-9][0-9]*)([mhd])", value.lower())
+    if not match:
+        raise ValueError("Duration must look like 30m, 2h, or 7d")
+    amount = int(match[1])
+    seconds = amount * {"m": 60, "h": 3600, "d": 86400}[match[2]]
+    if not 60 <= seconds <= 365 * 86400:
+        raise ValueError("Duration must be from 1m to 365d")
+    return datetime.now(UTC) + timedelta(seconds=seconds)
 
 
 def _duration_label(seconds: int) -> str:

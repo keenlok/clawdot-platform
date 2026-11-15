@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Owner-only `/admin dmgrant`, `/admin dmrevoke` and `/admin dmgrants`, plus a confirmed
+  natural-language batch tool, allow selected people to use the bot in private DMs without
+  granting group access or an admin role. Grants can expire after 1 minute to 365 days or last
+  until revoked; grantees use the shared daily budget. The optional `dm_request_notice` setting
+  is off by default and offers denied users their ID without model or plugin processing. With no
+  grants and the notice disabled, access behavior is unchanged.
+
+### Security
+
+- `can_dm` now allows explicitly owner-granted identities. The administration gates enforce
+  owner-DM access to the new `manage_dm_access` write tool; global blocks and pauses still deny.
+
+### Changed
+
+- Apply additive core migration `0013_owner_dm_grants.sql` to store grants and expiry metadata.
+
 ## [0.18.1] - 2026-11-16
 
 ### Fixed

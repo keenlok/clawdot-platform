@@ -1,5 +1,5 @@
-"""Who the bot talks to (§6a least privilege): allowlisted groups, DMs only from current members of
-those groups, and admin commands only for listed users."""
+"""Who the bot talks to (§6a least privilege): allowlisted groups, DMs from current members or
+owner-granted users, and admin commands only for listed users."""
 
 from __future__ import annotations
 
@@ -138,6 +138,13 @@ class AccessPolicy:
     def budget_override(self) -> BudgetOverride | None:
         return self._snapshot.budget if self._snapshot else None
 
+    def has_dm_grant(self, user: UserRef, *, now: datetime | None = None) -> bool:
+        if self._snapshot is None:
+            return False
+        grant = self._snapshot.dm_grants.get(user.key)
+        instant = now or datetime.now(UTC)
+        return bool(grant and (grant.expires_at is None or grant.expires_at > instant))
+
     @property
     def snapshot(self) -> AccessSnapshot | None:
         return self._snapshot
@@ -179,6 +186,7 @@ class AccessPolicy:
             or bool(self.assigned_groups(user))
             or bool(self.moderated_groups(user))
             or bool(await self.member_groups(user, platform, cache))
+            or self.has_dm_grant(user)
         )
 
 

@@ -10,9 +10,11 @@ from chatcore.administration.store import (
     AdminChange,
     AdmissionResult,
     AuditEntry,
+    DmGrant,
     GroupAdmission,
     Restriction,
     StaleChangeError,
+    _validated_dm_expiry,
     authorize_change,
     authorize_inviter_batch,
     check_target,
@@ -56,6 +58,9 @@ class PgAdministrationStore:
         admissions = await tx.fetch(
             "SELECT chat_key, inviter_key, admitted_at FROM administration_group_admissions"
         )
+        dm_grants = await tx.fetch(
+            "SELECT user_key, granted_by, granted_at, expires_at FROM administration_dm_grants"
+        )
         return AccessSnapshot(
             revision,
             MappingProxyType({row["chat_key"]: row["enabled"] for row in overrides}),
@@ -90,6 +95,14 @@ class PgAdministrationStore:
                 {
                     row["chat_key"]: GroupAdmission(row["inviter_key"], row["admitted_at"])
                     for row in admissions
+                }
+            ),
+            MappingProxyType(
+                {
+                    row["user_key"]: DmGrant(
+                        row["granted_by"], row["granted_at"], row["expires_at"]
+                    )
+                    for row in dm_grants
                 }
             ),
         )
@@ -188,9 +201,10 @@ class PgAdministrationStore:
         expected_revision: int,
         operation: str,
         users: tuple[UserRef, ...],
+        value: str | None = None,
         protected: frozenset[str] = frozenset(),
     ) -> AccessSnapshot:
-        changes = inviter_batch_changes(actor, operation, users)
+        changes = inviter_batch_changes(actor, operation, users, value)
         async with self.db.transaction() as tx:
             revision = await tx.fetchval(
                 "SELECT revision FROM administration_revision WHERE singleton=true FOR UPDATE"
@@ -199,12 +213,15 @@ class PgAdministrationStore:
                 raise RuntimeError("Administration revision row is missing")
             if revision != expected_revision:
                 raise StaleChangeError("Administration settings changed; please retry")
+            if operation == "dm_grant":
+                _validated_dm_expiry(value)
             changes = authorize_inviter_batch(
                 await self._snapshot(tx, revision), actor, owners, changes, protected
             )
             if changes:
                 revision += 1
                 for change in changes:
+                    detail = None
                     if operation == "trust":
                         await tx.execute(
                             "INSERT INTO administration_trusted_inviters(user_key,granted_by) "
@@ -212,20 +229,38 @@ class PgAdministrationStore:
                             change.user.key,
                             actor.key,
                         )
-                    else:
+                    elif operation == "untrust":
                         await tx.execute(
                             "DELETE FROM administration_trusted_inviters WHERE user_key=$1",
                             change.user.key,
                         )
+                    elif operation == "dm_grant":
+                        expiry = _validated_dm_expiry(value)
+                        await tx.execute(
+                            "INSERT INTO administration_dm_grants(user_key,granted_by,expires_at) "
+                            "VALUES($1,$2,$3) ON CONFLICT(user_key) DO UPDATE SET "
+                            "granted_by=EXCLUDED.granted_by,granted_at=now(),expires_at=EXCLUDED.expires_at",
+                            change.user.key,
+                            actor.key,
+                            expiry,
+                        )
+                        detail = value or "none"
+                    else:
+                        await tx.execute(
+                            "DELETE FROM administration_dm_grants WHERE user_key=$1",
+                            change.user.key,
+                        )
+                        detail = "none"
                     await tx.execute(
                         "INSERT INTO administration_audit"
-                        "(revision,actor_key,operation,chat_key,subject_key) "
-                        "VALUES($1,$2,$3,$4,$5)",
+                        "(revision,actor_key,operation,chat_key,subject_key,detail) "
+                        "VALUES($1,$2,$3,$4,$5,$6)",
                         revision,
                         actor.key,
                         operation,
                         change.group.key,
                         change.user.key,
+                        detail,
                     )
                 await tx.execute(
                     "UPDATE administration_revision SET revision=$1 WHERE singleton=true", revision
@@ -261,7 +296,28 @@ class PgAdministrationStore:
             subject = change.user.key if change.user else None
             op = change.operation
             detail = None
-            if op in {"trust", "untrust"}:
+            if op == "dm_grant":
+                old = snapshot.dm_grants.get(change.user.key)
+                expiry = _validated_dm_expiry(change.value)
+                if old and old.expires_at == expiry:
+                    return snapshot
+                await tx.execute(
+                    "INSERT INTO administration_dm_grants(user_key,granted_by,expires_at) "
+                    "VALUES($1,$2,$3) ON CONFLICT(user_key) DO UPDATE SET "
+                    "granted_by=EXCLUDED.granted_by,granted_at=now(),expires_at=EXCLUDED.expires_at",
+                    change.user.key,
+                    actor.key,
+                    expiry,
+                )
+                detail = change.value or "none"
+            elif op == "dm_revoke":
+                if change.user.key not in snapshot.dm_grants:
+                    return snapshot
+                await tx.execute(
+                    "DELETE FROM administration_dm_grants WHERE user_key=$1", change.user.key
+                )
+                detail = "none"
+            elif op in {"trust", "untrust"}:
                 if op == "trust":
                     await tx.execute(
                         "INSERT INTO administration_trusted_inviters(user_key, granted_by) "

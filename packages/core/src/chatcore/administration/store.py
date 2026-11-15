@@ -39,6 +39,14 @@ class AccessSnapshot:
     trusted_inviters: frozenset[str] = frozenset()
     blocked_groups: frozenset[str] = frozenset()
     admissions: Mapping[str, GroupAdmission] = field(default_factory=lambda: MappingProxyType({}))
+    dm_grants: Mapping[str, DmGrant] = field(default_factory=lambda: MappingProxyType({}))
+
+
+@dataclass(frozen=True, slots=True)
+class DmGrant:
+    granted_by: str
+    granted_at: datetime
+    expires_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +96,18 @@ def is_global_scope(ref: ChatRef) -> bool:
     return ref.id == "*"
 
 
+def _validated_dm_expiry(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        expiry = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Grant expiry must be an ISO-8601 timestamp") from exc
+    if expiry.tzinfo is None or expiry <= datetime.now(UTC):
+        raise ValueError("Grant expiry must be a future timezone-aware timestamp")
+    return expiry
+
+
 class AdministrationStore(Protocol):
     async def admit_group(
         self,
@@ -107,6 +127,7 @@ class AdministrationStore(Protocol):
         expected_revision: int,
         operation: str,
         users: tuple[UserRef, ...],
+        value: str | None = None,
         protected: frozenset[str] = frozenset(),
     ) -> AccessSnapshot: ...
 
@@ -136,6 +157,8 @@ def authorize_change(
     owner_operations = {
         "trust",
         "untrust",
+        "dm_grant",
+        "dm_revoke",
         "blockgroup",
         "unblockgroup",
         "grant",
@@ -192,6 +215,8 @@ def validate_change(change: AdminChange) -> None:
     operations = {
         "trust",
         "untrust",
+        "dm_grant",
+        "dm_revoke",
         "blockgroup",
         "unblockgroup",
         "enable",
@@ -220,6 +245,8 @@ def validate_change(change: AdminChange) -> None:
     global_allowed = {
         "trust",
         "untrust",
+        "dm_grant",
+        "dm_revoke",
         "block",
         "pause",
         "unblock",
@@ -235,6 +262,8 @@ def validate_change(change: AdminChange) -> None:
     target_operations = {
         "trust",
         "untrust",
+        "dm_grant",
+        "dm_revoke",
         "grant",
         "revoke",
         "moderator_grant",
@@ -247,13 +276,19 @@ def validate_change(change: AdminChange) -> None:
     }
     if op in {"trust", "untrust"} and not is_global_scope(group):
         raise ValueError("Trust requires global scope")
+    if op in {"dm_grant", "dm_revoke"} and not is_global_scope(group):
+        raise ValueError("DM grants require global scope")
     if op in target_operations:
         if change.user is None:
             raise ValueError("Operation requires exactly one user target")
         _validate_user(change.user)
         if change.user.platform != group.platform:
             raise ValueError("Targets must use the same platform")
-        if op in {"pause", "limit"}:
+        if op == "dm_grant":
+            if change.value is not None and type(change.value) is not str:
+                raise ValueError("Grant expiry must be an ISO-8601 timestamp")
+            _validated_dm_expiry(change.value)
+        elif op in {"pause", "limit"}:
             value = change.value
             if type(value) is not int:
                 raise ValueError("Operation value must be an integer")
@@ -344,11 +379,11 @@ def group_admission_decision(
 
 
 def inviter_batch_changes(
-    actor: UserRef, operation: str, users: tuple[UserRef, ...]
+    actor: UserRef, operation: str, users: tuple[UserRef, ...], value: str | None = None
 ) -> tuple[AdminChange, ...]:
-    """Only inviter grants/revocations can enter this atomic batch API."""
-    if operation not in {"trust", "untrust"}:
-        raise ValueError("Only trust and untrust can be batched")
+    """Only invitation or DM grant/revocation changes can enter this atomic batch API."""
+    if operation not in {"trust", "untrust", "dm_grant", "dm_revoke"}:
+        raise ValueError("Only permission grants and revocations can be batched")
     if not isinstance(users, (tuple, list)) or not 1 <= len(users) <= 20:
         raise ValueError("Select between 1 and 20 people")
     changes = []
@@ -356,7 +391,7 @@ def inviter_batch_changes(
     for user in users:
         if not isinstance(user, UserRef):
             raise ValueError("Invalid user target")
-        change = AdminChange(operation, global_scope(actor.platform), user)
+        change = AdminChange(operation, global_scope(actor.platform), user, value)
         validate_change(change)
         if user.key not in seen:
             changes.append(change)
@@ -374,6 +409,21 @@ def authorize_inviter_batch(
     for change in changes:
         authorize_change(snapshot, actor, owners, change)
         check_target(snapshot, actor, owners, protected, change)
+    if changes and changes[0].operation in {"dm_grant", "dm_revoke"}:
+        result = []
+        expiry = (
+            datetime.fromisoformat(changes[0].value.replace("Z", "+00:00"))
+            if changes[0].value is not None
+            else None
+        )
+        for change in changes:
+            current = snapshot.dm_grants.get(change.user.key)
+            if change.operation == "dm_grant":
+                if not current or current.expires_at != expiry:
+                    result.append(change)
+            elif current:
+                result.append(change)
+        return tuple(result)
     return tuple(
         change
         for change in changes
@@ -396,6 +446,7 @@ class MemoryAdministrationStore:
         self._trusted_inviters: set[str] = set()
         self._blocked_groups: set[str] = set()
         self._admissions: dict[str, GroupAdmission] = {}
+        self._dm_grants: dict[str, DmGrant] = {}
         self._join_events: set[tuple[str, str]] = set()
 
     async def snapshot(self) -> AccessSnapshot:
@@ -449,15 +500,50 @@ class MemoryAdministrationStore:
         expected_revision: int,
         operation: str,
         users: tuple[UserRef, ...],
+        value: str | None = None,
         protected: frozenset[str] = frozenset(),
     ) -> AccessSnapshot:
-        changes = inviter_batch_changes(actor, operation, users)
+        changes = inviter_batch_changes(actor, operation, users, value)
         async with self._lock:
             if expected_revision != self._revision:
                 raise StaleChangeError("Administration settings changed; please retry")
+            if operation == "dm_grant":
+                _validated_dm_expiry(value)
             changes = authorize_inviter_batch(
                 self._snapshot_unlocked(), actor, owners, changes, protected
             )
+            if operation.startswith("dm_"):
+                if changes:
+                    new_grants = dict(self._dm_grants)
+                    expiry = _validated_dm_expiry(value) if operation == "dm_grant" else None
+                    now = datetime.now(UTC)
+                    new_revision = self._revision + 1
+                    new_audit = list(self._audit)
+                    entries = [
+                        AuditEntry(
+                            new_revision,
+                            actor.key,
+                            operation,
+                            change.group.key,
+                            change.user.key,
+                            now,
+                            (change.value or "none") if operation == "dm_grant" else "none",
+                        )
+                        for change in changes
+                    ]
+                    for entry in entries:
+                        self._append_audit(new_audit, entry)
+                    for change in changes:
+                        if operation == "dm_grant":
+                            new_grants[change.user.key] = DmGrant(actor.key, now, expiry)
+                        else:
+                            new_grants.pop(change.user.key, None)
+                    if operation == "dm_grant":
+                        _validated_dm_expiry(value)
+                    self._dm_grants = new_grants
+                    self._audit = new_audit
+                    self._revision = new_revision
+                return self._snapshot_unlocked()
             if changes:
                 self._revision += 1
                 now = datetime.now(UTC)
@@ -500,8 +586,48 @@ class MemoryAdministrationStore:
                 raise ValueError("Owners cannot be changed with setup assignments")
             if change.operation == "revoke" and change.user.key in owners:
                 raise ValueError("Owners cannot be changed with setup assignments")
+            if change.operation in {"dm_grant", "dm_revoke"}:
+                expiry = (
+                    _validated_dm_expiry(change.value) if change.operation == "dm_grant" else None
+                )
+                current_grant = self._dm_grants.get(change.user.key)
+                if (
+                    change.operation == "dm_grant"
+                    and current_grant
+                    and current_grant.expires_at == expiry
+                ):
+                    return self._snapshot_unlocked()
+                if change.operation == "dm_revoke" and current_grant is None:
+                    return self._snapshot_unlocked()
+                new_grants = dict(self._dm_grants)
+                now = datetime.now(UTC)
+                if change.operation == "dm_grant":
+                    new_grants[change.user.key] = DmGrant(actor.key, now, expiry)
+                    detail = expiry.isoformat().replace("+00:00", "Z") if expiry else "none"
+                else:
+                    new_grants.pop(change.user.key, None)
+                    detail = "none"
+                new_revision = self._revision + 1
+                entry = AuditEntry(
+                    new_revision,
+                    actor.key,
+                    change.operation,
+                    change.group.key,
+                    change.user.key,
+                    now,
+                    detail,
+                )
+                new_audit = list(self._audit)
+                self._append_audit(new_audit, entry)
+                if change.operation == "dm_grant":
+                    _validated_dm_expiry(change.value)
+                self._dm_grants = new_grants
+                self._audit = new_audit
+                self._revision = new_revision
+                return self._snapshot_unlocked()
+            else:
+                detail = None
             subject: str | None = change.user.key if change.user else None
-            detail = None
             if change.operation == "trust":
                 self._trusted_inviters.add(change.user.key)
             elif change.operation == "untrust":
@@ -616,4 +742,9 @@ class MemoryAdministrationStore:
             frozenset(self._trusted_inviters),
             frozenset(self._blocked_groups),
             MappingProxyType(dict(self._admissions)),
+            MappingProxyType(dict(self._dm_grants)),
         )
+
+    @staticmethod
+    def _append_audit(entries: list[AuditEntry], entry: AuditEntry) -> None:
+        entries.append(entry)
