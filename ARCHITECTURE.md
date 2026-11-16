@@ -826,6 +826,22 @@ store commits each enforce their relevant boundary. Existing tools without a con
 retain their behavior. Trust still grants no other role/content access, and untrust affects
 future admissions only. See [the plan](docs/plans/2026-11-13-natural-inviter-batches.md).
 
+### Owner-granted DM access (2026-11-16)
+
+Owners may confirm `/admin dmgrant`, `/admin dmrevoke` and natural-language DM grant batches
+in their own same-platform DM. Grants are stored per platform identity, expire at check time,
+and are independent of trusted invitation permissions. A grant extends only `can_dm`; the user
+gets the same DM features as a group member but no group membership, setup, moderation, admin or
+owner role. Global blocks and pauses still take priority. Grant/revoke commits and per-person
+audit entries share the administration revision transaction; identical grants and missing-grant
+revocations are no-ops.
+
+The optional `BotApp(dm_request_notice=True)` notice is off by default and rate-limited by user
+and bot-wide hourly count. It sends a fixed ID-bearing reply without entering message handling,
+model routing or plugin hooks. Apply additive migration 0013. The new administration gate and the
+new `can_dm` clause are permission changes and require
+maintenance review. See [the approved plan](docs/plans/2026-11-16-owner-dm-grants.md).
+
 ## 11. Telegram account replacement
 
 Telegram account provisioning and replacement are downstream operator actions. The original
