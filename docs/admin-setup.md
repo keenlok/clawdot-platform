@@ -84,6 +84,22 @@ to supergroup ID migration is not automatic: use the new group ID with manual en
 authorized invitation. Untrusting everyone stops friend-driven expansion; a code rollback alone
 does not revoke groups already persisted as enabled.
 
+## Owner-granted private DM access
+
+In your own private DM, use `/admin dmgrant tg:123456789 [DURATION]` and confirm to allow a
+person to chat with the bot. Durations use `Nm`, `Nh` or `Nd` from 1 minute to 365 days; omit
+the duration for access until revoked. `/admin dmrevoke tg:123456789` removes the grant, and
+`/admin dmgrants` lists active grants. A grant allows the same private DM features as group
+membership, but gives no group admission, setup, moderation, admin or owner role. Existing
+global blocks and pauses still take priority. Grantees have no group history membership and
+their use counts toward the shared daily budget. Data they created remains after revocation.
+
+You may also ask in your own DM to grant or revoke access for up to 20 people in one batch.
+Names resolve only from groups you currently belong to; explicit positive `tg:` IDs are accepted
+and shown as unknown names in the preview. Every batch requires one confirmation. The optional
+`dm_request_notice` app setting is off by default; when enabled, denied DM users get a rate-limited
+message containing their ID so they can ask you directly.
+
 ## Commands
 
 Run `/admin` in a private chat with the bot to see the commands available to your role. Every

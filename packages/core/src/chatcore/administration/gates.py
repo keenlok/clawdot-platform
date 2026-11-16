@@ -20,4 +20,7 @@ def build_gates(plugin: AdministrationPlugin) -> dict[str, ToolGate]:
             GateState.AVAILABLE if is_owner_dm(plugin.access, ctx) else GateState.NOT_ALLOWED
         )
 
-    return {"manage_trusted_inviters": ToolGate(scope=scope, user=owner)}
+    return {
+        "manage_trusted_inviters": ToolGate(scope=scope, user=owner),
+        "manage_dm_access": ToolGate(scope=scope, user=owner),
+    }

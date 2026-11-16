@@ -131,6 +131,8 @@ class FakePlatform:
     )
     members: dict[str, set[str]] = field(default_factory=dict)
     """chat key → user keys; ``is_member`` answers from this."""
+    titles: dict[str, str] = field(default_factory=dict)
+    """chat key → group title for tests."""
     files: dict[str, bytes] = field(default_factory=dict)
     sent: list[Sent] = field(default_factory=list)
     sent_files: list[SentFile] = field(default_factory=list)
@@ -154,6 +156,9 @@ class FakePlatform:
 
     async def stop(self) -> None:
         return None
+
+    async def chat_title(self, chat: ChatRef) -> str | None:
+        return self.titles.get(chat.key)
 
     async def send(
         self,

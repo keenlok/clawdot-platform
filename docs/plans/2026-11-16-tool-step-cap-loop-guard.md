@@ -128,7 +128,7 @@ In `packages/core/tests/` (extend `test_agent_step_cap.py`, scripted fake provid
 
 ## Release
 
-Minor release **v0.19.0** (default behaviour change). `CHANGELOG.md` `Unreleased`, under Changed:
+Minor release **v0.20.0** (the next release; v0.19.0 shipped private DM ledgers) (default behaviour change). `CHANGELOG.md` `Unreleased`, under Changed:
 default cap 20, `google_workspace` cap 16; under Added: the loop guard and its settings, with an
 upgrade note that apps passing their own cap keep it.
 

@@ -4,10 +4,33 @@ from dataclasses import replace
 
 import pytest
 from chatcore.access import AccessPolicy
-from chatcore.administration.store import AdminChange, MemoryAdministrationStore
+from chatcore.administration.store import AdminChange, DmGrant, MemoryAdministrationStore
 from chatcore.app import BotApp
-from chatcore.events import ChatRef, UserRef
+from chatcore.events import ChatRef, User, UserRef
+from chatcore.plugin import BasePlugin
 from chatcore.testing import GROUP, FakePlatform, memory_stores, message, press, user
+
+
+def build_dm_admin_app(*, admin_users=(), delegate=None):
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    owner = user("owner")
+    store = MemoryAdministrationStore()
+    owners = frozenset({owner.ref.key})
+    if delegate is not None:
+        # The caller's delegate identity is linked to the allowed group below.
+        store._assignments.add((delegate.ref.key, GROUP.key))
+    stores = memory_stores()
+    platform = FakePlatform()
+    access = AccessPolicy([GROUP.key], admin_users, owners=owners, store=store)
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=access,
+        plugins=[AdministrationPlugin(access, store, owners)],
+        bot_name="sbbot",
+    )
+    return owner, store, stores, platform, access, app
 
 
 async def test_admin_group_commands_respect_mentions_only_while_dm_setup_still_works():
@@ -72,6 +95,371 @@ async def test_refresh_failure_prevents_any_event_side_effect():
     assert await stores.repo.recent_messages(GROUP, limit=10) == []
     assert platform.left == []
     assert platform.texts == []
+
+
+async def test_dm_request_notice_is_off_by_default_and_rate_limited_without_logging():
+    stores = memory_stores()
+    platform = FakePlatform()
+    app = BotApp(platform, stores=stores, access=AccessPolicy([], []), bot_name="sbbot")
+    denied = message("hello", dm=True, sender=user("stranger"))
+    await app.handle(denied)
+    assert platform.texts == []
+    assert await stores.repo.recent_messages(denied.chat, limit=10) == []
+
+    class ProbePlugin(BasePlugin):
+        name = "probe"
+
+        def __init__(self):
+            self.messages = 0
+
+        async def on_message(self, incoming, stores):
+            self.messages += 1
+
+    class ProbeResponder:
+        def __init__(self):
+            self.calls = 0
+
+        async def respond(self, incoming, text, app):
+            self.calls += 1
+
+    plugin, responder = ProbePlugin(), ProbeResponder()
+    logged = 0
+    original_log = stores.repo.log_message
+
+    async def log_message(incoming):
+        nonlocal logged
+        logged += 1
+        await original_log(incoming)
+
+    stores.repo.log_message = log_message
+    enabled = BotApp(
+        platform,
+        stores=stores,
+        access=AccessPolicy([], []),
+        bot_name="sbbot",
+        dm_request_notice=True,
+        plugins=[plugin],
+        responder=responder,
+    )
+    await enabled.handle(denied)
+    await enabled.handle(denied)
+    await enabled.handle(message("hello", dm=True, sender=user("blocked-bot", is_bot=True)))
+    assert len(platform.texts) == 1
+    assert platform.texts[0] == (
+        "I only chat with people the owner has approved. To ask for access, "
+        "send the owner this ID: fake:stranger"
+    )
+    assert await stores.repo.recent_messages(denied.chat, limit=10) == []
+    assert logged == plugin.messages == responder.calls == 0
+
+
+async def test_dm_grant_does_not_create_group_membership_or_invitation_authority():
+    from chatcore.administration.store import global_scope
+    from chatcore.events import BotAddedToChat
+
+    owner, grantee, trusted = user("owner"), user("grantee"), user("trusted")
+    group, new_group = ChatRef("fake", "known"), ChatRef("fake", "new")
+    store = MemoryAdministrationStore()
+    owners = frozenset({owner.ref.key})
+    await store.apply(
+        actor=owner.ref,
+        owners=owners,
+        expected_revision=0,
+        change=AdminChange("dm_grant", global_scope("fake"), grantee.ref),
+    )
+    await store.apply(
+        actor=owner.ref,
+        owners=owners,
+        expected_revision=1,
+        change=AdminChange("trust", global_scope("fake"), trusted.ref),
+    )
+    stores, platform = memory_stores(), FakePlatform()
+    access = AccessPolicy([group.key], [], owners=owners, store=store)
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=access,
+        plugins=[AdministrationPlugin(access, store, owners)],
+        bot_name="sbbot",
+    )
+    assert await access.member_groups(grantee.ref, platform, stores.cache) == []
+    await app.handle(message("/admin", dm=True, sender=grantee))
+    assert platform.sent == []
+    await app.handle(BotAddedToChat(new_group, grantee))
+    assert platform.left == [new_group]
+    assert new_group.key not in (await store.snapshot()).admissions
+    assert not await access.can_dm(trusted.ref, platform, stores.cache)
+
+
+@pytest.mark.parametrize("restriction", ["block", "pause"])
+async def test_global_restrictions_stop_dm_grantee_before_responder_and_plugins(restriction):
+    from chatcore.administration.store import global_scope
+
+    owner, grantee = user("owner"), user(f"grantee-{restriction}")
+    stores, platform = memory_stores(), FakePlatform()
+    store = MemoryAdministrationStore(stores.repo)
+    owners = frozenset({owner.ref.key})
+    await store.apply(
+        actor=owner.ref,
+        owners=owners,
+        expected_revision=0,
+        change=AdminChange("dm_grant", global_scope("fake"), grantee.ref),
+    )
+    await store.apply(
+        actor=owner.ref,
+        owners=owners,
+        expected_revision=1,
+        change=AdminChange(
+            restriction,
+            global_scope("fake"),
+            grantee.ref,
+            3600 if restriction == "pause" else None,
+        ),
+    )
+
+    class ProbePlugin(BasePlugin):
+        name = "probe"
+
+        def __init__(self):
+            self.messages = 0
+
+        async def on_message(self, incoming, stores):
+            self.messages += 1
+
+    class ProbeResponder:
+        def __init__(self):
+            self.calls = 0
+
+        async def respond(self, incoming, text, app):
+            self.calls += 1
+
+    plugin, responder = ProbePlugin(), ProbeResponder()
+    logged = 0
+    original_log = stores.repo.log_message
+
+    async def log_message(incoming):
+        nonlocal logged
+        logged += 1
+        await original_log(incoming)
+
+    stores.repo.log_message = log_message
+    access = AccessPolicy([], [], owners=owners, store=store)
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=access,
+        plugins=[plugin],
+        responder=responder,
+        bot_name="sbbot",
+    )
+    # Existing event ordering logs and runs plugin hooks before the restriction check.
+    await app.handle(message("hello", dm=True, sender=grantee))
+    assert platform.texts
+    expected = "can't use" if restriction == "block" else "paused"
+    assert expected in platform.texts[-1]
+    assert responder.calls == 0
+    assert not any(item.action_id for item in platform.sent)
+
+
+async def test_dm_request_notice_enforces_bot_wide_hourly_cap():
+    stores = memory_stores()
+    platform = FakePlatform()
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=AccessPolicy([], []),
+        bot_name="sbbot",
+        dm_request_notice=True,
+    )
+    for index in range(31):
+        incoming = message("hello", dm=True, sender=user(f"stranger-{index}"))
+        await app.handle(incoming)
+    assert len(platform.sent) == 30
+    # Repeated messages after the cap stay denied and never enter message history.
+    for index in range(31):
+        chat = ChatRef("fake", f"stranger-{index}")
+        assert await stores.repo.recent_messages(chat, limit=1) == []
+
+
+async def test_owner_dm_grant_and_revoke_round_trip_through_confirmation():
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    owner, friend = user("owner"), user("friend")
+    stores = memory_stores()
+    store = MemoryAdministrationStore(stores.repo)
+    access = AccessPolicy([], [], owners=[owner.ref.key], store=store)
+    platform = FakePlatform()
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=access,
+        plugins=[AdministrationPlugin(access, store, frozenset({owner.ref.key}))],
+        bot_name="sbbot",
+    )
+    await app.handle(message(f"/admin dmgrant {friend.ref.key} 1h", dm=True, sender=owner))
+    assert not (await store.snapshot()).dm_grants
+    confirmation = platform.sent[-1]
+    assert "private DM" in confirmation.text and "daily budget" in confirmation.text
+    await app.handle(press(confirmation.action_id, sender=owner, chat=confirmation.chat))
+    assert friend.ref.key in (await store.snapshot()).dm_grants
+    assert "DM access granted" in platform.texts[-1]
+
+    await app.handle(message(f"/admin dmrevoke {friend.ref.key}", dm=True, sender=owner))
+    confirmation = platform.sent[-1]
+    await app.handle(press(confirmation.action_id, sender=owner, chat=confirmation.chat))
+    assert friend.ref.key not in (await store.snapshot()).dm_grants
+    assert f"DM access removed for {friend.ref.key}" in platform.texts[-1]
+
+
+async def test_dm_grants_are_refused_for_non_owner_roles_and_group_commands():
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    admin = user("admin")
+    delegate = user("delegate")
+    app.access.admin_users = frozenset({admin.ref.key})
+    store._assignments.add((delegate.ref.key, GROUP.key))
+    await app.access.refresh()
+
+    await app.handle(message("/admin dmgrant fake:friend", dm=True, sender=admin))
+    await app.handle(message("/admin dmgrant fake:friend", dm=True, sender=delegate))
+    assert not (await store.snapshot()).dm_grants
+    assert not any(item.action_id for item in platform.sent)
+    assert "Owner access" in platform.texts[-1]
+
+    await app.handle(message("/admin dmgrant fake:friend", chat=GROUP, sender=owner))
+    assert "private chat" in platform.texts[-1]
+    assert not (await store.snapshot()).dm_grants
+
+
+async def test_dm_confirmation_rejects_other_requester_chat_and_replay():
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    friend = user("friend")
+    await app.handle(message(f"/admin dmgrant {friend.ref.key}", dm=True, sender=owner))
+    action = platform.sent[-1]
+    await app.handle(press(action.action_id, sender=user("other"), chat=action.chat))
+    await app.handle(press(action.action_id, sender=owner, chat=ChatRef("fake", "elsewhere")))
+    assert not (await store.snapshot()).dm_grants
+    await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    granted = await store.snapshot()
+    assert friend.ref.key in granted.dm_grants
+    await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    assert (await store.snapshot()).revision == granted.revision
+
+
+async def test_stale_dm_confirmation_changes_nothing():
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    friend = user("friend")
+    await app.handle(message(f"/admin dmgrant {friend.ref.key}", dm=True, sender=owner))
+    action = platform.sent[-1]
+    await store.apply(
+        actor=owner.ref,
+        owners=frozenset({owner.ref.key}),
+        expected_revision=0,
+        change=AdminChange("disable", GROUP),
+    )
+    await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    assert friend.ref.key not in (await store.snapshot()).dm_grants
+    assert "changed" in platform.texts[-1].lower()
+
+
+@pytest.mark.parametrize("target", ["tg:-2", "tg:0", "fake:2", "tg:1", "tg:99"])
+async def test_dm_command_rejects_invalid_cross_platform_owner_and_self_targets(target):
+    from chatcore.administration.plugin import AdministrationPlugin
+
+    owner = User(UserRef("tg", "1"), "Owner")
+    store, stores, platform = MemoryAdministrationStore(), memory_stores(), FakePlatform(name="tg")
+    owners = frozenset({owner.ref.key, "tg:99"})
+    access = AccessPolicy([], [], owners=owners, store=store)
+    app = BotApp(
+        platform,
+        stores=stores,
+        access=access,
+        plugins=[AdministrationPlugin(access, store, owners)],
+        bot_name="sbbot",
+    )
+
+    def owner_dm(text):
+        incoming = message(text, dm=True, sender=owner)
+        return replace(incoming, chat=ChatRef("tg", owner.ref.id))
+
+    await app.handle(owner_dm("/admin dmgrant tg:2"))
+    confirmation = platform.sent[-1]
+    assert confirmation.action_id
+    await app.handle(press(confirmation.action_id, sender=owner, chat=confirmation.chat))
+    assert "tg:2" in (await store.snapshot()).dm_grants
+
+    previous_confirmation_count = sum(item.action_id is not None for item in platform.sent)
+    await app.handle(owner_dm(f"/admin dmgrant {target}"))
+    assert set((await store.snapshot()).dm_grants) == {"tg:2"}
+    assert sum(item.action_id is not None for item in platform.sent) == previous_confirmation_count
+    assert "Usage" in platform.texts[-1] or "valid" in platform.texts[-1].lower()
+
+
+@pytest.mark.parametrize("duration", ["0m", "366d", "broken"])
+async def test_dm_command_rejects_invalid_duration(duration):
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    await app.handle(message(f"/admin dmgrant fake:friend {duration}", dm=True, sender=owner))
+    assert not (await store.snapshot()).dm_grants
+    assert not any(item.action_id for item in platform.sent)
+
+
+async def test_dm_command_accepts_365d_and_no_op_regrant_does_not_audit():
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    friend = user("friend")
+    await app.handle(message(f"/admin dmgrant {friend.ref.key} 365d", dm=True, sender=owner))
+    action = platform.sent[-1]
+    assert action.action_id
+    await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    assert friend.ref.key in (await store.snapshot()).dm_grants
+
+    # An unbounded grant makes the same request exactly idempotent.
+    await app.handle(message(f"/admin dmgrant {friend.ref.key}", dm=True, sender=owner))
+    action = platform.sent[-1]
+    await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    revision = (await store.snapshot()).revision
+    audit_count = len(await store.audit())
+    await app.handle(message(f"/admin dmgrant {friend.ref.key}", dm=True, sender=owner))
+    action = platform.sent[-1]
+    await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    assert (await store.snapshot()).revision == revision
+    assert len(await store.audit()) == audit_count
+
+
+async def test_dm_regrant_replaces_expiry_and_listing_hides_expired_rows():
+    from datetime import UTC, datetime, timedelta
+
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    friend = user("friend")
+    for duration in ("1h", "2h"):
+        await app.handle(
+            message(f"/admin dmgrant {friend.ref.key} {duration}", dm=True, sender=owner)
+        )
+        action = platform.sent[-1]
+        await app.handle(press(action.action_id, sender=owner, chat=action.chat))
+    snapshot = await store.snapshot()
+    assert snapshot.revision == 2 and len(await store.audit()) == 2
+    assert snapshot.dm_grants[friend.ref.key].expires_at > (
+        datetime.now(UTC) + timedelta(minutes=100)
+    )
+
+    store._dm_grants["fake:expired"] = DmGrant(
+        owner.ref.key, datetime.now(UTC) - timedelta(days=2), datetime.now(UTC) - timedelta(days=1)
+    )
+    await app.handle(message("/admin dmgrants", dm=True, sender=owner))
+    assert friend.ref.key in platform.texts[-1]
+    assert "fake:expired" not in platform.texts[-1]
+
+
+async def test_non_owner_admin_menu_does_not_show_dm_commands():
+    owner, store, _stores, platform, _access, app = build_dm_admin_app()
+    delegate = user("delegate")
+    store._assignments.add((delegate.ref.key, GROUP.key))
+    await app.access.refresh()
+    await app.handle(message("/admin", dm=True, sender=delegate))
+    assert platform.texts
+    assert "dmgrant" not in platform.texts[-1]
+    assert "dmgrants" not in platform.texts[-1]
 
 
 @pytest.mark.asyncio

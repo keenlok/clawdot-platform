@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping, Sequence
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from chatcore.access import AccessPolicy
@@ -125,6 +125,7 @@ class BotApp:
         skill_instructions: Mapping[str, str] | None = None,
         skill_instruction_additions: Mapping[str, str] | None = None,
         explanation_source: ExplanationSource | None = None,
+        dm_request_notice: bool = False,
     ) -> None:
         self.platform = platform
         self.stores = stores
@@ -145,6 +146,7 @@ class BotApp:
         self.responder: Responder = responder or EchoResponder()
         self.bot_name = bot_name
         self.group_mentions_only = group_mentions_only
+        self.dm_request_notice = dm_request_notice
         self.restriction_exempt_commands = restriction_exempt_commands
         self.restriction_exempt_actions = restriction_exempt_actions
         self.conversation_threads = conversation_threads
@@ -339,7 +341,43 @@ class BotApp:
 
     async def _allowed(self, message: IncomingMessage) -> bool:
         if message.is_dm:
-            return await self.access.can_dm(message.user.ref, self.platform, self.stores.cache)
+            if await self.access.can_dm(message.user.ref, self.platform, self.stores.cache):
+                return True
+            if (
+                self.dm_request_notice
+                and not message.user.is_bot
+                and message.user.ref.platform == self.platform.name
+            ):
+                try:
+                    notice_key = f"dm_notice:{message.user.ref.key}"
+                    should_send = False
+                    if await self.stores.cache.get(notice_key) is None:
+                        async with self.stores.cache.lock("dm_notice:lock", ttl_s=10):
+                            if await self.stores.cache.get(notice_key) is None:
+                                minute = int(datetime.now(UTC).timestamp() // 60)
+                                counts = [
+                                    await self.stores.cache.get(f"dm_notice:minute:{bucket}")
+                                    for bucket in range(minute - 60, minute + 1)
+                                ]
+                                total = sum(int(value) for value in counts if value is not None)
+                                if total < 30:
+                                    await self.stores.cache.incr(
+                                        f"dm_notice:minute:{minute}", ttl_s=7200
+                                    )
+                                    await self.stores.cache.set(notice_key, b"1", ttl_s=86400)
+                                    should_send = True
+                    if should_send:
+                        await self.platform.send(
+                            message.chat,
+                            "I only chat with people the owner has approved. "
+                            "To ask for access, "
+                            f"send the owner this ID: {message.user.ref.key}",
+                            reply_to=message.ref,
+                            thread_id=message.thread_id,
+                        )
+                except Exception as exc:
+                    log.warning("DM access notice failed: %s", type(exc).__name__)
+            return False
         if self.access.is_chat_allowed(message.chat):
             return True
         log.info("leaving non-allowlisted chat %s", message.chat.key)

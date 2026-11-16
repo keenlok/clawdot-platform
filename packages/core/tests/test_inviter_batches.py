@@ -110,6 +110,13 @@ async def request(plugin, context, people, operation="trust"):
     return await tool.handler(context, operation=operation, people=people)
 
 
+async def request_dm(plugin, context, people, operation="grant", duration=None):
+    tools = {tool.name: tool for tool in plugin.tools()}
+    tool = tools["manage_dm_access"]
+    assert tool.writes and not tool.direct and len(tool.description) <= 300
+    return await tool.handler(context, operation=operation, people=people, duration=duration)
+
+
 async def test_name_batch_previews_five_people_then_commits_once_in_same_owner_dm():
     from chatcore.plugin import CommandContext
 
@@ -390,3 +397,146 @@ async def test_inviter_tool_description_fits_application_metadata_budget():
     plugin, _, _, _ = await make_plugin()
     tool = plugin.tools()[0]
     assert len(tool.description) <= 300
+
+
+async def test_dm_tool_unknown_name_stages_nothing():
+    plugin, ctx, _, _ = await make_plugin()
+    result = await request_dm(plugin, ctx, ["Someone Unknown"])
+    assert result.is_error and result.pending_action is None
+    assert not (await plugin.store.snapshot()).dm_grants
+
+
+async def test_dm_tool_batch_completes_through_real_owner_confirmation_path():
+    from dataclasses import replace
+
+    from chatcore.agent import AgentResponder, AgentSettings
+    from chatcore.app import BotApp
+    from chatcore.limits import Limits
+    from chatcore.llm.types import Completion, Message, ToolCall
+    from chatcore.skill_turn import SkillSettings
+    from chatcore.skills import SkillsMode
+    from chatcore.testing import ScriptedProvider, message, press
+
+    plugin, ctx, _, _ = await make_plugin()
+    provider = ScriptedProvider(
+        [
+            Completion(
+                Message.assistant(
+                    "",
+                    (
+                        ToolCall(
+                            "dm-grant-1",
+                            "manage_dm_access",
+                            {"operation": "grant", "people": ["Alex", "tg:9"], "duration": "2h"},
+                        ),
+                    ),
+                ),
+                "tool_use",
+            )
+        ]
+    )
+    app = BotApp(
+        ctx.platform,
+        stores=ctx.stores,
+        access=plugin.access,
+        plugins=[plugin],
+        responder=AgentResponder(
+            provider,
+            system_prompt="Manage owner-approved access.",
+            settings=AgentSettings(
+                skills=SkillSettings(
+                    mode=SkillsMode("off"), chats=frozenset({"*"}), router="keyword"
+                )
+            ),
+            limits=Limits(ctx.stores.cache),
+        ),
+        bot_name="testbot",
+    )
+    incoming = replace(
+        message("Allow Alex and tg:9 to DM you.", dm=True, sender=ctx.user), chat=ctx.chat
+    )
+    await app.handle(incoming)
+    assert "manage_dm_access" in {tool.name for tool in provider.calls[0]["tools"]}
+    prompt = next(item for item in ctx.platform.sent if item.action_id)
+    assert "unknown name [tg:9]" in prompt.text
+    assert not (await plugin.store.snapshot()).dm_grants
+    await app.handle(press(prompt.action_id, sender=ctx.user, chat=ctx.chat))
+    snapshot = await plugin.store.snapshot()
+    assert set(snapshot.dm_grants) == {FRIENDS[0].key, "tg:9"}
+    assert snapshot.revision == 1 and len(await plugin.store.audit()) == 2
+    await app.handle(press(prompt.action_id, sender=ctx.user, chat=ctx.chat))
+    assert (await plugin.store.snapshot()).revision == 1
+
+
+@pytest.mark.parametrize("mode", ["off", "on", "shadow"])
+async def test_dm_tool_hidden_and_refused_for_nonowners_and_group_contexts(mode):
+    from dataclasses import replace
+
+    from chatcore.agent import AgentResponder, AgentSettings
+    from chatcore.app import BotApp
+    from chatcore.limits import Limits
+    from chatcore.llm.types import Completion, Message
+    from chatcore.skill_turn import SkillSettings
+    from chatcore.skills import SkillsMode
+    from chatcore.testing import ScriptedProvider, message
+    from chatcore.tools.registry import ToolRegistry
+
+    plugin, ctx, _, group = await make_plugin()
+    admin = User(FRIENDS[0], "Alex")
+    plugin.access.admin_users = frozenset({admin.ref.key})
+    delegate = User(FRIENDS[1], "Ben")
+    await plugin.store.apply(
+        actor=OWNER,
+        owners=OWNERS,
+        expected_revision=0,
+        change=AdminChange("grant", group, FRIENDS[1]),
+    )
+    await plugin.access.refresh()
+    contexts = [
+        replace(ctx, user=admin, chat=ChatRef("tg", admin.ref.id)),
+        replace(ctx, user=delegate, chat=ChatRef("tg", delegate.ref.id)),
+        replace(ctx, chat=group, is_dm=False),
+    ]
+    registry = ToolRegistry(plugin.tools())
+    for context in contexts:
+        offered = {item.name for item in registry.specs(is_admin=True, ctx=context)}
+        assert "manage_dm_access" not in offered
+        denied = await registry.call(
+            "manage_dm_access", {"operation": "grant", "people": ["tg:9"]}, context
+        )
+        assert denied.is_error and denied.pending_action is None
+
+    for context in contexts:
+        provider = ScriptedProvider(
+            [Completion(Message.assistant("No owner action taken."), "end_turn")]
+        )
+        responder = AgentResponder(
+            provider,
+            system_prompt="rules",
+            settings=AgentSettings(
+                skills=SkillSettings(
+                    mode=SkillsMode(mode), chats=frozenset({"*"}), router="keyword"
+                )
+            ),
+            limits=Limits(ctx.stores.cache),
+        )
+        app = BotApp(
+            ctx.platform,
+            stores=ctx.stores,
+            access=plugin.access,
+            plugins=[plugin],
+            responder=responder,
+            bot_name="testbot",
+        )
+        incoming = replace(
+            message(
+                "Grant Alex private DM access.",
+                dm=context.is_dm,
+                chat=context.chat,
+                sender=context.user,
+                mention=not context.is_dm,
+            ),
+            chat=context.chat,
+        )
+        await app.handle(incoming)
+        assert "manage_dm_access" not in {item.name for item in provider.calls[0]["tools"]}

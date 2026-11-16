@@ -5,7 +5,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0] - 2026-11-16
+### Added
+
+- **Loop guard for tool calls.** New `AgentSettings` fields, per turn:
+  `max_identical_calls` (default 2) refuses a further call with the same tool and arguments and
+  makes the next request a final answer without tools; `max_consecutive_tool_errors` (default 4)
+  does the same after that many tool errors in a row; `turn_input_token_limit` (default off)
+  does the same once the tool loop's input tokens reach the limit. One INFO log line names the
+  reason and tool, never the arguments.
+- Owner-only `/admin dmgrant`, `/admin dmrevoke` and `/admin dmgrants`, plus a confirmed
+  natural-language batch tool, allow selected people to use the bot in private DMs without
+  granting group access or an admin role. Grants can expire after 1 minute to 365 days or last
+  until revoked; grantees use the shared daily budget. The optional `dm_request_notice` setting
+  is off by default and offers denied users their ID without model or plugin processing. With no
+  grants and the notice disabled, access behavior is unchanged.
+
+### Security
+
+- `can_dm` now allows explicitly owner-granted identities. The administration gates enforce
+  owner-DM access to the new `manage_dm_access` write tool; global blocks and pauses still deny.
 
 ### Changed
 
@@ -20,19 +38,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The `turn metrics` log line gains a trailing `repeats_refused=<n>` field, and `final_forced`
   can now be `loop`, `errors` or `tokens`. Existing fields keep their names and order; parsers
   that expect `vision=` to be the last field need updating.
+- Apply additive core migration `0013_owner_dm_grants.sql` to store grants and expiry metadata.
+
+**Upgrade (tool-step cap):** apps that pass their own `tool_steps` / `agent_tool_steps` keep their value; pass 8
+to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_steps` (or
+`SkillsEnvSettings.to_settings(tool_steps=...)`) as to `AgentSettings.tool_steps`, as before.
+
+## [0.19.0] - 2026-11-16
 
 ### Added
 
-- **Loop guard for tool calls.** New `AgentSettings` fields, per turn:
-  `max_identical_calls` (default 2) refuses a further call with the same tool and arguments and
-  makes the next request a final answer without tools; `max_consecutive_tool_errors` (default 4)
-  does the same after that many tool errors in a row; `turn_input_token_limit` (default off)
-  does the same once the tool loop's input tokens reach the limit. One INFO log line names the
-  reason and tool, never the arguments.
+- `ExpensesPlugin(dm_ledger="private")` keeps DM trips and expenses in the DM ledger. Apps can
+  supply current member groups and group titles to let users explicitly choose a group ledger or
+  resolve a unique active or planned group trip by name. Private trips are limited to the requester.
+- The Telegram adapter and `FakePlatform` provide `chat_title(chat)`; apps can pass it to the
+  expenses plugin as `group_title` for private DM group selection.
 
-**Upgrade:** apps that pass their own `tool_steps` / `agent_tool_steps` keep their value; pass 8
-to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_steps` (or
-`SkillsEnvSettings.to_settings(tool_steps=...)`) as to `AgentSettings.tool_steps`, as before.
+### Changed
+
+- The expenses gate allows DMs in private-ledger mode. In group-ledger mode, DM behavior and tool
+  specifications remain unchanged.
 
 ## [0.18.1] - 2026-11-16
 

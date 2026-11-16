@@ -14,6 +14,14 @@ correctly; check the visible recorded-entry echo.
 ## Workflow
 An explicit trip is resolved first. Otherwise the default active trip, the only active trip, or
 the general ledger is selected; multiple active trips without a default need clarification.
+Apps can construct `ExpensesPlugin(dm_ledger="private", member_groups=..., group_title=...)` to
+keep DM trips and expenses in the DM itself. Private trips contain only the requester and reject
+splits with other people. In private mode, a requester can explicitly name a group by title, or a
+trip name can select a unique active or planned trip in one of their groups. The default
+`dm_ledger="group"` keeps the existing shared-group behavior unchanged.
+Apps may pass `group_title=getattr(platform, "chat_title", None)`; `chat_title` remains optional and
+is provided by the Telegram adapter and `FakePlatform`.
+
 Equal, exact, percentage and share-based splits become exact integer minor-unit amounts, with
 rounding handled in code. Trip members provide a default split; changing membership later does
 not change old shares. A receipt tool extracts unverified fields before a separate add operation.
