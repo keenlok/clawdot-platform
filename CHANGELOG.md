@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Private DM expense trips now resolve the requester as their sole ledger member, so default
+  splits, payer names, member updates and balance summaries work without changing group ledgers.
+- Strip doubled-bar DSML and special-token markup from model text so malformed tool calls do not
+  leak into chat replies.
+
 ### Added
 
 - Owner-only `/admin dmgrant`, `/admin dmrevoke` and `/admin dmgrants`, plus a confirmed
