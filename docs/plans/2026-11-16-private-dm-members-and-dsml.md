@@ -1,6 +1,6 @@
 # Private DM members and doubled-bar DSML markup
 
-Status: Planned; owner approved the fix on 2026-11-16. Claude planned; Codex CLI is installed, so
+Status: Planned; owner approved the fix on 2026-11-16. Implemented in [PR #59](https://github.com/keenlok/clawdot-platform/pull/59). Claude planned; Codex CLI is installed, so
 Codex executes and reviews, then Claude does the final review.
 
 ## Problems
