@@ -1,6 +1,6 @@
 # Owner-granted DM access
 
-Status: Planned; approved by the owner on 2026-11-16 as written (grantees get the same DM
+Status: Shipped inactive in v0.20.0 (PR #54); approved by the owner on 2026-11-16 as written (grantees get the same DM
 features as a group member; request notice included, off by default). Claude planned; Codex executes and reviews, then
 Claude does the final review (`ARCHITECTURE.md` §7b). Release target: the next minor after
 private DM trips (v0.19.0), so **v0.20.0**; if this merges first it takes v0.19.0 and trips
