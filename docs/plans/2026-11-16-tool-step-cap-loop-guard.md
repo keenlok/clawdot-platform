@@ -1,6 +1,6 @@
 # Tool-step cap and loop guard
 
-Status: Planned; awaiting owner approval. Claude planned. Codex CLI is installed, so Codex
+Status: Planned; owner approved on 2026-11-16. Claude planned. Codex CLI is installed, so Codex
 executes and reviews, then Claude does the final review (`AGENTS.md`, Execution and review).
 
 ## Problem
