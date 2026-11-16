@@ -191,7 +191,7 @@ class SkillSet:
         *,
         composites: Sequence[Skill] = (),
         general_tools: Sequence[str] = (),
-        step_cap: int = 8,
+        step_cap: int = 20,
         instructions: Mapping[str, str] | None = None,
         instruction_additions: Mapping[str, str] | None = None,
     ) -> SkillSet:

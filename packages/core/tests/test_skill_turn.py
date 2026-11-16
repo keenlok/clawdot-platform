@@ -597,12 +597,12 @@ async def test_loading_shorter_skill_does_not_shrink_initial_step_cap():
         text="unrelated",
         now=now,
     )
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
     short = replace(turn._app.skills.get("feature"), max_steps=2)
     turn._app.skills._skills["feature"] = (short, "turn")
     result = await turn.use_skill({"name": "feature"}, ctx)
     assert not result.is_error
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
 
 
 async def test_capping_skill_without_offered_tools_does_not_limit_turn():
@@ -616,7 +616,7 @@ async def test_capping_skill_without_offered_tools_does_not_limit_turn():
     turn._app.skills._skills["feature"] = (skill, "turn")
     turn.availability["feature"] = SkillAvailability(GateState.OFF)
     turn.step_cap = turn._current_step_cap()
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
 
 
 async def test_general_call_lifts_capped_skill_to_global_step_cap():
@@ -632,7 +632,7 @@ async def test_general_call_lifts_capped_skill_to_global_step_cap():
     turn.step_cap = turn._current_step_cap()
     assert turn.step_cap == 2
     turn.note_call("search_web")
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
 
 
 async def test_capped_skill_own_tool_keeps_skill_cap():
@@ -664,7 +664,7 @@ async def test_tool_from_uncapped_active_skill_lifts_capped_skill_limit():
     turn.availability["other_feature"] = SkillAvailability(GateState.AVAILABLE, ("other_tool",))
     turn.step_cap = turn._current_step_cap()
     turn.note_call("other_tool")
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
 
 
 async def test_routed_unavailable_skill_without_hint_does_not_take_active_slot():
@@ -702,7 +702,7 @@ async def test_routed_unavailable_skill_without_hint_does_not_take_active_slot()
         now=now,
     )
     assert turn.active == []
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
 
 
 async def test_gated_skill_with_hint_stays_active_without_setting_cap():
@@ -735,7 +735,7 @@ async def test_gated_skill_with_hint_stays_active_without_setting_cap():
     )
     assert turn.active == ["feature"]
     assert any("Feature is off" in hint for _skill, hint in turn.hints)
-    assert turn.step_cap == 8
+    assert turn.step_cap == 20
 
 
 async def test_three_inherited_skills_expire_and_new_keyword_becomes_active():

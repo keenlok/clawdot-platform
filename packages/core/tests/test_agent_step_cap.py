@@ -86,8 +86,11 @@ async def _run_web_turn(tool_call_count, monkeypatch):
                 mode=SkillsMode.ON,
                 chats=frozenset({GROUP.key}),
                 router="keyword",
+                tool_steps=8,
             ),
             tool_steps=8,
+            # These calls repeat empty arguments on purpose; this file tests the step cap.
+            max_identical_calls=10,
         ),
         limits=Limits(stores.cache),
         clock=lambda: datetime(2025, 1, 2, tzinfo=UTC),

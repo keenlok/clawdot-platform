@@ -5,6 +5,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-16
+
+### Changed
+
+- **Default per-turn tool-step cap 8 → 20.** `AgentSettings.tool_steps`,
+  `SkillSettings.tool_steps`, `BotApp(agent_tool_steps=...)` and `SkillSet.build(step_cap=...)`
+  now default to 20, so multi-step turns (for example reading several trip Sheets and Drive
+  files) don't stop at 8. Per-skill `max_steps` is still clamped to the global cap and never
+  raises it. Each extra step resends the turn's context, so long turns cost more tokens; the turn
+  deadline and daily budget still end them gracefully.
+- The `google_workspace` skill cap rises from 6 to 16 steps, so Google-only turns can read
+  several files.
+- The `turn metrics` log line gains a trailing `repeats_refused=<n>` field, and `final_forced`
+  can now be `loop`, `errors` or `tokens`. Existing fields keep their names and order; parsers
+  that expect `vision=` to be the last field need updating.
+
+### Added
+
+- **Loop guard for tool calls.** New `AgentSettings` fields, per turn:
+  `max_identical_calls` (default 2) refuses a further call with the same tool and arguments and
+  makes the next request a final answer without tools; `max_consecutive_tool_errors` (default 4)
+  does the same after that many tool errors in a row; `turn_input_token_limit` (default off)
+  does the same once the tool loop's input tokens reach the limit. One INFO log line names the
+  reason and tool, never the arguments.
+
+**Upgrade:** apps that pass their own `tool_steps` / `agent_tool_steps` keep their value; pass 8
+to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_steps` (or
+`SkillsEnvSettings.to_settings(tool_steps=...)`) as to `AgentSettings.tool_steps`, as before.
+
 ## [0.18.1] - 2026-11-16
 
 ### Fixed
@@ -555,7 +584,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/keenlok/clawdot-platform/compare/v0.17.0...v0.17.1

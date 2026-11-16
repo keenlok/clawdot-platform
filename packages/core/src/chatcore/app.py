@@ -121,7 +121,7 @@ class BotApp:
         turn_lock_ttl_s: int = TURN_LOCK_TTL_S,
         skills: Sequence[Skill] = (),
         general_tools: Sequence[str] | None = None,
-        agent_tool_steps: int = 8,
+        agent_tool_steps: int = 20,
         skill_instructions: Mapping[str, str] | None = None,
         skill_instruction_additions: Mapping[str, str] | None = None,
         explanation_source: ExplanationSource | None = None,

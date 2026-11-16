@@ -1,7 +1,11 @@
 # Tool-step cap and loop guard
 
-Status: Planned; owner approved on 2026-11-16. Claude planned. Codex CLI is installed, so Codex
-executes and reviews, then Claude does the final review (`AGENTS.md`, Execution and review).
+Status: Planned; owner approved on 2026-11-16. Claude planned. The plan named Codex as executor,
+but three Codex (`gpt-6-luna`) runs ended without editing anything, so Claude implemented it
+(`AGENTS.md`: use what is available and say so). Codex (`gpt-6.1-sol`) reviewed: two findings fixed
+(token limit now also blocks tool-offering recovery retries; unknown tool names are neither counted
+nor logged), one kept by design (the token limit counts the tool loop only). Claude did the final
+review.
 
 ## Problem
 
@@ -80,12 +84,13 @@ New `AgentSettings` fields, all per turn:
 | --- | --- | --- |
 | `max_identical_calls` | 2 | A call with the same tool name and the same arguments (compared as canonical JSON: sorted keys, no whitespace) runs at most this many times. A further identical call isn't run; it counts as a step and returns the error "Not run: `<tool>` was already called with these arguments this turn. Use the earlier result." The next request is sent without tools (`final_forced=loop`). |
 | `max_consecutive_tool_errors` | 4 | After this many tool results in a row are errors (any tool, across rounds; a success resets the count), the next request is sent without tools (`final_forced=errors`). |
-| `turn_input_token_limit` | `None` (off) | When set, once the turn's provider input tokens reach it, the next request is sent without tools (`final_forced=tokens`). Lets an app bound the cost of a long turn without lowering the step cap. |
+| `turn_input_token_limit` | `None` (off) | When set, once the tool loop's provider input tokens reach it (image-description setup before the loop isn't counted), the next request is sent without tools (`final_forced=tokens`), and the empty-response and truncated-call recoveries no longer offer tools. Lets an app bound the cost of a long turn without lowering the step cap. |
 
 Details:
 
 - Two identical calls stay allowed, because rereading after a write in the same turn is normal
   (`list_trips` after `start_trip`).
+- Only registered tools count as identical calls; an unknown tool name the model makes up is never counted or logged.
 - Meta calls (`use_skill`) are not counted by the guard; they have their own `max_meta_calls`.
 - Errors produced by the framework (not offered, unknown tool, invalid JSON, step limit, timeout)
   count toward `max_consecutive_tool_errors`, as do tool error results.
