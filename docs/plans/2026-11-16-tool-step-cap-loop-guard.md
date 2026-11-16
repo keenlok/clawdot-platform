@@ -1,6 +1,6 @@
 # Tool-step cap and loop guard
 
-Status: Planned; owner approved on 2026-11-16. Claude planned. The plan named Codex as executor,
+Status: Planned; owner approved on 2026-11-16. Implemented in [PR #58](https://github.com/keenlok/clawdot-platform/pull/58). Claude planned. The plan named Codex as executor,
 but three Codex (`gpt-6-luna`) runs ended without editing anything, so Claude implemented it
 (`AGENTS.md`: use what is available and say so). Codex (`gpt-6.1-sol`) reviewed: two findings fixed
 (token limit now also blocks tool-offering recovery retries; unknown tool names are neither counted
