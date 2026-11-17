@@ -32,3 +32,10 @@ def test_google_reads_stay_available_without_trip_resolver(google_service):
     assert "google_read_file" in skill.tools
     assert "trip_attach_file" not in skill.tools
     assert "trip_edit_doc" not in skill.tools
+
+
+def test_google_workspace_allows_sixteen_steps_for_multi_file_reads(google_service):
+    service, _, _, _ = google_service
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    skill = next(s for s in plugin.skills() if s.name == "google_workspace")
+    assert skill.max_steps == 16
