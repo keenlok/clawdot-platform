@@ -6,11 +6,11 @@ import re
 
 _BLOCKS = (
     re.compile(
-        r"<｜DSML｜\s*(?:function_)?calls\s*>.*?(?:</｜DSML｜\s*(?:function_)?calls\s*>|\Z)",
+        r"<｜+DSML｜+\s*(?:function_)?calls\s*>.*?(?:</｜+DSML｜+\s*(?:function_)?calls\s*>|\Z)",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
-        r"<｜DSML｜\s*invoke(?=[\s>])(?:[^>\n]*\Z|[^>]*>.*?(?:</｜DSML｜\s*invoke\s*>|\Z))",
+        r"<｜+DSML｜+\s*invoke(?=[\s>])(?:[^>\n]*\Z|[^>]*>.*?(?:</｜+DSML｜+\s*invoke\s*>|\Z))",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
@@ -29,22 +29,22 @@ _BLOCKS = (
         r"<invoke(?=[\s>])(?:[^>\n]*\Z|[^>]*>.*?(?:</invoke\s*>|\Z))", re.IGNORECASE | re.DOTALL
     ),
     re.compile(
-        r"<([｜|])tool[_▁]calls[_▁]begin\1>.*?(?:<\1tool[_▁]calls[_▁]end\1>|\Z)",
+        r"<([｜|]+)tool[_▁]calls[_▁]begin\1>.*?(?:<\1tool[_▁]calls[_▁]end\1>|\Z)",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
-        r"<([｜|])tool[_▁]call[_▁]begin\1>.*?(?:<\1tool[_▁]call[_▁]end\1>|\Z)",
+        r"<([｜|]+)tool[_▁]call[_▁]begin\1>.*?(?:<\1tool[_▁]call[_▁]end\1>|\Z)",
         re.IGNORECASE | re.DOTALL,
     ),
     re.compile(
-        r"<([｜|])tool[_▁]outputs[_▁]begin\1>.*?(?:<\1tool[_▁]outputs[_▁]end\1>|\Z)",
+        r"<([｜|]+)tool[_▁]outputs[_▁]begin\1>.*?(?:<\1tool[_▁]outputs[_▁]end\1>|\Z)",
         re.IGNORECASE | re.DOTALL,
     ),
 )
-_DSML_TAG = re.compile(r"</?｜DSML｜[^>]*(?:>|\Z)", re.IGNORECASE | re.DOTALL)
-_SPECIAL_TOKEN = re.compile(r"<｜[^｜\n]{1,40}｜>", re.DOTALL)
+_DSML_TAG = re.compile(r"</?｜+DSML｜+[^>]*(?:>|\Z)", re.IGNORECASE | re.DOTALL)
+_SPECIAL_TOKEN = re.compile(r"<(｜+)[^｜\n]{1,40}\1>", re.DOTALL)
 # A special token cut off at the end of the text, e.g. "<｜tool▁calls▁be".
-_PARTIAL_TOKEN = re.compile(r"<｜[^｜<>\n]{0,40}\Z")
+_PARTIAL_TOKEN = re.compile(r"<｜+[^｜<>\n]{0,40}\Z")
 _MANY_NEWLINES = re.compile(r"\n{3,}")
 
 
