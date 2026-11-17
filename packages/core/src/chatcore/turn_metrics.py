@@ -17,7 +17,17 @@ class TurnMetrics:
     tool arguments, URLs, model output or unvalidated names.
     """
 
-    _FINAL_FORCED = {"deadline", "budget", "steps", "rounds", "meta", "-"}
+    _FINAL_FORCED = {
+        "deadline",
+        "budget",
+        "steps",
+        "rounds",
+        "meta",
+        "loop",
+        "errors",
+        "tokens",
+        "-",
+    }
     _ENDS = {"answer", "pending", "refusal", "timeout", "provider_error", "fallback"}
 
     def __init__(self, registry: ToolRegistry, offered: Sequence[ToolSpec]) -> None:
@@ -41,6 +51,7 @@ class TurnMetrics:
         self.not_offered = 0
         self.markup_stripped = 0
         self.retries = 0
+        self.repeats_refused = 0
         self.skill_fields: dict[str, object] = {}
         self.mode = "off"
 
@@ -66,6 +77,9 @@ class TurnMetrics:
 
     def note_retry(self) -> None:
         self.retries += 1
+
+    def note_repeat_refused(self) -> None:
+        self.repeats_refused += 1
 
     def emit(
         self,
@@ -93,7 +107,7 @@ class TurnMetrics:
             "end=%s in_tokens=%d out_tokens=%d ms=%d "
             "skills=%s loaded=%s source=%s embed_skipped=%s top=%s meta_calls=%s hints=%s "
             "route_ms=%s eligible_calls=%s unevaluated=%s initial_cover=%s oracle_cover=%s "
-            "unavailable_routed=%s gate_ms=%s model=%s vision=%s",
+            "unavailable_routed=%s gate_ms=%s model=%s vision=%s repeats_refused=%d",
             chat_key,
             mode,
             self.offered,
@@ -130,4 +144,5 @@ class TurnMetrics:
             ],
             model or "-",
             "-" if vision is None else ("on" if vision else "off"),
+            self.repeats_refused,
         )

@@ -921,7 +921,10 @@ async def test_agent_stops_after_eight_tool_steps():
     )()
     conversation = ConversationPlugin()
     responder = AgentResponder(
-        provider, system_prompt="", settings=AgentSettings(), limits=Limits(stores.cache)
+        provider,
+        system_prompt="",
+        settings=AgentSettings(tool_steps=8, max_identical_calls=10),
+        limits=Limits(stores.cache),
     )
     app = BotApp(
         FakePlatform(),

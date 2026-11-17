@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import secrets
@@ -27,7 +28,7 @@ from chatcore.image_reader import ImageReader, ImageReadError, admit_describe
 from chatcore.images import MAX_IMAGE_BYTES, download_images, is_image
 from chatcore.llm.base import Provider, ProviderError
 from chatcore.llm.sanitize import strip_tool_markup
-from chatcore.llm.types import ImagePart, Message, Role, Usage
+from chatcore.llm.types import ImagePart, Message, Role, ToolCall, Usage
 from chatcore.model_choice import ModelSwitchConfig
 from chatcore.prompts import build_system_prompt
 from chatcore.skill_router import SkillRouter
@@ -258,13 +259,19 @@ class AgentSettings:
     vision: bool = False
     recent_context_messages: int = 20
     recent_turns: int = 12
-    tool_steps: int = 8
+    tool_steps: int = 20
     timeout_s: float = 150
     final_answer_reserve_s: float = 25
     ambient_message_chars: int = 1500
     ambient_total_chars: int = 6000
     skills: SkillSettings = SkillSettings()
     max_tokens_ceiling: int = 12288
+    max_identical_calls: int = 2
+    """Times one tool may run with the same arguments in a turn before a repeat is refused."""
+    max_consecutive_tool_errors: int = 4
+    """Tool error results in a row after which the next request must be a final answer."""
+    turn_input_token_limit: int | None = None
+    """Provider input tokens for the tool loop after which the next request is a final answer."""
 
 
 def _wrap(text: str, tag: str) -> str:
@@ -280,6 +287,13 @@ def _turn_data(message: Message) -> dict:
             for call in message.tool_calls
         ],
     }
+
+
+def _call_key(call: ToolCall) -> tuple[str, str]:
+    """Identify a tool call by name and canonical arguments, for the per-turn repeat guard."""
+    return call.name, json.dumps(
+        call.arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    )
 
 
 def _urls(text: str) -> list[str]:
@@ -1243,6 +1257,29 @@ class AgentResponder:
         previous_meta_only = False
         forced_by_meta = False
         empty_continuation_used = False
+        loop_final_forced = False
+        errors_final_forced = False
+        tokens_final_forced = False
+        guard_logged = False
+        identical_calls: dict[tuple[str, str], int] = {}
+        error_streak = 0
+        loop_input_start = usage.input_tokens
+
+        def over_token_limit() -> bool:
+            limit = self.settings.turn_input_token_limit
+            return limit is not None and usage.input_tokens - loop_input_start >= limit
+
+        def note_guard(reason: str, tool_name: str) -> None:
+            nonlocal guard_logged
+            if not guard_logged:
+                guard_logged = True
+                log.info(
+                    "final answer forced by loop guard chat=%s reason=%s tool=%s tool_steps=%d",
+                    message.chat.key,
+                    reason,
+                    tool_name,
+                    ctx.turn.tool_steps,
+                )
 
         async def record_completion(completion_usage: Usage) -> None:
             turn_usage.add(completion_usage)
@@ -1271,6 +1308,16 @@ class AgentResponder:
                     final_answer = ctx.turn.tool_steps >= step_cap or deadline_final_forced
                     if ctx.turn.tool_steps >= step_cap:
                         steps_final_forced = True
+                    if (
+                        not final_answer
+                        and not loop_final_forced
+                        and not errors_final_forced
+                        and over_token_limit()
+                    ):
+                        tokens_final_forced = True
+                        note_guard("tokens", "-")
+                    if loop_final_forced or errors_final_forced or tokens_final_forced:
+                        final_answer = True
                     if (
                         on_mode
                         and skill_turn.meta_calls >= self.settings.skills.max_meta_calls
@@ -1349,6 +1396,7 @@ class AgentResponder:
                             not final_answer
                             and not direct_writes
                             and not empty_continuation_used
+                            and not over_token_limit()
                             and deadline - loop.time() >= 5
                             and _remaining_before_final(
                                 loop, deadline, self.settings.final_answer_reserve_s
@@ -1413,6 +1461,7 @@ class AgentResponder:
                         if (
                             not final_answer
                             and not empty_continuation_used
+                            and not over_token_limit()
                             and deadline - loop.time() >= 5
                             and _remaining_before_final(
                                 loop, deadline, self.settings.final_answer_reserve_s
@@ -1699,7 +1748,22 @@ class AgentResponder:
                             skill_turn.step_cap if on_mode else self.settings.tool_steps
                         ):
                             result = ToolResult.error("Tool step limit reached.")
+                        elif app.tools.get(call.name) is not None and (
+                            loop_final_forced
+                            or identical_calls.get(_call_key(call), 0)
+                            >= self.settings.max_identical_calls
+                        ):
+                            result = ToolResult.error(
+                                f"Not run: {call.name} was already called with these arguments "
+                                "this turn. Use the earlier result."
+                            )
+                            metrics.note_repeat_refused()
+                            loop_final_forced = True
+                            note_guard("loop", call.name)
                         else:
+                            if app.tools.get(call.name) is not None:
+                                call_key = _call_key(call)
+                                identical_calls[call_key] = identical_calls.get(call_key, 0) + 1
                             try:
                                 remaining = _remaining_before_final(
                                     loop, deadline, self.settings.final_answer_reserve_s
@@ -1781,6 +1845,23 @@ class AgentResponder:
                                     result = ToolResult(
                                         "Confirmation was requested; nothing has been saved yet."
                                     )
+                        if not is_meta:
+                            error_streak = error_streak + 1 if result.is_error else 0
+                            if (
+                                error_streak >= self.settings.max_consecutive_tool_errors
+                                and not errors_final_forced
+                                and not loop_final_forced
+                                # At the step cap the next request is final anyway; keep "steps".
+                                and ctx.turn.tool_steps
+                                < (skill_turn.step_cap if on_mode else self.settings.tool_steps)
+                            ):
+                                errors_final_forced = True
+                                note_guard(
+                                    "errors",
+                                    call.name
+                                    if app.tools.get(call.name) is not None
+                                    else "unknown",
+                                )
                         result_text = result.content
                         request_text = _wrap(result_text, tag) if result.untrusted else result_text
                         request_result = Message.tool_result(
@@ -1963,6 +2044,12 @@ class AgentResponder:
                     if budget_final_forced
                     else "meta"
                     if forced_by_meta
+                    else "loop"
+                    if loop_final_forced
+                    else "errors"
+                    if errors_final_forced
+                    else "tokens"
+                    if tokens_final_forced
                     else "steps"
                     if steps_final_forced
                     else "rounds"
