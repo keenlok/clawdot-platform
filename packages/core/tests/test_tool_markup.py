@@ -25,6 +25,25 @@ def test_strips_exact_production_dsml_block():
     assert strip_tool_markup(DSML) == ("", True)
 
 
+def test_strips_doubled_bar_dsml_and_keeps_prose():
+    block = (
+        '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="add_expense">\n'
+        '<｜｜DSML｜｜ parameter name="amount" string="true">584.94'
+        "</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    assert strip_tool_markup(block) == ("", True)
+    assert strip_tool_markup("Answer.\n" + block) == ("Answer.", True)
+    assert strip_tool_markup('Answer. <｜｜DSML｜｜ invoke name="x"') == (
+        "Answer.",
+        True,
+    )
+
+
+def test_keeps_ascii_bar_prose():
+    for text in ("Use the F# backward-pipe operator <|", "Read it as <|x|> here."):
+        assert strip_tool_markup(text) == (text, False)
+
+
 def test_strips_native_and_ascii_tool_tokens():
     native = (
         "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>search_web\n"
