@@ -123,7 +123,7 @@ async def test_turn_uses_the_override_model_and_records_it(caplog):
     assert MODEL_SWITCH_PROMPT in provider.calls[0]["system"]
     assert usage_rows == [("scripted", "glm-5", 3, 2)]
     metrics = next(r.getMessage() for r in caplog.records if "turn metrics" in r.getMessage())
-    assert metrics.endswith(" model=glm-5 vision=on")
+    assert metrics.endswith(" model=glm-5 vision=on repeats_refused=0")
     assert provider.model == "default-model"
 
 

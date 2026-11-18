@@ -451,7 +451,12 @@ class ExpensesPlugin(BasePlugin):
         }
 
     async def _members(self, ctx: ToolContext, chat: ChatRef) -> list[User]:
-        return await ctx.stores.repo.find_members(chat)
+        members = await ctx.stores.repo.find_members(chat)
+        if self._private_dm(ctx, chat) and all(
+            member.ref.key != ctx.user.ref.key for member in members
+        ):
+            members.append(ctx.user)
+        return members
 
     @staticmethod
     def _requester_name(ctx: ToolContext, name: str) -> bool:
@@ -516,6 +521,8 @@ class ExpensesPlugin(BasePlugin):
     async def _resolve_member(self, ctx: ToolContext, chat: ChatRef, name: str) -> User:
         name = _plain_text(name)
         normalized = name.lstrip("@").strip().casefold()
+        if self._private_dm(ctx, chat) and self._requester_name(ctx, normalized):
+            return ctx.user
         if normalized in {"me", "i"}:
             return ctx.user
         members = await self._members(ctx, chat)

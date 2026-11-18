@@ -143,7 +143,7 @@ class GooglePlugin(BasePlugin):
                     "表格",
                 ),
                 commands=("google",),
-                max_steps=6,
+                max_steps=16,
             )
         ]
 

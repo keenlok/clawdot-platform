@@ -40,7 +40,7 @@ class SkillSettings:
     router_timeout_ms: int = 300
     embed_threshold: float = 0.5
     embed_margin: float = 0.05
-    tool_steps: int = 8
+    tool_steps: int = 20
 
 
 class SkillsEnvSettings(BaseSettings):

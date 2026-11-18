@@ -89,6 +89,46 @@ async def test_private_expense_defaults_to_requester_only(dm_context):
     assert result.pending_action.payload["shares"] == {dm_context.user.ref.key: 500}
 
 
+@pytest.mark.parametrize("payer", ["me", "Alice", "@alice"])
+async def test_private_trip_default_split_resolves_requester(dm_context, payer):
+    ledger = MemoryLedgerRepo()
+    plugin = ExpensesPlugin(ledger=ledger, dm_ledger="private")
+    trip = await seed_trip(ledger, dm_context.chat, dm_context.user.ref, "Tokyo")
+    result = await tool(plugin, "add_expense").handler(
+        dm_context, description="Coffee", amount="5", paid_by=payer, trip=trip["name"]
+    )
+    assert result.pending_action is not None
+    assert result.pending_action.payload["paid_by"] == dm_context.user.ref.key
+    # The seeded trip is in JPY, which has no minor unit.
+    assert result.pending_action.payload["shares"] == {dm_context.user.ref.key: 5}
+
+
+async def test_private_update_members_requester_is_noop_and_other_is_refused(dm_context):
+    ledger = MemoryLedgerRepo()
+    trip = await seed_trip(ledger, dm_context.chat, dm_context.user.ref, "Tokyo")
+    plugin = ExpensesPlugin(ledger=ledger, dm_ledger="private")
+    noop = await tool(plugin, "update_trip_members").handler(
+        dm_context, trip=trip["name"], add=["Alice"]
+    )
+    assert not noop.is_error
+    assert "no changes" in noop.content
+    refused = await tool(plugin, "update_trip_members").handler(
+        dm_context, trip=trip["name"], add=["Bob"]
+    )
+    assert refused.is_error
+    assert "Private trips only track your own expenses" in refused.content
+
+
+async def test_private_trip_member_resolution_does_not_change_group_or_group_mode(dm_context):
+    group = ChatRef("fake", "crew")
+    group_ctx = replace(dm_context, chat=group, is_dm=False)
+    private = ExpensesPlugin(ledger=MemoryLedgerRepo(), dm_ledger="private")
+    assert await private._members(dm_context, dm_context.chat) == [dm_context.user]
+    assert await private._members(group_ctx, group) == []
+    group_mode = ExpensesPlugin(ledger=MemoryLedgerRepo(), dm_ledger="group")
+    assert await group_mode._members(dm_context, dm_context.chat) == []
+
+
 async def test_default_mode_keeps_group_dm_resolution_and_tool_spec(dm_context):
     group = ChatRef("fake", "crew")
 
