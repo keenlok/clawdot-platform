@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-19
+
+### Added
+- Google: `google_create_rich_doc(title, blocks, link_access)` creates a formatted native Doc from blocks: `title`, `heading` (levels 1–3), `paragraph` (plain text or spans marked bold, italic, underline, monospace `code` or an http(s) `link`), `bullets`, `numbered`, `table` (header plus up to 50 rows, 8 columns) and `divider`. Limits: 200 blocks, 10 tables, `GOOGLE_MAX_CHARS` of text, `GOOGLE_MAX_CELL_CHARS` per cell and `GOOGLE_OUTPUT_MAX_CHARS` for the argument; input is validated before any Google call, and errors name the block, item, row and column.
+- Google: rich Docs are built in three batches (text and styles, then tables last-to-first, then cells filled from read-back indices under a revision precondition), then read back and verified against the plan. The title keeps "(incomplete)" until the text is verified; formatting mismatches are reported as warnings; unverified text is never shared. Results use the existing `create_doc` journal kind, so no migration.
+- Google: `GoogleClient.rename_file(file_id, name)` (Drive `PATCH`); the HTTP client now allows `PATCH`.
+
+### Security
+- Permission change in `chatcore_google/gates.py`: `google_create_rich_doc` uses the create tier, with the existing daily cap and non-writer viewer-link rules.
+
 ## [0.22.0] - 2026-11-19
 
 ### Added
@@ -651,7 +661,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/keenlok/clawdot-platform/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...v0.20.1

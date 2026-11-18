@@ -112,14 +112,14 @@ async def publish_doc_link_access(google, action, ctx, payload, destination_id):
     if access not in {"viewer", "editor"}:
         raise ValueError("The confirmed Doc has no link-access grant to publish.")
     requested_role = "reader" if access == "viewer" else "writer"
-    expected_kind = action.kind
+    expected_kind = "create_doc" if action.kind == "create_rich_doc" else action.kind
     expected_source = None
     if action.kind == "edit_doc":
         destination = payload.get("destination") or {}
         if destination.get("mode") not in {"copy", "docx_import"}:
             raise ValueError("Only a new Doc destination can receive link access.")
         expected_source = (payload.get("source") or {}).get("file_id")
-    elif action.kind != "create_doc":
+    elif action.kind not in {"create_doc", "create_rich_doc"}:
         raise ValueError("Only a confirmed new Doc action can receive link access.")
     if (
         result is None

@@ -74,6 +74,241 @@ def setup():
     return service, client, ctx, commit
 
 
+async def test_rich_doc_validation_precedes_google_identity():
+    service, client, ctx, _ = setup()
+    with pytest.raises(ValueError, match=r"Block 1 \(paragraph\)"):
+        await service.propose(
+            ctx,
+            "create_rich_doc",
+            title="Bad",
+            blocks=[{"type": "paragraph", "text": "line\nbreak"}],
+        )
+    client.identity.assert_not_awaited()
+    client.request.assert_not_awaited()
+
+
+async def test_rich_doc_propose_freezes_blocks_and_includes_access_preview():
+    service, client, ctx, _ = setup()
+    blocks = [{"type": "heading", "level": 1, "text": "Plan"}]
+    action = await service.propose(
+        ctx, "create_rich_doc", title="Itinerary", blocks=blocks, link_access="viewer"
+    )
+    blocks[0]["text"] = "changed"
+    assert action.kind == "create_rich_doc"
+    assert action.payload["blocks"][0]["text"] == "Plan"
+    assert action.payload["link_access"] == "viewer"
+    assert "Create Rich Doc: Itinerary" in action.summary
+    assert "anyone with the link can view" in action.summary
+    assert "Plan" in action.summary
+    client.identity.assert_awaited_once()
+
+
+async def test_rich_doc_member_gets_forced_viewer_and_writer_gate_is_rechecked():
+    service, client, ctx, _ = setup()
+    service.settings.create_users = "members"
+    ctx.user = user("member")
+    ctx.is_admin = False
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="Member Doc",
+        blocks=[{"type": "paragraph", "text": "Hello"}],
+        link_access="private",
+    )
+    assert action.payload["link_access"] == "viewer"
+    assert action.payload["link_forced"] is True
+    assert "required for files you create" in action.summary
+
+    service.settings.create_users = "writers"
+    client.identity.reset_mock()
+    with pytest.raises(PermissionError):
+        await service.propose(
+            ctx,
+            "create_rich_doc",
+            title="Denied",
+            blocks=[{"type": "paragraph", "text": "Hello"}],
+        )
+    client.identity.assert_not_awaited()
+
+
+async def test_rich_doc_recompiles_frozen_blocks_before_commit_io():
+    service, client, ctx, commit = setup()
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="At limit",
+        blocks=[{"type": "paragraph", "text": "x"}],
+    )
+    action.payload["blocks"] = [{"type": "paragraph", "text": "x" * 1001}]
+    service.settings.max_chars = 1000
+    client.request.reset_mock()
+    with pytest.raises(ValueError, match="GOOGLE_MAX_CHARS"):
+        await service.commit(action, commit)
+    client.request.assert_not_awaited()
+
+
+async def test_rich_doc_commit_runs_batches_verifies_and_renames(request_driven_rich_doc_api):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="Plan title",
+        blocks=[
+            {"type": "heading", "level": 1, "text": "Plan"},
+            {"type": "table", "header": ["A"], "rows": [["B"]]},
+        ],
+    )
+
+    result = await service.commit(action, commit)
+
+    assert "Created and verified" in result
+    assert request_driven_rich_doc_api.title == "Plan title"
+    assert request_driven_rich_doc_api.batch_a
+    assert request_driven_rich_doc_api.batch_b
+    assert request_driven_rich_doc_api.batch_c
+    client.edit_document.assert_awaited_once()
+    client.rename_file.assert_awaited_once_with("rich-created-id", "Plan title")
+    journal = await service.repo.edit_result(ctx.chat.key, action.id)
+    assert journal["kind"] == "create_doc" and journal["phase"] == "verified"
+    assert await service.repo.output(ctx.chat.key, ctx.thread_id, "rich-created-id")
+
+
+@pytest.mark.parametrize("failed_batch", ["A", "B", "C"])
+async def test_rich_doc_batch_failure_never_renames_or_shares(
+    failed_batch, request_driven_rich_doc_api
+):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.fail_batch = failed_batch
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="Partial",
+        link_access="viewer",
+        blocks=[
+            {"type": "paragraph", "text": "Body"},
+            {"type": "table", "header": ["A"], "rows": [["B"]]},
+        ],
+    )
+
+    result = await service.commit(action, commit)
+
+    assert result.startswith("Uncertain:")
+    journal = await service.repo.edit_result(ctx.chat.key, action.id)
+    assert journal["phase"] == "uncertain"
+    assert journal["failed_stage"] == "content_verification"
+    client.rename_file.assert_not_awaited()
+    client.grant_link_viewer.assert_not_awaited()
+
+
+async def test_rich_doc_verification_failure_does_not_rename_or_share(request_driven_rich_doc_api):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.corrupt_text = True
+    service.settings.new_docs_link_access = "viewer"
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="Mismatch",
+        blocks=[{"type": "paragraph", "text": "Expected"}],
+    )
+    result = await service.commit(action, commit)
+    assert "verification failed (text_mismatch)" in result
+    assert (await service.repo.edit_result(ctx.chat.key, action.id))["phase"] == "uncertain"
+    client.rename_file.assert_not_awaited()
+    client.grant_link_viewer.assert_not_awaited()
+
+
+async def test_rich_doc_format_warning_still_shares_for_nonwriter(request_driven_rich_doc_api):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.drop_text_style.add("link")
+    service.settings.create_users = "members"
+    ctx.user = user("member")
+    ctx.is_admin = False
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="Shared Rich Doc",
+        blocks=[{"type": "paragraph", "spans": [{"text": "Map", "link": "https://maps.example"}]}],
+    )
+    result = await service.commit(action, ctx)
+    assert "Created and verified" in result
+    assert "Formatting could not be fully verified: links." in result
+    assert "anyone with the link can view" in result
+    assert any(
+        permission.get("type") == "anyone" for permission in request_driven_rich_doc_api.permissions
+    )
+    assert (await service.repo.edit_result(ctx.chat.key, action.id))["phase"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "metadata_result,expected_phrase,expected_phase",
+    [
+        ("final", "Created and verified", "verified"),
+        ("incomplete", 'title still ends with "(incomplete)"', "partial"),
+        ("unavailable", "final title could not be confirmed", "partial"),
+    ],
+)
+async def test_rich_doc_rename_failure_checks_actual_title(
+    metadata_result, expected_phrase, expected_phase, request_driven_rich_doc_api
+):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.fail_rename = True
+    request_driven_rich_doc_api.name_after_rename_error = {
+        "final": "Final title",
+        "incomplete": "Final title (incomplete)",
+        "unavailable": None,
+    }[metadata_result]
+    request_driven_rich_doc_api.raise_metadata_after_rename = metadata_result == "unavailable"
+    action = await service.propose(
+        ctx, "create_rich_doc", title="Final title", blocks=[{"type": "paragraph", "text": "Ready"}]
+    )
+    result = await service.commit(action, commit)
+    assert expected_phrase in result
+    assert (await service.repo.edit_result(ctx.chat.key, action.id))["phase"] == expected_phase
+    assert len(request_driven_rich_doc_api.metadata_reads) == 2
+
+
+async def test_rich_doc_daily_cap_is_checked_at_propose_and_commit():
+    service, client, ctx, commit = setup()
+    service.settings.create_users = "members"
+    service.settings.creates_per_user_day = 1
+    ctx.user = user("member")
+    ctx.is_admin = False
+    await service.repo.reserve_create(ctx.chat.key, "used", ctx.user.ref.key, 1)
+    with pytest.raises(PermissionError, match="today's limit"):
+        await service.propose(
+            ctx, "create_rich_doc", title="Capped", blocks=[{"type": "paragraph", "text": "x"}]
+        )
+    client.identity.assert_not_awaited()
+
+    await service.repo.purge(ctx.chat.key, ctx.user.ref.key)
+    action = await service.propose(
+        ctx, "create_rich_doc", title="Commit cap", blocks=[{"type": "paragraph", "text": "x"}]
+    )
+    await service.repo.reserve_create(ctx.chat.key, "used-again", ctx.user.ref.key, 1)
+    with pytest.raises(PermissionError, match="today's limit"):
+        await service.commit(action, ctx)
+    client.request.assert_not_awaited()
+
+
+async def test_rich_doc_writer_demotion_refuses_frozen_private_payload():
+    service, client, ctx, commit = setup()
+    action = await service.propose(
+        ctx, "create_rich_doc", title="Private", blocks=[{"type": "paragraph", "text": "x"}]
+    )
+    assert action.payload["link_access"] == "private"
+    service.settings.create_users = "members"
+    service.access = AccessPolicy([GROUP.key], [], owners=[])
+    ctx.is_admin = False
+    with pytest.raises(PermissionError, match="access changed"):
+        await service.commit(action, ctx)
+    client.request.assert_not_awaited()
+
+
 async def test_docx_read_uses_mime_and_preserves_native_doc_path(docx_bytes):
     service, client, ctx, _ = setup()
     client.metadata.return_value = {
@@ -1842,3 +2077,65 @@ async def test_last_allowed_member_doc_is_shared_after_create_reservation():
     result = await service.commit(action, ctx)
     assert "Created and verified" in result
     client.grant_link_viewer.assert_awaited_once_with("last-doc")
+
+
+@pytest.mark.parametrize(
+    "error,phrase",
+    [(GoogleError("Google HTTP 400"), "Partial"), (RuntimeError("timeout"), "Uncertain")],
+)
+async def test_rich_doc_batch_refusal_is_partial_and_transport_failure_uncertain(
+    error, phrase, request_driven_rich_doc_api
+):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.fail_batch = "A"
+    request_driven_rich_doc_api.fail_error = error
+    action = await service.propose(
+        ctx, "create_rich_doc", title="Refused", blocks=[{"type": "paragraph", "text": "Body"}]
+    )
+    result = await service.commit(action, commit)
+    assert result.startswith(phrase + ":")
+    client.rename_file.assert_not_awaited()
+    journal = await service.repo.edit_result(ctx.chat.key, action.id)
+    assert journal["phase"] == phrase.lower()
+    assert journal["failed_stage"] == "content_verification"
+
+
+async def test_rich_doc_rename_failure_still_shares_for_member(request_driven_rich_doc_api):
+    service, client, ctx, _ = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.fail_rename = True
+    request_driven_rich_doc_api.name_after_rename_error = "Notes (incomplete)"
+    service.settings.create_users = "members"
+    ctx.user = user("member")
+    ctx.is_admin = False
+    action = await service.propose(
+        ctx, "create_rich_doc", title="Notes", blocks=[{"type": "paragraph", "text": "Body"}]
+    )
+    assert action.payload["link_access"] == "viewer" and action.payload["link_forced"]
+    result = await service.commit(action, ctx)
+    assert 'title still ends with "(incomplete)"' in result
+    assert "anyone with the link can view" in result
+    assert any(p.get("type") == "anyone" for p in request_driven_rich_doc_api.permissions)
+    journal = await service.repo.edit_result(ctx.chat.key, action.id)
+    assert journal["phase"] == "partial" and journal["failed_stage"] == "title_rename"
+
+
+async def test_rich_doc_unsafe_existing_acl_is_not_shared(request_driven_rich_doc_api):
+    service, client, ctx, commit = setup()
+    request_driven_rich_doc_api.wire(client)
+    request_driven_rich_doc_api.permissions.append(
+        {"id": "domain-1", "type": "domain", "role": "writer", "domain": "example.com"}
+    )
+    action = await service.propose(
+        ctx,
+        "create_rich_doc",
+        title="Shared",
+        link_access="viewer",
+        blocks=[{"type": "paragraph", "text": "Body"}],
+    )
+    result = await service.commit(action, commit)
+    assert "anyone with the link can view" not in result
+    assert not any(p.get("type") == "anyone" for p in request_driven_rich_doc_api.permissions)
+    journal = await service.repo.edit_result(ctx.chat.key, action.id)
+    assert journal["phase"] != "verified"
