@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.24.0] - 2026-11-18
+## [0.24.0] - 2026-11-19
 
 ### Added
 - Google: `google_add_sheet_tab(url, tab)` adds a formatted tab (the `google_create_workbook` tab schema) to a Sheet. It never renames the file or touches other tabs; name collisions and `GOOGLE_MAX_TABS` are checked at preview and again at confirmation.
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 - Permission change in `chatcore_google/gates.py`: the four new tools use the create gate. The handlers then apply the create tier to the requester's own bot-made files and the writer tier to other members' bot-made files and to shared files, re-checking the tier, settings revision and output binding immediately before the first write. Shared files: tab adds and block appends need a writer and always confirm; replace and trash are refused. Previews-off runs immediately only for bot-made files, never for trash.
 
-## [0.23.0] - 2026-11-18
+## [0.23.0] - 2026-11-19
 
 ### Added
 - Google: `google_create_rich_doc(title, blocks, link_access)` creates a formatted native Doc from blocks: `title`, `heading` (levels 1–3), `paragraph` (plain text or spans marked bold, italic, underline, monospace `code` or an http(s) `link`), `bullets`, `numbered`, `table` (header plus up to 50 rows, 8 columns) and `divider`. Limits: 200 blocks, 10 tables, `GOOGLE_MAX_CHARS` of text, `GOOGLE_MAX_CELL_CHARS` per cell and `GOOGLE_OUTPUT_MAX_CHARS` for the argument; input is validated before any Google call, and errors name the block, item, row and column.
@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 - Permission change in `chatcore_google/gates.py`: `google_create_rich_doc` uses the create tier, with the existing daily cap and non-writer viewer-link rules.
 
-## [0.22.0] - 2026-11-18
+## [0.22.0] - 2026-11-19
 
 ### Added
 - Google: `google_create_workbook(title, tabs, link_access)` creates a formatted multi-tab Sheet from typed columns (`text`, `number`, `money` with 0–4 decimals, `percent`, `date`, `datetime`, `bool` checkboxes, `url` links). Each tab gets an optional heading and note, a frozen styled header, a banded filtered table, estimated or given column widths and optional `SUM` totals. Text is always literal; generated `SUM` totals are the only formulas, and links must be http(s). Input is validated before any Google call, and errors name the tab, row and column. It follows the create tier, daily cap, non-writer viewer link and preview switch from 0.21.0. A partial failure leaves "(incomplete)" in the title and is never retried.
@@ -40,7 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 - Permission change in `chatcore_google/gates.py`: `google_create_workbook` uses the create tier, with its existing create quota and non-writer viewer-link rules.
 
-## [0.21.0] - 2026-11-18
+## [0.21.0] - 2026-11-19
 
 ### Added
 - Google: a create permission tier. `GOOGLE_CREATE_USERS=members` lets any member of an allowed chat with Google on create new Docs and Sheets and append to their own outputs; the default, `writers`, keeps today's admins-and-writers rule. Non-writer creates are capped by `GOOGLE_CREATES_PER_USER_DAY` (default 20 per 24 hours).
@@ -53,6 +53,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Security
 - Permission change in `chatcore_google/permissions.py` and `gates.py`: files created by non-writers always get at least an anyone-with-link viewer link, because they cannot open a private file in the owner's Drive. Tiers, quota and sharing are rechecked at confirmation. Behaviour is unchanged unless an app sets `GOOGLE_CREATE_USERS=members`.
+
+## [0.20.1] - 2026-11-19
+
+### Fixed
+
+- Telegram startup failures are now diagnosable: when `initialize`, `get_me`, `start` or
+  `start_polling` fails, the adapter logs one WARNING naming the step and the Telegram error
+  class (for example `step=start_polling error=Conflict`). The raised `PlatformError` carries
+  that class name. Message text, the bot token and URLs are never logged.
 
 ## [0.20.0] - 2026-11-18
 
@@ -671,7 +680,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 [0.24.0]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...v0.22.0
-[0.21.0]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...v0.21.0
+[0.21.0]: https://github.com/keenlok/clawdot-platform/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...v0.18.1
