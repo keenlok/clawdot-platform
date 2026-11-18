@@ -73,6 +73,10 @@ def build_gates(plugin):
                     "google_create_workbook",
                     "google_create_rich_doc",
                     "google_append",
+                    "google_append_doc_blocks",
+                    "google_add_sheet_tab",
+                    "google_replace_sheet_tab",
+                    "google_trash_file",
                 }
                 else write
                 if tool.writes

@@ -16,6 +16,114 @@ URL = "https://docs.google.com/spreadsheets/d/file/edit#gid=7"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
+@pytest.mark.parametrize("kind", ["add_sheet_tab", "replace_sheet_tab"])
+async def test_sheet_tab_arguments_validate_before_identity_or_metadata(kind):
+    service, client, ctx, _ = setup()
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    tab = {"name": "Valid", "columns": [], "rows": []}
+    expected_error = "columns" if kind == "add_sheet_tab" else "name"
+    with pytest.raises(ValueError, match=expected_error):
+        await service.propose(
+            ctx,
+            kind,
+            url=URL,
+            tab=tab,
+            tab_name="Different" if kind == "replace_sheet_tab" else None,
+        )
+    client.identity.assert_not_awaited()
+    client.metadata.assert_not_awaited()
+
+
+async def test_replace_sheet_tab_invalid_content_stops_before_identity_or_metadata():
+    service, client, ctx, _ = setup()
+    with pytest.raises(ValueError, match="columns"):
+        await service.propose(
+            ctx,
+            "replace_sheet_tab",
+            url=URL,
+            tab_name="Matching",
+            tab={"name": "Matching", "columns": [], "rows": []},
+        )
+    client.identity.assert_not_awaited()
+    client.metadata.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", ["add_sheet_tab", "replace_sheet_tab", "trash_file"])
+async def test_output_edit_reauthorizes_after_last_read_before_write(kind):
+    service, client, ctx, _ = setup()
+    service.settings.create_users = "members"
+    member = user("member")
+    ctx.user = member
+    ctx.is_admin = False
+    client.metadata.return_value.update(
+        ownedByMe=True,
+        trashed=False,
+        owners=[{"permissionId": "owner-id"}],
+    )
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, member.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    if kind == "add_sheet_tab":
+        client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+        action = await service.propose(ctx, kind, url=URL, tab=tab)
+
+        async def final_sheet_read(_file_id):
+            service.settings.create_users = "writers"
+            return {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+
+        client.sheet.side_effect = final_sheet_read
+    elif kind == "replace_sheet_tab":
+        sheet = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+        client.sheet_for_replace.return_value = sheet
+        tab["name"] = "Day 1"
+        action = await service.propose(ctx, kind, url=URL, tab_name="Day 1", tab=tab)
+
+        async def final_replace_read(_file_id):
+            service.settings.create_users = "writers"
+            return sheet
+
+        client.sheet_for_replace.side_effect = final_replace_read
+    else:
+        action = await service.propose(ctx, kind, url=URL)
+
+        async def final_metadata_read(_file_id):
+            service.settings.create_users = "writers"
+            return client.metadata.return_value
+
+        client.metadata.side_effect = final_metadata_read
+
+    with pytest.raises(PermissionError, match="creation|create"):
+        await service.commit(action, ctx)
+    client.batch.assert_not_awaited()
+    client.trash_file.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", ["add_sheet_tab", "replace_sheet_tab"])
+async def test_sheet_tab_commit_refuses_freshly_trashed_file(kind):
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+    client.sheet_for_replace.return_value = {
+        "sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]
+    }
+    if kind == "add_sheet_tab":
+        action = await service.propose(ctx, kind, url=URL, tab=tab)
+    else:
+        tab["name"] = "Day 1"
+        action = await service.propose(ctx, kind, url=URL, tab_name="Day 1", tab=tab)
+    client.metadata.return_value["trashed"] = True
+    with pytest.raises(ValueError, match="trash"):
+        await service.commit(action, ctx)
+    client.batch.assert_not_awaited()
+
+
 def created_doc(text):
     boundary = 1 + len(text.encode("utf-16-le")) // 2
     return {
@@ -85,6 +193,355 @@ async def test_rich_doc_validation_precedes_google_identity():
         )
     client.identity.assert_not_awaited()
     client.request.assert_not_awaited()
+
+
+async def test_add_sheet_tab_freezes_owned_output_and_rejects_name_collision():
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    action = await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+    assert action.kind == "add_sheet_tab"
+    assert action.payload["via_output"] is True
+    assert action.payload["target"] == "own_output"
+    assert action.payload["tab"] == tab
+    client.sheet.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 7, "title": "Day 1"}},
+            {"properties": {"sheetId": 8, "title": "NEXT"}},
+        ]
+    }
+    with pytest.raises(ValueError, match="name"):
+        await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+
+
+async def test_human_sheet_add_tab_is_marked_for_confirmation():
+    from chatcore_google.plugin import GooglePlugin
+
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=False, trashed=False)
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    await service.repo.configure_fields(ctx.chat.key, confirm_writes=False, expected_revision=0)
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    result = await plugin.add_sheet_tab(ctx, URL, tab)
+    assert result.pending_action is not None
+    assert result.pending_action.payload["via_output"] is False
+    assert result.pending_action.payload["target"] == "human"
+
+
+async def test_own_output_tab_edit_runs_when_previews_are_off():
+    from chatcore_google.plugin import GooglePlugin
+
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    await service.repo.configure_fields(ctx.chat.key, confirm_writes=False, expected_revision=0)
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    result = await plugin.add_sheet_tab(ctx, URL, tab)
+    assert result.pending_action is None
+    assert "Added tab" in result.content
+    client.batch.assert_awaited()
+
+
+async def test_member_can_edit_own_output_but_not_another_members_output():
+    from chatcore.testing import user
+
+    service, client, ctx, _ = setup()
+    service.settings.create_users = "members"
+    member = user("member")
+    ctx.user = member
+    ctx.is_admin = False
+    ctx.turn.human_urls = frozenset({URL})
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, member.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    action = await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+    assert action.payload["target"] == "own_output"
+
+    service, client, ctx, _ = setup()
+    service.settings.create_users = "members"
+    ctx.user = user("other-member")
+    ctx.is_admin = False
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, "fake:requester", ctx.thread_id, "owner-id", "created"
+    )
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    with pytest.raises(PermissionError):
+        await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+
+
+async def test_replace_sheet_tab_clears_and_rewrites_only_selected_tab():
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    sheet = {
+        "sheets": [
+            {
+                "properties": {"sheetId": 7, "title": "Day 1"},
+                "bandedRanges": [{"bandedRangeId": 3, "range": {"sheetId": 7}}],
+                "basicFilter": {"range": {"sheetId": 7}},
+                "conditionalFormats": [{}, {}],
+                "merges": [{"sheetId": 7}],
+            },
+            {"properties": {"sheetId": 8, "title": "Other"}},
+        ]
+    }
+    client.sheet_for_replace.return_value = sheet
+    tab = {
+        "name": "Day 1",
+        "columns": [{"header": "Place", "type": "text"}],
+        "rows": [["New"]],
+    }
+    action = await service.propose(ctx, "replace_sheet_tab", url=URL, tab_name="Day 1", tab=tab)
+    result = await service.commit(action, ctx)
+    assert 'Replaced tab "Day 1"' in result
+    clear = client.batch.await_args_list[0].args[1]
+    assert [next(iter(request)) for request in clear] == [
+        "deleteBanding",
+        "clearBasicFilter",
+        "deleteConditionalFormatRule",
+        "deleteConditionalFormatRule",
+        "unmergeCells",
+        "updateCells",
+        "updateSheetProperties",
+    ]
+    assert clear[2]["deleteConditionalFormatRule"]["index"] == 1
+    assert clear[3]["deleteConditionalFormatRule"]["index"] == 0
+    all_requests = [request for call in client.batch.await_args_list for request in call.args[1]]
+    assert all(
+        sheet_id == 7 for request in all_requests for sheet_id in _request_sheet_ids(request)
+    )
+    assert all("updateSpreadsheetProperties" not in request for request in all_requests)
+
+
+async def test_replace_sheet_tab_refuses_unsupported_metadata_and_changed_target():
+    tab = {"name": "Day 1", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    for key, value in (
+        ("charts", [{"chartId": 1}]),
+        ("protectedRanges", [{"protectedRangeId": 2}]),
+        ("filterViews", [{"filterViewId": 3}]),
+    ):
+        service, client, ctx, _ = setup()
+        client.metadata.return_value.update(ownedByMe=True, trashed=False)
+        await service.repo.record_output(
+            ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+        )
+        client.sheet_for_replace.return_value = {
+            "sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}, key: value}]
+        }
+        with pytest.raises(ValueError, match=key):
+            await service.propose(ctx, "replace_sheet_tab", url=URL, tab_name="Day 1", tab=tab)
+
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    client.sheet_for_replace.return_value = {
+        "sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]
+    }
+    action = await service.propose(ctx, "replace_sheet_tab", url=URL, tab_name="Day 1", tab=tab)
+    client.sheet_for_replace.return_value = {
+        "sheets": [{"properties": {"sheetId": 9, "title": "Day 1"}}]
+    }
+    with pytest.raises(ValueError, match="changed"):
+        await service.commit(action, ctx)
+    client.batch.assert_not_awaited()
+
+
+async def test_replace_sheet_tab_reports_partial_after_clear():
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    client.sheet_for_replace.return_value = {
+        "sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]
+    }
+    tab = {"name": "Day 1", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    action = await service.propose(ctx, "replace_sheet_tab", url=URL, tab_name="Day 1", tab=tab)
+    client.batch.side_effect = [{}, RuntimeError("request failed")]
+    result = await service.commit(action, ctx)
+    assert "the tab was cleared but not fully rewritten" in result
+    assert "https://docs.google.com/spreadsheets/d/file/edit" in result
+
+
+async def test_add_sheet_tab_commits_add_sheet_before_data_and_rewrites_ids():
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+    service.sheet_id_generator = lambda low, high: 902
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    action = await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+    result = await service.commit(action, ctx)
+    assert result == 'Added tab "Next" to https://docs.google.com/spreadsheets/d/file/edit.'
+    calls = client.batch.await_args_list
+    assert calls[0].args[0] == "file"
+    add = calls[0].args[1][0]["addSheet"]
+    assert add["properties"]["sheetId"] == 902
+    assert add["properties"]["index"] == 1
+    assert all(
+        sheet_id == 902
+        for call in calls
+        for request in call.args[1]
+        for sheet_id in _request_sheet_ids(request)
+    )
+
+
+def _request_sheet_ids(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "sheetId":
+                yield item
+            else:
+                yield from _request_sheet_ids(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _request_sheet_ids(item)
+
+
+async def test_add_sheet_tab_collision_at_commit_and_partial_write_are_reported():
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+    tab = {"name": "Next", "columns": [{"header": "Place", "type": "text"}], "rows": []}
+    action = await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+    client.sheet.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 7, "title": "Day 1"}},
+            {"properties": {"sheetId": 8, "title": "next"}},
+        ]
+    }
+    with pytest.raises(ValueError, match="now exists"):
+        await service.commit(action, ctx)
+    client.batch.assert_not_awaited()
+
+    service, client, ctx, _ = setup()
+    service.settings.max_tabs = 1
+    client.metadata.return_value.update(ownedByMe=False, trashed=False)
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+    with pytest.raises(ValueError, match="tab limit"):
+        await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(ownedByMe=True, trashed=False)
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "Day 1"}}]}
+    action = await service.propose(ctx, "add_sheet_tab", url=URL, tab=tab)
+    service.sheet_id_generator = lambda low, high: 902
+    client.batch.side_effect = [{}, RuntimeError("request failed")]
+    result = await service.commit(action, ctx)
+    assert "Partial" in result and "Next" in result and "Nothing was retried" in result
+    assert client.batch.await_count == 2
+
+
+async def test_trash_always_requires_confirmation_and_records_trash():
+    from chatcore.confirm import ConfirmService
+    from chatcore.testing import press
+    from chatcore_google.plugin import GooglePlugin
+
+    service, client, ctx, command = setup()
+    client.metadata.return_value.update(
+        ownedByMe=True,
+        trashed=False,
+        owners=[{"permissionId": "owner-id"}],
+    )
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    await service.repo.configure_fields(ctx.chat.key, confirm_writes=False, expected_revision=0)
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    result = await plugin.trash_file(ctx, URL)
+    assert result.pending_action is not None
+    assert "30 days" in result.content
+    client.trash_file.return_value = {"id": "file", "trashed": True}
+    confirm = ConfirmService(
+        ctx.platform,
+        ctx.stores.repo,
+        {"google." + name: handler for name, handler in plugin.action_handlers().items()},
+    )
+    await confirm.request(result.pending_action, ctx.user)
+    completed = await confirm.on_press(press(result.pending_action.id, sender=ctx.user), command)
+    assert "restorable for 30 days" in completed
+    assert await service.repo.output(ctx.chat.key, ctx.thread_id, "file") is None
+    assert (await service.repo.output_any(ctx.chat.key, "file"))["trashed_at"] is not None
+    client.trash_file.assert_awaited_once_with("file")
+    metadata_calls = client.metadata.await_count
+    second = await plugin.trash_file(ctx, URL)
+    assert second.is_error
+    assert client.metadata.await_count == metadata_calls
+    assert client.trash_file.await_count == 1
+
+
+async def test_trash_requires_current_owner_permission_id_and_verifies_response():
+    from chatcore_google.plugin import GooglePlugin
+
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(
+        ownedByMe=True,
+        trashed=False,
+        owners=[{"permissionId": "stale-owner"}],
+    )
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    action = await service.propose(ctx, "trash_file", url=URL)
+    client.trash_file.return_value = {"id": "file", "trashed": True}
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    result = await plugin.commit(action, ctx)
+    assert "no longer owned" in result
+    client.trash_file.assert_not_awaited()
+
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(
+        ownedByMe=True,
+        trashed=False,
+        owners=[{"permissionId": "owner-id"}],
+    )
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    action = await service.propose(ctx, "trash_file", url=URL)
+    client.trash_file.return_value = {"id": "file", "trashed": False}
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    result = await plugin.commit(action, ctx)
+    assert "Uncertain" in result
+    assert await service.repo.output(ctx.chat.key, ctx.thread_id, "file") is not None
+    assert client.metadata.await_count == 3
+
+
+async def test_trash_refuses_trip_attached_output_before_api_call():
+    service, client, ctx, _ = setup()
+    client.metadata.return_value.update(
+        ownedByMe=True,
+        trashed=False,
+        owners=[{"permissionId": "owner-id"}],
+    )
+    await service.repo.record_output(
+        ctx.chat.key, "file", SHEET, ctx.user.ref.key, ctx.thread_id, "owner-id", "created"
+    )
+    service.repo.trip_file = AsyncMock(return_value={"trip_id": "trip"})
+    with pytest.raises(ValueError, match="trip"):
+        await service.propose(ctx, "trash_file", url=URL)
+    client.trash_file.assert_not_awaited()
 
 
 async def test_rich_doc_propose_freezes_blocks_and_includes_access_preview():
@@ -1570,6 +2027,156 @@ async def test_doc_append_refuses_sheet_tab_arguments_instead_of_ignoring_them()
     client.metadata.return_value["mimeType"] = "application/vnd.google-apps.document"
     with pytest.raises(ValueError, match="tab"):
         await service.propose(ctx, "append", url=URL, text="hello", tab="some tab")
+
+
+async def test_trashed_doc_output_loses_legacy_edit_result_authority():
+    from chatcore_google.service import DOC
+
+    service, client, ctx, _ = setup()
+    url = "https://docs.google.com/document/d/output-doc/edit"
+    binding = {
+        "owner_id": "owner-id",
+        "owner_email": "owner@example.com",
+        "thread_id": ctx.thread_id,
+        "mode": "create",
+    }
+    await service.repo.reserve_edit(
+        ctx.chat.key,
+        "create-doc-action",
+        ctx.user.ref.key,
+        0,
+        10,
+        0,
+        kind="create_doc",
+        source_id=None,
+        output_binding=binding,
+    )
+    await service.repo.update_edit_result(
+        ctx.chat.key,
+        "create-doc-action",
+        phase="destination_created",
+        destination_id="output-doc",
+    )
+    await service.repo.record_output(
+        ctx.chat.key,
+        "output-doc",
+        DOC,
+        ctx.user.ref.key,
+        ctx.thread_id,
+        "owner-id",
+        "create-doc-action",
+    )
+    assert await service.repo.mark_output_trashed(ctx.chat.key, "output-doc", "create-doc-action")
+    with pytest.raises(ValueError, match="link"):
+        await service.doc_source(ctx, url)
+    client.identity.assert_not_awaited()
+
+    # Older Doc outputs without a google_outputs row keep their prior authority.
+    await service.repo.reserve_edit(
+        ctx.chat.key,
+        "legacy-create-action",
+        ctx.user.ref.key,
+        0,
+        10,
+        0,
+        kind="create_doc",
+        source_id=None,
+        output_binding=binding,
+    )
+    await service.repo.update_edit_result(
+        ctx.chat.key,
+        "legacy-create-action",
+        phase="destination_created",
+        destination_id="legacy-doc",
+    )
+    client.metadata.return_value.update(
+        id="legacy-doc",
+        name="Legacy",
+        mimeType=DOC,
+        isAppAuthorized=True,
+        ownedByMe=True,
+        owners=[{"emailAddress": "owner@example.com", "permissionId": "owner-id"}],
+        capabilities={"canEdit": True, "canModifyContent": True},
+        trashed=False,
+    )
+    _, _, _, proof = await service.doc_source(
+        ctx, "https://docs.google.com/document/d/legacy-doc/edit"
+    )
+    assert proof["kind"] == "output"
+
+
+async def test_structured_doc_append_rejects_title_before_google_identity(google_service):
+    service, client, ctx, _ = google_service
+    with pytest.raises(ValueError, match="Title blocks cannot be appended"):
+        await service.propose(
+            ctx,
+            "append_doc_blocks",
+            url="https://docs.google.com/document/d/doc/edit",
+            blocks=[{"type": "title", "text": "At the top only"}],
+        )
+    client.identity.assert_not_awaited()
+    client.metadata.assert_not_awaited()
+
+
+async def test_structured_doc_append_revalidates_limits_before_commit_identity(google_service):
+    service, client, ctx, _ = google_service
+    from chatcore.pending import PendingAction
+
+    action = PendingAction.create(
+        chat=ctx.chat,
+        requester=ctx.user.ref,
+        plugin="google",
+        kind="append_doc_blocks",
+        payload={
+            "blocks": [{"type": "paragraph", "text": "x" * 1200}],
+            "file_id": "doc",
+            "url": "https://docs.google.com/document/d/doc/edit",
+        },
+        summary="append",
+        thread_id=ctx.thread_id,
+    )
+    service.settings.max_chars = 1000
+    with pytest.raises(ValueError, match="GOOGLE_MAX_CHARS"):
+        await service.commit(action, ctx)
+    client.identity.assert_not_awaited()
+    client.document_for_edit.assert_not_awaited()
+    client.edit_document.assert_not_awaited()
+
+
+async def test_structured_doc_append_other_member_output_requires_writer(google_service):
+    service, client, ctx, _ = google_service
+    from chatcore_google.service import DOC
+
+    service.settings.create_users = "members"
+    ctx.user = user("member")
+    ctx.is_admin = False
+    url = "https://docs.google.com/document/d/doc/edit"
+    ctx.turn.human_urls = frozenset({url})
+    service.doc_source = AsyncMock(
+        return_value=(
+            type("Ref", (), {"file_id": "doc"})(),
+            {
+                "id": "doc",
+                "ownedByMe": True,
+                "mimeType": DOC,
+                "isAppAuthorized": True,
+                "trashed": False,
+                "name": "Doc",
+                "owners": [{"emailAddress": "owner@example.com", "permissionId": "owner-id"}],
+                "capabilities": {"canEdit": True, "canModifyContent": True},
+            },
+            "owner-id",
+            None,
+        )
+    )
+    await service.repo.record_output(
+        ctx.chat.key, "doc", DOC, "another-member", ctx.thread_id, "owner-id", "old-action"
+    )
+    with pytest.raises(PermissionError, match="writer"):
+        await service.propose(
+            ctx, "append_doc_blocks", url=url, blocks=[{"type": "paragraph", "text": "No write"}]
+        )
+    client.document_for_edit.assert_not_awaited()
 
 
 async def test_lowered_limits_reject_a_pending_creation_before_any_remote_write():

@@ -128,6 +128,30 @@ class GoogleRepository:
         row = self._outputs.get((chat, file_id))
         return row if row and row["thread_id"] == thread_id and row["trashed_at"] is None else None
 
+    async def output_any(self, chat, file_id):
+        if self.db is not None:
+            row = await self.db.fetchrow(
+                "SELECT * FROM google_outputs WHERE chat_key=$1 AND file_id=$2", chat, file_id
+            )
+            return dict(row) if row else None
+        return self._outputs.get((chat, file_id))
+
+    async def mark_output_trashed(self, chat, file_id, action_id):
+        if self.db is not None:
+            result = await self.db.execute(
+                "UPDATE google_outputs SET trashed_at=now() WHERE chat_key=$1 AND file_id=$2 "
+                "AND action_id=$3 AND trashed_at IS NULL",
+                chat,
+                file_id,
+                action_id,
+            )
+            return result.endswith(" 1")
+        row = self._outputs.get((chat, file_id))
+        if row is None or row["action_id"] != action_id or row["trashed_at"] is not None:
+            return False
+        row["trashed_at"] = datetime.now(UTC)
+        return True
+
     async def creates_today(self, chat, requester_key):
         since = datetime.now(UTC) - timedelta(hours=24)
         if self.db is not None:
@@ -484,6 +508,10 @@ class GoogleRepository:
                 "AND e.phase IN ('destination_created','applying','shared','verified','partial',"
                 "'uncertain') AND e.output_owner_id IS NOT NULL "
                 "AND e.output_owner_email IS NOT NULL AND e.output_mode IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM google_outputs o WHERE o.chat_key=e.chat_key "
+                "AND o.file_id=e.destination_id "
+                "AND o.thread_id IS NOT DISTINCT FROM e.output_thread_id "
+                "AND o.trashed_at IS NOT NULL) "
                 "AND ((e.kind='create_doc' AND e.source_id IS NULL AND e.output_mode='create') "
                 "OR (e.kind='edit_doc' AND e.source_id IS NOT NULL "
                 "AND e.source_id<>e.destination_id AND e.output_mode IN ('copy','docx_import'))) "
@@ -503,6 +531,11 @@ class GoogleRepository:
             in {"destination_created", "applying", "shared", "verified", "partial", "uncertain"}
             and result.get("output_owner_id")
             and result.get("output_owner_email")
+            and not (
+                (output := self._outputs.get((chat, destination_id))) is not None
+                and output.get("thread_id") == thread_id
+                and output.get("trashed_at") is not None
+            )
             and (
                 result.get("kind") == "create_doc"
                 and result.get("source_id") is None

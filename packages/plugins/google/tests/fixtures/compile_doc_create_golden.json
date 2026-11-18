@@ -1,0 +1,336 @@
+{
+  "blocks": [
+    {
+      "type": "title",
+      "text": "Kyoto"
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Day 1"
+    },
+    {
+      "type": "paragraph",
+      "spans": [
+        {
+          "text": "Meet "
+        },
+        {
+          "text": "station",
+          "bold": true,
+          "link": "https://maps.example"
+        }
+      ]
+    },
+    {
+      "type": "bullets",
+      "items": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "type": "numbered",
+      "items": [
+        "C"
+      ]
+    },
+    {
+      "type": "divider"
+    },
+    {
+      "type": "table",
+      "header": [
+        "Time",
+        "Place"
+      ],
+      "rows": [
+        [
+          "09:00",
+          "Inari"
+        ]
+      ]
+    }
+  ],
+  "body_text": "Kyoto\nDay 1\nMeet station\nA\nB\nC\n\n",
+  "batch_a": [
+    {
+      "insertText": {
+        "location": {
+          "index": 1
+        },
+        "text": "Kyoto\nDay 1\nMeet station\nA\nB\nC\n\n"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 1,
+          "endIndex": 7
+        },
+        "paragraphStyle": {
+          "namedStyleType": "TITLE"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 7,
+          "endIndex": 13
+        },
+        "paragraphStyle": {
+          "namedStyleType": "HEADING_1"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 13,
+          "endIndex": 26
+        },
+        "paragraphStyle": {
+          "namedStyleType": "NORMAL_TEXT"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 26,
+          "endIndex": 28
+        },
+        "paragraphStyle": {
+          "namedStyleType": "NORMAL_TEXT"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 28,
+          "endIndex": 30
+        },
+        "paragraphStyle": {
+          "namedStyleType": "NORMAL_TEXT"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 30,
+          "endIndex": 32
+        },
+        "paragraphStyle": {
+          "namedStyleType": "NORMAL_TEXT"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 32,
+          "endIndex": 33
+        },
+        "paragraphStyle": {
+          "namedStyleType": "NORMAL_TEXT"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 33,
+          "endIndex": 34
+        },
+        "paragraphStyle": {
+          "namedStyleType": "NORMAL_TEXT"
+        },
+        "fields": "namedStyleType"
+      }
+    },
+    {
+      "updateParagraphStyle": {
+        "range": {
+          "startIndex": 32,
+          "endIndex": 33
+        },
+        "paragraphStyle": {
+          "borderBottom": {
+            "color": {
+              "color": {
+                "rgbColor": {
+                  "red": 0.6,
+                  "green": 0.6,
+                  "blue": 0.6
+                }
+              }
+            },
+            "width": {
+              "magnitude": 1,
+              "unit": "PT"
+            },
+            "padding": {
+              "magnitude": 1,
+              "unit": "PT"
+            },
+            "dashStyle": "SOLID"
+          }
+        },
+        "fields": "borderBottom"
+      }
+    },
+    {
+      "updateTextStyle": {
+        "range": {
+          "startIndex": 18,
+          "endIndex": 25
+        },
+        "textStyle": {
+          "link": {
+            "url": "https://maps.example"
+          },
+          "bold": true
+        },
+        "fields": "link,bold"
+      }
+    },
+    {
+      "createParagraphBullets": {
+        "range": {
+          "startIndex": 26,
+          "endIndex": 30
+        },
+        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"
+      }
+    },
+    {
+      "createParagraphBullets": {
+        "range": {
+          "startIndex": 30,
+          "endIndex": 32
+        },
+        "bulletPreset": "NUMBERED_DECIMAL_ALPHA_ROMAN"
+      }
+    }
+  ],
+  "batch_b": [
+    {
+      "insertTable": {
+        "rows": 2,
+        "columns": 2,
+        "location": {
+          "index": 33
+        }
+      }
+    }
+  ],
+  "tables": [
+    {
+      "placeholder_index": 33,
+      "header": [
+        "Time",
+        "Place"
+      ],
+      "rows": [
+        [
+          "09:00",
+          "Inari"
+        ]
+      ]
+    }
+  ],
+  "expected": [
+    [
+      "paragraph",
+      "Kyoto",
+      "TITLE",
+      false,
+      null
+    ],
+    [
+      "paragraph",
+      "Day 1",
+      "HEADING_1",
+      false,
+      null
+    ],
+    [
+      "paragraph",
+      "Meet station",
+      "NORMAL_TEXT",
+      false,
+      null
+    ],
+    [
+      "paragraph",
+      "A",
+      "NORMAL_TEXT",
+      false,
+      "bullets"
+    ],
+    [
+      "paragraph",
+      "B",
+      "NORMAL_TEXT",
+      false,
+      "bullets"
+    ],
+    [
+      "paragraph",
+      "C",
+      "NORMAL_TEXT",
+      false,
+      "numbered"
+    ],
+    [
+      "paragraph",
+      "",
+      "NORMAL_TEXT",
+      true,
+      null
+    ],
+    [
+      "table",
+      [
+        [
+          "Time",
+          "Place"
+        ],
+        [
+          "09:00",
+          "Inari"
+        ]
+      ]
+    ]
+  ],
+  "bullet_texts": [
+    "A",
+    "B"
+  ],
+  "numbered_texts": [
+    "C"
+  ],
+  "expected_marks": [
+    [
+      2,
+      5,
+      12,
+      {
+        "link": {
+          "url": "https://maps.example"
+        },
+        "bold": true
+      }
+    ]
+  ]
+}
