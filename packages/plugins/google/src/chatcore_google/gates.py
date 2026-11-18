@@ -71,6 +71,7 @@ def build_gates(plugin):
                     "google_create_doc",
                     "google_create_sheet",
                     "google_create_workbook",
+                    "google_create_rich_doc",
                     "google_append",
                 }
                 else write

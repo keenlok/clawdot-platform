@@ -28,7 +28,7 @@ from chatcore_google.render import doc_text, literal_rows
 
 DOC = "application/vnd.google-apps.document"
 SHEET = "application/vnd.google-apps.spreadsheet"
-CREATE_KINDS = frozenset({"create_doc", "create_sheet", "create_workbook"})
+CREATE_KINDS = frozenset({"create_doc", "create_sheet", "create_workbook", "create_rich_doc"})
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _logger = logging.getLogger("chatcore_google")
 
@@ -515,10 +515,13 @@ class GoogleService:
         link_access=None,
         sheet_link_access=None,
         tabs=None,
+        blocks=None,
     ):
         await self.authorize(ctx, create=kind in CREATE_KINDS | {"append"})
         if kind not in {"append", *CREATE_KINDS}:
             raise ValueError("Unknown Google write operation.")
+        if kind == "create_rich_doc" and link_viewer is not None:
+            raise ValueError("Use link_access for a new Rich Doc.")
         if kind not in CREATE_KINDS and (link_access is not None or link_viewer is not None):
             raise ValueError("Link access choices apply only to a new Google Doc.")
         if kind in {"create_sheet", "create_workbook"} and link_viewer is not None:
@@ -560,7 +563,11 @@ class GoogleService:
             sheet_rows = None
             sheet_access = None
             link_forced = False
-            if kind == "create_workbook":
+            if kind == "create_rich_doc":
+                from chatcore_google.rich_doc import compile_doc
+
+                compile_doc(blocks, self.settings)
+            elif kind == "create_workbook":
                 from chatcore_google.workbook import render_workbook
                 from chatcore_google.workbook_builder import compile_workbook
 
@@ -599,7 +606,7 @@ class GoogleService:
                 )
             owner = await self.client.identity()
             payload["title"] = title
-            payload["mime"] = DOC if kind == "create_doc" else SHEET
+            payload["mime"] = DOC if kind in {"create_doc", "create_rich_doc"} else SHEET
             name = title
             if kind == "create_doc":
                 access = resolve_link_access(self.settings, link_access, link_viewer)
@@ -609,6 +616,12 @@ class GoogleService:
                 payload["link_access"] = access
                 if access != "editor":
                     payload["link_viewer"] = access == "viewer"
+            elif kind == "create_rich_doc":
+                access = resolve_link_access(self.settings, link_access)
+                if not is_writer(self.settings, self.access, ctx.user.ref) and access == "private":
+                    access = "viewer"
+                    payload["link_forced"] = True
+                payload.update(link_access=access, blocks=copy.deepcopy(blocks))
             elif kind in {"create_sheet", "create_workbook"}:
                 payload["link_access"] = sheet_access
                 if link_forced:
@@ -621,6 +634,10 @@ class GoogleService:
             from chatcore_google.workbook_builder import preview_workbook
 
             preview = preview_workbook(payload["tabs"])
+        elif kind == "create_rich_doc":
+            from chatcore_google.rich_doc import preview_doc
+
+            preview = preview_doc(payload["blocks"])
         elif kind == "create_sheet":
             preview = json.dumps(payload["rows"], ensure_ascii=False)
         elif payload["mime"] == SHEET:
@@ -636,7 +653,9 @@ class GoogleService:
         _, revision = await self.repo.settings(ctx.chat.key)
         payload.update(owner=owner, revision=revision)
         # Long previews are attached in full by action(); the pending payload stays frozen.
-        link_access = payload_link_access(payload) if kind == "create_doc" else None
+        link_access = (
+            payload_link_access(payload) if kind in {"create_doc", "create_rich_doc"} else None
+        )
         access_text = {
             "private": "private; existing access settings are unchanged",
             "viewer": "anyone with the link can view; search discovery is off",
@@ -646,7 +665,7 @@ class GoogleService:
             f"Access: {access_text[link_access]}"
             + (" (required for files you create)" if payload.get("link_forced") else "")
             + ".\n"
-            if kind == "create_doc"
+            if kind in {"create_doc", "create_rich_doc"}
             else (
                 f"Access: {access_text[payload['link_access']]}"
                 + (" (required for files you create)" if payload.get("link_forced") else "")
@@ -657,7 +676,7 @@ class GoogleService:
         )
         target = (
             f"new Doc ({link_access} link access)"
-            if kind == "create_doc"
+            if kind in {"create_doc", "create_rich_doc"}
             else "new Sheet"
             if kind in {"create_sheet", "create_workbook"}
             else url
@@ -724,6 +743,11 @@ class GoogleService:
 
     async def commit(self, action, ctx):
         workbook_plan = None
+        rich_doc_plan = None
+        if action.kind == "create_rich_doc":
+            from chatcore_google.rich_doc import compile_doc
+
+            rich_doc_plan = compile_doc(action.payload.get("blocks"), self.settings)
         if action.kind == "create_workbook":
             from chatcore_google.workbook import render_workbook
             from chatcore_google.workbook_builder import compile_workbook
@@ -839,8 +863,8 @@ class GoogleService:
             action.kind == "create_doc" and not 0 < len(payload["text"]) <= self.settings.max_chars
         ):
             raise ValueError("Document text exceeds the current character limit; request again.")
-        if action.kind == "create_doc":
-            return await self._create_output_doc(action, ctx, payload)
+        if action.kind in {"create_doc", "create_rich_doc"}:
+            return await self._create_output_doc(action, ctx, payload, rich_doc_plan)
         if action.kind == "create_workbook":
             from chatcore_google.workbook import write_workbook
 
@@ -937,7 +961,7 @@ class GoogleService:
             return f"Created {url} ({payload['link_access']} link access)."
         return f"Created {url} (sharing unchanged)."
 
-    async def _create_output_doc(self, action, ctx, payload):
+    async def _create_output_doc(self, action, ctx, payload, rich_doc_plan=None):
         """Create, journal, verify and optionally share a confirmed native Doc output."""
         await self.repo.reserve_edit(
             ctx.chat.key,
@@ -963,8 +987,13 @@ class GoogleService:
             revision=payload["revision"],
         )
         try:
+            create_title = (
+                payload["title"][:186] + " (incomplete)"
+                if action.kind == "create_rich_doc"
+                else payload["title"]
+            )
             result = await self.client.request(
-                "POST", "docs.googleapis.com", "/v1/documents", json={"title": payload["title"]}
+                "POST", "docs.googleapis.com", "/v1/documents", json={"title": create_title}
             )
         except Exception as exc:
             uncertain = write_outcome_uncertain(exc)
@@ -1085,24 +1114,55 @@ class GoogleService:
                 "so no content was written."
             )
         append_error = None
-        try:
-            await self.append_doc(destination_id, payload["text"])
-        except Exception as exc:
-            append_error = exc
-        verification = await verify_doc_readback(
-            self.client,
-            destination_id,
-            payload["text"] + "\n",
-            max_chars=self.settings.max_chars + 1,
-            require_complete=True,
-        )
-        if not verification.verified:
-            _logger.info(
-                "Google Doc read-back verification failed category=%s attempts=%d",
-                verification.category,
-                verification.attempts,
+        if action.kind == "create_rich_doc":
+            from chatcore_google.rich_doc import fill_tables, verify_rich_doc_readback
+
+            try:
+                requests = list(rich_doc_plan.batch_a)
+                if requests:
+                    await self.client.request(
+                        "POST",
+                        "docs.googleapis.com",
+                        f"/v1/documents/{destination_id}:batchUpdate",
+                        json={"requests": requests},
+                    )
+                if rich_doc_plan.batch_b:
+                    await self.client.request(
+                        "POST",
+                        "docs.googleapis.com",
+                        f"/v1/documents/{destination_id}:batchUpdate",
+                        json={"requests": list(rich_doc_plan.batch_b)},
+                    )
+                await fill_tables(self.client, destination_id, rich_doc_plan)
+            except Exception as exc:
+                append_error = exc
+            text_verified, format_warnings, verification_category = await verify_rich_doc_readback(
+                self.client, destination_id, rich_doc_plan
             )
-            uncertain = append_error is None or write_outcome_uncertain(append_error)
+        else:
+            try:
+                await self.append_doc(destination_id, payload["text"])
+            except Exception as exc:
+                append_error = exc
+            verification = await verify_doc_readback(
+                self.client,
+                destination_id,
+                payload["text"] + "\n",
+                max_chars=self.settings.max_chars + 1,
+                require_complete=True,
+            )
+            text_verified, format_warnings = verification.verified, []
+            verification_category = verification.category
+        if not text_verified:
+            _logger.info(
+                "Google Doc read-back verification failed category=%s", verification_category
+            )
+            known_render_failure = action.kind == "create_rich_doc" and isinstance(
+                append_error, ValueError
+            )
+            uncertain = append_error is None or (
+                not known_render_failure and write_outcome_uncertain(append_error)
+            )
             await record_result(
                 self,
                 action,
@@ -1110,14 +1170,29 @@ class GoogleService:
                 phase="uncertain" if uncertain else "partial",
                 destination_id=destination_id,
                 failed_stage="content_verification",
-                error_category=verification.category,
+                error_category=verification_category,
             )
             return (
                 f"{'Uncertain' if uncertain else 'Partial'}: the Doc is at {url}; content "
-                f"verification failed ({verification.category}), so no link-access change "
+                f"verification failed ({verification_category}), so no link-access change "
                 "was attempted. Inspect before retrying."
             )
 
+        rename_problem = None
+        if action.kind == "create_rich_doc":
+            try:
+                await self.client.rename_file(destination_id, payload["title"])
+            except Exception:
+                try:
+                    actual_name = (await self.client.metadata(destination_id)).get("name")
+                except Exception:
+                    actual_name = None
+                if actual_name == payload["title"]:
+                    rename_problem = None
+                elif isinstance(actual_name, str) and actual_name.endswith(" (incomplete)"):
+                    rename_problem = "incomplete"
+                else:
+                    rename_problem = "unknown"
         access = payload_link_access(payload)
         if access in {"viewer", "editor"}:
             try:
@@ -1144,8 +1219,10 @@ class GoogleService:
             self,
             action,
             ctx,
-            phase="verified",
+            phase="partial" if rename_problem else "verified",
             destination_id=destination_id,
+            failed_stage="title_rename" if rename_problem else None,
+            error_category="rename_failed" if rename_problem else None,
         )
         if isinstance(finalized, Exception):
             return (
@@ -1157,7 +1234,23 @@ class GoogleService:
             "viewer": "anyone with the link can view",
             "editor": "anyone with the link can edit",
         }[access]
-        return f"Created and verified {url}; {suffix}."
+        if rename_problem:
+            title_message = (
+                'its title still ends with "(incomplete)"'
+                if rename_problem == "incomplete"
+                else "the final title could not be confirmed"
+            )
+            return f"Partial: content was verified at {url}, but {title_message}; {suffix}. " + (
+                f"Formatting could not be fully verified: {', '.join(format_warnings)}."
+                if format_warnings
+                else ""
+            )
+        warning = (
+            f" Formatting could not be fully verified: {', '.join(format_warnings)}."
+            if format_warnings
+            else ""
+        )
+        return f"Created and verified {url}; {suffix}.{warning}"
 
     async def append_doc(self, file_id, text, tab_id=None):
         location = {"tabId": tab_id} if tab_id else {}

@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Google files and bounded edits
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:8869b2667af129fe02acf5e0c86519813b6c440478337631125fed83a5327dd0
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:07feba25bf503c3904d7c3f4a47d508b5ea702968218cf8beb32bf7bb0a519bf
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -60,6 +60,16 @@ totals are the only formulas. Limits use `GOOGLE_MAX_TABS` (at most 80), `GOOGLE
 `GOOGLE_OUTPUT_MAX_CHARS` (60,000). Partial writes keep `(incomplete)` in the title and are never
 retried. The tool follows create-tier permissions, non-writer sharing and the preview switch;
 `google_create_sheet` remains for plain rows.
+
+### Rich Doc output
+`google_create_rich_doc(title, blocks, link_access)` creates a structured Doc from title, heading,
+paragraph, bullet, numbered, table and divider blocks. Paragraph spans support bold, italic,
+underline, monospace code and HTTP(S) links only. Inputs are bounded by 200 blocks, 10 tables,
+50 data rows per table, 8 columns and the configured character limits. A new Doc keeps
+"(incomplete)" in its title until its text is verified; text verification can succeed while
+formatting warnings are reported separately. The tool follows the same create tier, daily cap,
+non-writer viewer sharing rule and preview switch as other new outputs. `google_create_doc` stays
+the plain-text option.
 
 ## Safety
 Writes normally need requester confirmation of their preview. A manager can turn previews off per

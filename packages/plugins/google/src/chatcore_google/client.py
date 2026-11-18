@@ -78,7 +78,7 @@ class GoogleHttp:
             or parsed.host not in HOSTS
             or parsed.port not in (None, 443)
             or parsed.userinfo
-            or method not in {"GET", "POST"}
+            or method not in {"GET", "POST", "PATCH"}
         ):
             raise GoogleError("Google requests require a fixed Google HTTPS endpoint.")
         try:
@@ -226,6 +226,16 @@ class GoogleClient:
                 "capabilities(canEdit,canModifyContent,canCopy,canDownload,canShare)",
                 "supportsAllDrives": "true",
             },
+        )
+
+    async def rename_file(self, file_id, name):
+        """Rename a Drive file using its fixed metadata endpoint."""
+        return await self.request(
+            "PATCH",
+            "www.googleapis.com",
+            f"/drive/v3/files/{file_id}",
+            params={"fields": "id,name", "supportsAllDrives": "true"},
+            json={"name": name},
         )
 
     async def media(self, file_id):

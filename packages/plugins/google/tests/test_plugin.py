@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -49,24 +50,83 @@ async def test_edit_tools_are_gated_writes_in_google_workspace_skill(google_serv
     assert (await gates["google_edit_doc"].scope(GROUP, False)).state == GateState.AVAILABLE
 
 
+async def test_rich_doc_schema_is_inline_and_registered_for_confirmation(google_service):
+    service, _, _, _ = google_service
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    tool = next(tool for tool in plugin.tools() if tool.name == "google_create_rich_doc")
+    parameters = tool.parameters
+
+    def schema_keys(value):
+        if isinstance(value, dict):
+            yield from value.keys()
+            for child in value.values():
+                yield from schema_keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from schema_keys(child)
+
+    assert "$ref" not in set(schema_keys(parameters))
+    assert "$defs" not in parameters
+    assert "create_rich_doc" in plugin.action_handlers()
+    assert parameters["properties"]["blocks"]["items"]["oneOf"]
+
+
+async def test_rich_doc_confirmation_request_runs_registered_commit(
+    google_service, request_driven_rich_doc_api
+):
+    service, client, ctx, commit = google_service
+    request_driven_rich_doc_api.wire(client)
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    blocks = [
+        {"type": "title", "text": "Confirmation"},
+        {"type": "table", "header": ["A"], "rows": [["B"]]},
+    ]
+    result = await plugin.create_rich_doc(ctx, "Confirm me", blocks)
+    assert result.pending_action
+    confirm = ConfirmService(
+        ctx.platform,
+        ctx.stores.repo,
+        {"google." + key: handler for key, handler in plugin.action_handlers().items()},
+    )
+    await confirm.request(result.pending_action, ctx.user)
+    response = await confirm.on_press(press(result.pending_action.id, sender=ctx.user), commit)
+    assert "Created and verified" in response
+    assert request_driven_rich_doc_api.batch_a
+    assert request_driven_rich_doc_api.batch_b
+    assert request_driven_rich_doc_api.batch_c
+
+
 async def test_workbook_tool_is_in_skill_and_runs_immediately_when_previews_are_off(google_service):
     service, client, ctx, _ = google_service
     plugin = GooglePlugin(service.settings, service.access, service=service)
     tool_map = {tool.name: tool for tool in plugin.tools()}
     assert "google_create_workbook" in tool_map
     assert "google_create_workbook" in plugin.skills()[0].tools
+    assert "google_create_rich_doc" in plugin.skills()[0].tools
     assert tool_map["google_create_workbook"].writes
+    assert tool_map["google_create_rich_doc"].writes
+    assert len(GOOGLE_INSTRUCTIONS) <= 800
+    assert "google_create_rich_doc" in GOOGLE_INSTRUCTIONS
     assert (
         await plugin.tool_gates()["google_create_workbook"].user(ctx)
+    ).state == GateState.AVAILABLE
+    assert (
+        await plugin.tool_gates()["google_create_rich_doc"].user(ctx)
     ).state == GateState.AVAILABLE
     ctx.user = user("member")
     ctx.is_admin = False
     assert (
         await plugin.tool_gates()["google_create_workbook"].user(ctx)
     ).state == GateState.NOT_ALLOWED
+    assert (
+        await plugin.tool_gates()["google_create_rich_doc"].user(ctx)
+    ).state == GateState.NOT_ALLOWED
     service.settings.create_users = "members"
     assert (
         await plugin.tool_gates()["google_create_workbook"].user(ctx)
+    ).state == GateState.AVAILABLE
+    assert (
+        await plugin.tool_gates()["google_create_rich_doc"].user(ctx)
     ).state == GateState.AVAILABLE
     ctx.user = user("owner")
     ctx.is_admin = True
@@ -89,6 +149,28 @@ async def test_workbook_tool_is_in_skill_and_runs_immediately_when_previews_are_
         "Created https://docs.google.com/spreadsheets/d/immediate-workbook/edit" in result.content
     )
     assert client.request.await_count == 1
+
+
+async def test_rich_doc_tool_previews_then_uses_immediate_commit_when_switch_is_off(google_service):
+    service, _, ctx, _ = google_service
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    action = SimpleNamespace(summary="Rich Doc preview")
+    service.propose = AsyncMock(return_value=action)
+    plugin.commit = AsyncMock(return_value="Created and verified")
+
+    preview = await plugin.create_rich_doc(
+        ctx, "Itinerary", [{"type": "paragraph", "text": "Hello"}]
+    )
+    assert preview.pending_action is action
+    plugin.commit.assert_not_awaited()
+
+    await service.repo.configure_fields(ctx.chat.key, confirm_writes=False, expected_revision=0)
+    immediate = await plugin.create_rich_doc(
+        ctx, "Itinerary", [{"type": "paragraph", "text": "Hello"}]
+    )
+    assert immediate.pending_action is None
+    assert immediate.content == "Created and verified"
+    plugin.commit.assert_awaited_once_with(action, ctx)
 
 
 async def test_source_derived_doc_guidance_preserves_original_package_and_uses_copy(google_service):
