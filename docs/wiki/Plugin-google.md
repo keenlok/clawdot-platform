@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Google files and bounded edits
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:07feba25bf503c3904d7c3f4a47d508b5ea702968218cf8beb32bf7bb0a519bf
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:9f286fc40ef43e07f7a69426bb644aa39618e39d79ce101e23bee271ae6f0a78
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -21,6 +21,7 @@ destinations. A source-derived separate revision uses the qualified copy path; D
 import the original package before bounded edits instead of reconstructing its text. Creating a
 document from scratch is a different operation. Browser editing requires an explicit request and
 separate qualification; an API failure never automatically authorizes browser fallback.
+
 Previews freeze Doc and Sheet access. Writers default to private for Sheets. Non-writers who may
 create receive at least viewer access, even if they request private, because files belong to the
 owner's Drive. Their creates are capped by `GOOGLE_CREATES_PER_USER_DAY` (default 20 per 24 hours).
@@ -34,32 +35,32 @@ retained human message containing the selected file link. Generic Doc edits bloc
 selected saved reference when another primary exists; an older file can be edited when the current
 request itself names it. Historical source-message provenance alone never bypasses this check.
 
-An expense export creates one new private spreadsheet after confirmation. When the app supplies a
-workbook provider, code builds every tab from one consistent ledger snapshot read at confirmation:
-summary balances, transactions, one tab per participant, suggested and recorded repayments, and the
-raw records with stable IDs. Numbers and dates are typed cells; ledger text is always literal text.
-The file is a snapshot and is never synced. If writing stops part-way, the reply links the file and
-its title keeps "(incomplete)"; nothing is retried automatically.
+Expense exports create a private snapshot spreadsheet from one ledger read at confirmation.
+Numbers and dates are typed; ledger text is literal. Partial exports keep "(incomplete)" in the
+title and are never retried.
 
 ## Storage
-Original file contents and saved changes live in Google services, not chat memory. The plugin stores
-trip-file associations, edit-result records and a `google_outputs` journal binding created files to
-their chat, topic, requester, owner and action. Only an owner-owned, non-trashed file in the same
-chat/topic counts as an output here. Separate create reservations, taken atomically at
-confirmation, count each non-writer's daily creates. Both are removed by retention purges. Frozen action
-payloads and pending confirmations use application storage. Result records can include destination
-IDs and partial or uncertain outcomes, so a later check can inspect the known destination instead
-of blindly creating another copy. This is not a backup of every Google file or full revision history.
+Google stores file contents. The plugin journals trip associations, edit results and `google_outputs`
+bindings to chat, topic, requester, owner and action. Only a non-trashed, owner-owned file from the
+same chat/topic is an output. Create reservations enforce the non-writer daily limit. Frozen actions
+and confirmations use app storage; result records help inspect partial or uncertain writes.
 
 ### Workbook output
-`google_create_workbook(title, tabs, link_access)` builds formatted, filtered and banded Sheet tabs
-with frozen headers, headings/notes and estimated widths. Columns support text, number, money,
-percent, date, local datetime, checkbox booleans and linked URLs. Text is literal; generated `SUM`
-totals are the only formulas. Limits use `GOOGLE_MAX_TABS` (at most 80), `GOOGLE_MAX_ROWS`,
-`GOOGLE_MAX_COLUMNS`, `GOOGLE_MAX_CELL_CHARS`, `GOOGLE_EXPORT_MAX_CELLS` and
-`GOOGLE_OUTPUT_MAX_CHARS` (60,000). Partial writes keep `(incomplete)` in the title and are never
-retried. The tool follows create-tier permissions, non-writer sharing and the preview switch;
-`google_create_sheet` remains for plain rows.
+`google_create_workbook(title, tabs, link_access)` builds formatted, filtered Sheets with frozen
+headers, headings, notes and estimated widths. Columns support text, numbers, money, percent,
+dates, datetime, checkboxes and URLs. Text is literal; generated `SUM` totals are the only
+formulas. Inputs use the configured tab, row, column, cell and export limits. Partial writes keep
+`(incomplete)` in the title and are never retried. The tool follows create-tier permissions,
+non-writer sharing and the preview switch; `google_create_sheet` remains for plain rows.
+
+### Editing Sheet tabs and trashing outputs
+`google_add_sheet_tab(url, tab)` adds one formatted tab. `google_replace_sheet_tab` rewrites one
+exact tab on an output; tabs with charts, protected ranges or filter views are refused. Own
+outputs use the create tier; another member's output uses the writer tier. Human Sheets need a
+writer and confirmation. Authorized output edits run immediately when previews are off.
+`google_trash_file(url)` only moves a non-trashed, owner-account output from this chat and topic;
+trip attachments must first be removed. It always confirms. Drive trash is restorable for 30 days,
+and the journal prevents edits or another trash action afterward.
 
 ### Rich Doc output
 `google_create_rich_doc(title, blocks, link_access)` creates a structured Doc from title, heading,
@@ -72,9 +73,18 @@ non-writer viewer sharing rule and preview switch as other new outputs. `google_
 the plain-text option.
 
 ## Safety
+### Appending structured Doc blocks
+`google_append_doc_blocks(url, blocks, tab_id)` adds formatted paragraphs, lists and tables after
+the existing content in one selected tab; title blocks are refused. It uses UTF-16 offsets,
+revision preconditions and read-back checks that the existing prefix stayed unchanged and the new
+content matches. New table cells are located from Google read-back. The requester's output uses
+the create tier; another member's output and human Docs require writer access. Human Docs always
+confirm, while authorized output appends can run with previews off. Multiple-tab Docs require an
+explicit existing `tab_id`.
+
 Writes normally need requester confirmation of their preview. A manager can turn previews off per
-chat with `/google confirm off` or `configure_google`; creates and appends to a requester's own
-journaled output then run immediately. Edits to human-shared files, expense exports and
+chat with `/google confirm off` or `configure_google`; creates and authorized appends to journaled
+outputs then run immediately. Edits to human-shared files, expense exports and
 settings changes still require confirmation. `/google` reports the switch. Handlers recheck source provenance, access,
 destinations and preconditions. Docs use revision-aware UTF-16 targets; bounded read-back checks
 the whole text and relevant target style/coverage before any requested output sharing. Effective

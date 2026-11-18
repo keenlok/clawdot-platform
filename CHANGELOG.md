@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-19
+
+### Added
+- Google: `google_add_sheet_tab(url, tab)` adds a formatted tab (the `google_create_workbook` tab schema) to a Sheet. It never renames the file or touches other tabs; name collisions and `GOOGLE_MAX_TABS` are checked at preview and again at confirmation.
+- Google: `google_replace_sheet_tab(url, tab_name, tab)` clears one tab of a bot-made Sheet (values, formats, validation, banding, filter, conditional formats, merges) and rewrites it in place, keeping its `sheetId`. It refuses tabs with charts, protected ranges or filter views and never changes other tabs.
+- Google: `google_append_doc_blocks(url, blocks, tab_id)` appends `google_create_rich_doc` blocks to the end of a Doc or a chosen tab. New paragraphs don't inherit the previous paragraph's style, marks or bullets; only the new tables are filled, from read-back indices; every write carries a Docs revision precondition; the existing content is verified unchanged. A shared (human) Doc's revision is frozen at preview, so a Doc edited since then is refused.
+- Google: `google_trash_file(url)` moves a bot-made file from this chat and topic to Drive trash (restorable for 30 days) and records `trashed_at`. It always asks for confirmation, refuses human files, trip-attached files and files already trashed, and a trashed file stops counting as a bot output for every tool.
+- Google client and repository: `GoogleClient.sheet_for_replace`, `GoogleClient.trash_file`, `GoogleRepository.output_any` and `GoogleRepository.mark_output_trashed`. No migration (`google_outputs.trashed_at` already exists).
+
+### Fixed
+- Google: `google_create_rich_doc` now emits `updateTextStyle.fields` in a fixed order (it varied between processes).
+
+### Security
+- Permission change in `chatcore_google/gates.py`: the four new tools use the create gate. The handlers then apply the create tier to the requester's own bot-made files and the writer tier to other members' bot-made files and to shared files, re-checking the tier, settings revision and output binding immediately before the first write. Shared files: tab adds and block appends need a writer and always confirm; replace and trash are refused. Previews-off runs immediately only for bot-made files, never for trash.
+
 ## [0.23.0] - 2026-11-19
 
 ### Added
@@ -661,7 +676,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/keenlok/clawdot-platform/compare/v0.20.1...v0.21.0

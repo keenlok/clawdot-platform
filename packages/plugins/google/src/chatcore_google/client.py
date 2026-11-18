@@ -285,6 +285,18 @@ class GoogleClient:
             params={"fields": "spreadsheetId,properties(title),sheets(properties)"},
         )
 
+    async def sheet_for_replace(self, file_id):
+        return await self.request(
+            "GET",
+            "sheets.googleapis.com",
+            f"/v4/spreadsheets/{file_id}",
+            params={
+                "fields": "sheets(properties,bandedRanges(bandedRangeId,range),basicFilter,merges,"
+                "conditionalFormats,charts(chartId),protectedRanges(protectedRangeId),"
+                "filterViews(filterViewId))"
+            },
+        )
+
     async def grid_for_edit(self, file_id, sheet_id, cell_range):
         if not isinstance(sheet_id, int) or isinstance(sheet_id, bool):
             raise GoogleError("A stable numeric sheet ID is required for edits.")
@@ -462,4 +474,13 @@ class GoogleClient:
             "sheets.googleapis.com",
             f"/v4/spreadsheets/{file_id}:batchUpdate",
             json={"requests": requests},
+        )
+
+    async def trash_file(self, file_id):
+        return await self.request(
+            "PATCH",
+            "www.googleapis.com",
+            f"/drive/v3/files/{file_id}",
+            params={"fields": "id,trashed", "supportsAllDrives": "true"},
+            json={"trashed": True},
         )

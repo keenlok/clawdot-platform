@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 import unicodedata
@@ -12,7 +13,7 @@ from urllib.parse import urlsplit
 from chatcore_google.edit_snapshot import utf16_length
 
 _BLOCK_TYPES = {"title", "heading", "paragraph", "bullets", "numbered", "table", "divider"}
-_MARKS = {"bold", "italic", "underline", "code", "link"}
+_MARKS = ("bold", "italic", "underline", "code", "link")
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,9 @@ def _span_list(spans, where):
         value = _text(span.get("text"), location, nonempty=True)
         item = {"text": value}
         total += len(value)
-        for mark in _MARKS - {"link"}:
+        for mark in _MARKS:
+            if mark == "link":
+                continue
             if mark in span:
                 if type(span[mark]) is not bool:
                     _fail(location, f"{mark} must be true or false.")
@@ -108,7 +111,7 @@ def _plain_or_spans(block, where):
     return _span_list(block["spans"], where)
 
 
-def compile_doc(blocks, settings) -> DocPlan:
+def compile_doc(blocks, settings, *, base_index=1, leading_newline=False, tab_id=None) -> DocPlan:
     """Validate rich Doc blocks and compile all requests without performing I/O."""
     try:
         encoded_length = len(json.dumps(blocks, ensure_ascii=False, separators=(",", ":")))
@@ -121,6 +124,8 @@ def compile_doc(blocks, settings) -> DocPlan:
     if not isinstance(blocks, list) or not 1 <= len(blocks) <= 200:
         raise ValueError("Provide 1–200 rich Doc blocks.")
 
+    if type(base_index) is not int or base_index < 1:
+        raise ValueError("The document insertion index must be positive.")
     lines: list[str] = []
     styles: list[tuple[int, int, str]] = []
     text_marks: list[tuple[int, int, dict]] = []
@@ -136,7 +141,8 @@ def compile_doc(blocks, settings) -> DocPlan:
 
     def add_line(value, named_style="NORMAL_TEXT", spans=None, list_kind=None, divider=False):
         nonlocal total_text, paragraph_ordinal
-        start = 1 + utf16_length("\n".join(lines)) + (1 if lines else 0)
+        prefix = "\n" if leading_newline else ""
+        start = base_index + utf16_length(prefix + "\n".join(lines)) + (1 if lines else 0)
         lines.append(value)
         end = start + utf16_length(value) + 1
         styles.append((start, end, named_style))
@@ -262,9 +268,9 @@ def compile_doc(blocks, settings) -> DocPlan:
         raise ValueError(f"Rich Doc text exceeds GOOGLE_MAX_CHARS ({settings.max_chars}).")
 
     requests = []
-    body_text = "\n".join(lines)
+    body_text = ("\n" if leading_newline else "") + "\n".join(lines)
     if body_text:
-        requests.append({"insertText": {"location": {"index": 1}, "text": body_text}})
+        requests.append({"insertText": {"location": {"index": base_index}, "text": body_text}})
     requests.extend(
         {
             "updateParagraphStyle": {
@@ -331,6 +337,13 @@ def compile_doc(blocks, settings) -> DocPlan:
             }
         )
     inserts.reverse()
+    if tab_id is not None:
+        for request in (*requests, *inserts):
+            operation = next(iter(request.values()))
+            for key in ("location", "range"):
+                target = operation.get(key)
+                if target is not None:
+                    target["tabId"] = tab_id
     return DocPlan(
         body_text,
         tuple(requests),
@@ -377,7 +390,20 @@ _EXTRA_TAB_PARTS = (
 )
 
 
-def _body_content(document):
+def _walk_doc_tabs(document):
+    found = []
+
+    def visit(tab):
+        found.append((tab.get("tabProperties") or {}, tab.get("documentTab") or {}))
+        for child in tab.get("childTabs", ()):
+            visit(child)
+
+    for tab in document.get("tabs", ()):
+        visit(tab)
+    return found
+
+
+def _body_content(document, tab_id=None):
     """Return the only tab's body content, or None if the document has anything else.
 
     A new rich Doc has exactly one tab with no child tabs, and no headers, footers, footnotes
@@ -387,12 +413,21 @@ def _body_content(document):
         return None
     tabs = document.get("tabs")
     if tabs is not None:
-        if not isinstance(tabs, list) or len(tabs) != 1 or not isinstance(tabs[0], dict):
+        if not isinstance(tabs, list) or not all(isinstance(tab, dict) for tab in tabs):
             return None
-        if tabs[0].get("childTabs"):
-            return None
-        holder = tabs[0].get("documentTab")
+        all_tabs = _walk_doc_tabs(document)
+        if tab_id is None:
+            if len(all_tabs) != 1:
+                return None
+            _, holder = all_tabs[0]
+        else:
+            selected = [entry for entry in all_tabs if entry[0].get("tabId") == tab_id]
+            if len(selected) != 1:
+                return None
+            _, holder = selected[0]
     else:
+        if tab_id is not None:
+            return None
         holder = document
     if not isinstance(holder, dict) or any(holder.get(part) for part in _EXTRA_TAB_PARTS):
         return None
@@ -403,13 +438,22 @@ def _body_content(document):
     return content if isinstance(content, list) else None
 
 
-async def fill_tables(client, file_id, plan):
+async def fill_tables(client, file_id, plan, *, tab_id=None, after_index=0):
     """Read inserted table cell indices and fill from the final cell backwards."""
     if not plan.tables:
         return
     document = await client.document_for_edit(file_id)
     revision = document.get("revisionId")
-    actual = _body_tables(document)
+    content = _body_content(document, tab_id=tab_id)
+    if content is None:
+        raise ValueError("Google returned unexpected document content.")
+    actual = [
+        item["table"]
+        for item in content
+        if isinstance(item, dict)
+        and "table" in item
+        and int(item.get("startIndex", 0)) >= after_index
+    ]
     if len(actual) != len(plan.tables):
         raise ValueError("Google returned an unexpected number of tables.")
     requests = []
@@ -435,16 +479,19 @@ async def fill_tables(client, file_id, plan):
                 if start is None:
                     raise ValueError("Google returned a table cell without a stable index.")
                 end = int(start) + utf16_length(value)
-                requests.append(
-                    (int(start), {"insertText": {"location": {"index": int(start)}, "text": value}})
-                )
+                location = {"index": int(start)}
+                table_range = {"startIndex": int(start), "endIndex": end}
+                if tab_id is not None:
+                    location["tabId"] = tab_id
+                    table_range["tabId"] = tab_id
+                requests.append((int(start), {"insertText": {"location": location, "text": value}}))
                 if row is rows[0]:
                     requests.append(
                         (
                             int(start),
                             {
                                 "updateTextStyle": {
-                                    "range": {"startIndex": int(start), "endIndex": end},
+                                    "range": table_range,
                                     "textStyle": {"bold": True},
                                     "fields": "bold",
                                 }
@@ -603,7 +650,7 @@ def _style_has(actual, expected):
     return True
 
 
-def verify_rich_doc(document, plan):
+def verify_rich_doc(document, plan, *, tab_id=None, after_index=0):
     """Compare the read-back body with the frozen plan.
 
     Returns ``(text_ok, warnings)``. ``text_ok`` is False for any text, structure or table
@@ -613,9 +660,45 @@ def verify_rich_doc(document, plan):
     """
     if _has_suggestion(document):
         return False, []
-    content = _body_content(document)
+    content = _body_content(document, tab_id=tab_id)
     if content is None:
         return False, []
+    if after_index:
+        sliced = []
+        for item in content:
+            start = int(item.get("startIndex", 0))
+            end = int(item.get("endIndex", start))
+            if "paragraph" not in item:
+                if start >= after_index:
+                    sliced.append(item)
+                continue
+            if end <= after_index:
+                continue
+            clone = copy.deepcopy(item)
+            paragraph = clone["paragraph"]
+            if start < after_index:
+                drop = after_index - start
+                kept = []
+                for element in paragraph.get("elements", ()):
+                    run = element.get("textRun")
+                    if run is None:
+                        continue
+                    value = run.get("content", "")
+                    units = utf16_length(value)
+                    if drop >= units:
+                        drop -= units
+                        continue
+                    if drop:
+                        encoded = value.encode("utf-16-le")[drop * 2 :]
+                        value = encoded.decode("utf-16-le", errors="ignore")
+                        drop = 0
+                    updated = copy.deepcopy(element)
+                    updated["textRun"]["content"] = value
+                    kept.append(updated)
+                paragraph["elements"] = kept
+                clone["startIndex"] = after_index
+            sliced.append(clone)
+        content = sliced
     nodes = []
     for item in content:
         if not isinstance(item, dict):
@@ -676,7 +759,8 @@ def verify_rich_doc(document, plan):
         matched[ordinal] = paragraph
         position += 1
     if position != len(nodes):
-        return False, []
+        if not after_index or not all(_is_padding(node) for node in nodes[position:]):
+            return False, []
     for ordinal, start, end, expected_style in plan.expected_marks:
         paragraph = matched.get(ordinal)
         elements = paragraph.get("elements", []) if paragraph else []

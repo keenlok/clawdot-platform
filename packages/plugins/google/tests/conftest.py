@@ -128,20 +128,29 @@ def rich_doc_response():
 class RequestDrivenRichDocApi:
     """Small Docs API fake that derives read-back only from recorded batch requests."""
 
-    def __init__(self):
+    def __init__(self, *, initial_nodes=None, tab_id="rich-tab"):
         self.document_id = "rich-created-id"
         self.title = ""
-        self.nodes = [
-            {
-                "kind": "paragraph",
-                "text": "\n",
-                "style": {"namedStyleType": "NORMAL_TEXT"},
-                "inline": [],
-            }
-        ]
+        self.tab_id = tab_id
+        self.revision = "rich-revision-1"
+        self.nodes = (
+            copy.deepcopy(initial_nodes)
+            if initial_nodes is not None
+            else [
+                {
+                    "kind": "paragraph",
+                    "text": "\n",
+                    "style": {"namedStyleType": "NORMAL_TEXT"},
+                    "inline": [],
+                }
+            ]
+        )
         self.batch_a = []
         self.batch_b = []
         self.batch_c = []
+        self.revision_inputs = []
+        self.document_reads = 0
+        self.omit_write_control = False
         self.fail_batch = None
         self.fail_error = None
         self.fail_rename = False
@@ -181,17 +190,49 @@ class RequestDrivenRichDocApi:
             self._apply_batch_a(requests)
         else:
             self._apply_batch_b(requests)
-        return {"revisionId": f"after-{batch}"}
+        self.revision = f"after-{batch}"
+        return self._batch_response()
+
+    def _batch_response(self):
+        response = {"documentId": self.document_id, "replies": []}
+        if not self.omit_write_control:
+            response["writeControl"] = {"requiredRevisionId": self.revision}
+        return response
 
     async def document_for_edit(self, file_id):
+        self.document_reads += 1
         return self._document()
 
     async def edit_document(self, file_id, requests, revision_id):
-        self.batch_c.append(copy.deepcopy(requests))
-        if self.fail_batch == "C":
-            raise self.fail_error or RuntimeError("test batch C failed")
-        self._apply_batch_c(requests)
-        return {"revisionId": "after-C"}
+        self.revision_inputs.append(revision_id)
+        if not isinstance(revision_id, str) or revision_id != self.revision:
+            raise ValueError("The Docs revision precondition is missing or stale.")
+        for request in requests:
+            operation = next(iter(request.values()))
+            target = operation.get("location") or operation.get("range")
+            if target and target.get("tabId", self.tab_id) != self.tab_id:
+                raise AssertionError("request targeted a different Docs tab")
+        if any("insertTable" in request for request in requests):
+            self.batch_b.append(copy.deepcopy(requests))
+            if self.fail_batch == "B":
+                raise self.fail_error or RuntimeError("test batch B failed")
+            self._apply_batch_b(requests)
+            self.revision = "after-B"
+        elif any("deleteParagraphBullets" in request for request in requests) or any(
+            operation.get("fields") == "*" for request in requests for operation in request.values()
+        ):
+            self.batch_a.append(copy.deepcopy(requests))
+            if self.fail_batch == "A":
+                raise self.fail_error or RuntimeError("test batch A failed")
+            self._apply_batch_a(requests)
+            self.revision = "after-A"
+        else:
+            self.batch_c.append(copy.deepcopy(requests))
+            if self.fail_batch == "C":
+                raise self.fail_error or RuntimeError("test batch C failed")
+            self._apply_batch_c(requests)
+            self.revision = "after-C"
+        return self._batch_response()
 
     async def metadata(self, file_id):
         self.metadata_reads.append(file_id)
@@ -255,24 +296,50 @@ class RequestDrivenRichDocApi:
     def _apply_batch_a(self, requests):
         insert = next((item["insertText"] for item in requests if "insertText" in item), None)
         if insert:
-            value = insert["text"] + "\n"
-            texts = value.splitlines(keepends=True)
-            self.nodes = [
-                {
-                    "kind": "paragraph",
-                    "text": text,
-                    "style": {"namedStyleType": "NORMAL_TEXT"},
-                    "inline": [],
-                }
-                for text in texts
-            ]
+            location = insert["location"]["index"]
+            cursor = 1
+            for position, node in enumerate(self.nodes):
+                if node["kind"] != "paragraph":
+                    cursor += self._table_length(node)
+                    continue
+                end = cursor + utf16_length(node["text"])
+                if cursor <= location <= end:
+                    offset = location - cursor
+                    prefix_chars, used = [], 0
+                    for char in node["text"]:
+                        if used == offset:
+                            break
+                        prefix_chars.append(char)
+                        used += utf16_length(char)
+                    prefix = "".join(prefix_chars)
+                    combined = prefix + insert["text"] + node["text"][len(prefix) :]
+                    texts = combined.splitlines(keepends=True)
+                    if not texts or not texts[-1].endswith("\n"):
+                        texts.append("")
+                    fresh = []
+                    for text in texts:
+                        fresh_node = {
+                            "kind": "paragraph",
+                            "text": text,
+                            "style": copy.deepcopy(node["style"]),
+                            "inline": copy.deepcopy(node.get("inline", [])),
+                        }
+                        if node.get("bullet"):
+                            fresh_node["bullet"] = copy.deepcopy(node["bullet"])
+                        fresh.append(fresh_node)
+                    self.nodes[position : position + 1] = fresh
+                    break
+                cursor = end
         for item in requests:
             if "updateParagraphStyle" in item:
                 request = item["updateParagraphStyle"]
                 start, end = request["range"]["startIndex"], request["range"]["endIndex"]
                 for node, left, right in self._paragraphs():
                     if left < end and right > start:
-                        node["style"].update(request["paragraphStyle"])
+                        if request.get("fields") == "*":
+                            node["style"] = copy.deepcopy(request["paragraphStyle"])
+                        else:
+                            node["style"].update(request["paragraphStyle"])
             elif "createParagraphBullets" in item:
                 request = item["createParagraphBullets"]
                 start, end = request["range"]["startIndex"], request["range"]["endIndex"]
@@ -289,7 +356,16 @@ class RequestDrivenRichDocApi:
                 }
                 for node, left, _ in self._paragraphs():
                     if left < end and left + utf16_length(node["text"]) > start:
-                        node["inline"].append((start - left, end - left, style))
+                        if request.get("fields") == "*":
+                            node["inline"] = []
+                        else:
+                            node["inline"].append((start - left, end - left, style))
+            elif "deleteParagraphBullets" in item:
+                request = item["deleteParagraphBullets"]
+                start, end = request["range"]["startIndex"], request["range"]["endIndex"]
+                for node, left, right in self._paragraphs():
+                    if left < end and right > start:
+                        node.pop("bullet", None)
 
     def _apply_batch_b(self, requests):
         for item in requests:
@@ -411,8 +487,12 @@ class RequestDrivenRichDocApi:
                     }
                 )
         document = _rich_doc_document(
-            content, title=self.title or "Rich Doc", document_id=self.document_id
+            content,
+            title=self.title or "Rich Doc",
+            document_id=self.document_id,
+            revision=self.revision,
         )
+        document["tabs"][0]["tabProperties"]["tabId"] = self.tab_id
         if self.corrupt_text:
             for item in content:
                 if "paragraph" in item:

@@ -131,6 +131,57 @@ async def test_output_journal_and_confirm_switch_persist_and_purge(google_db):
     )
 
 
+async def test_output_trash_timestamp_persists_and_removes_output_binding(google_db):
+    repo = GoogleRepository(google_db)
+    await repo.record_output(
+        "fake:trash", "trash-file", "sheet", "fake:user", "topic", "owner", "create-action"
+    )
+    assert await repo.mark_output_trashed("fake:trash", "trash-file", "create-action") is True
+    assert await GoogleRepository(google_db).output("fake:trash", "topic", "trash-file") is None
+    row = await repo.output_any("fake:trash", "trash-file")
+    assert row["trashed_at"] is not None
+    assert await repo.mark_output_trashed("fake:trash", "trash-file", "create-action") is False
+
+
+async def test_trashed_doc_output_revokes_edit_result_authority(google_db):
+    repo = GoogleRepository(google_db)
+    binding = {
+        "owner_id": "owner-id",
+        "owner_email": "owner@example.com",
+        "thread_id": "topic",
+        "mode": "create",
+    }
+    await repo.reserve_edit(
+        "fake:doc-trash",
+        "create-action",
+        "fake:alice",
+        0,
+        10,
+        0,
+        kind="create_doc",
+        source_id=None,
+        output_binding=binding,
+    )
+    await repo.update_edit_result(
+        "fake:doc-trash", "create-action", phase="destination_created", destination_id="doc-id"
+    )
+    await repo.record_output(
+        "fake:doc-trash",
+        "doc-id",
+        "application/vnd.google-apps.document",
+        "fake:alice",
+        "topic",
+        "owner-id",
+        "create-action",
+    )
+    assert await repo.output_destination("fake:doc-trash", "topic", "doc-id") is not None
+    assert await repo.mark_output_trashed("fake:doc-trash", "doc-id", "create-action")
+    assert (
+        await GoogleRepository(google_db).output_destination("fake:doc-trash", "topic", "doc-id")
+        is None
+    )
+
+
 async def test_concurrent_daily_quota_is_atomic_and_scoped(google_db):
     repo = GoogleRepository(google_db)
     results = await asyncio.gather(

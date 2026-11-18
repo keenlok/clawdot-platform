@@ -1,8 +1,16 @@
 import copy
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from chatcore_google.rich_doc import compile_doc, fill_tables, preview_doc, verify_rich_doc
+from chatcore_google.rich_doc import (
+    _body_content,
+    compile_doc,
+    fill_tables,
+    preview_doc,
+    verify_rich_doc,
+)
 from chatcore_google.settings import GoogleSettings
 
 
@@ -37,13 +45,6 @@ def test_compile_doc_builds_styles_marks_lists_and_table_placeholders():
         request["updateTextStyle"] for request in plan.batch_a if "updateTextStyle" in request
     ]
     assert marked[0]["range"] == {"startIndex": 18, "endIndex": 25}
-    assert set(marked[0]["fields"].split(",")) == {
-        "bold",
-        "italic",
-        "underline",
-        "weightedFontFamily",
-        "link",
-    }
     bullets = [
         request["createParagraphBullets"]
         for request in plan.batch_a
@@ -77,6 +78,99 @@ def test_compile_doc_builds_styles_marks_lists_and_table_placeholders():
     }
     assert plan.tables[0].placeholder_index == 33
     assert preview_doc(blocks).startswith("Kyoto\nDay 1\nMeet station")
+
+
+def test_compile_doc_all_mark_field_order_is_stable():
+    plan = compile_doc(
+        [
+            {
+                "type": "paragraph",
+                "spans": [
+                    {
+                        "text": "marked",
+                        "bold": True,
+                        "italic": True,
+                        "underline": True,
+                        "code": True,
+                        "link": "https://maps.example",
+                    }
+                ],
+            }
+        ],
+        GoogleSettings(),
+    )
+    request = next(
+        request["updateTextStyle"] for request in plan.batch_a if "updateTextStyle" in request
+    )
+    assert request["fields"] == "bold,italic,underline,weightedFontFamily,link"
+
+
+def test_compile_doc_create_path_matches_prechange_golden():
+    golden = json.loads(
+        (Path(__file__).parent / "fixtures" / "compile_doc_create_golden.json").read_text()
+    )
+    plan = compile_doc(golden["blocks"], GoogleSettings())
+    actual = {
+        "blocks": golden["blocks"],
+        "body_text": plan.body_text,
+        "batch_a": plan.batch_a,
+        "batch_b": plan.batch_b,
+        "tables": [
+            {"placeholder_index": t.placeholder_index, "header": t.header, "rows": t.rows}
+            for t in plan.tables
+        ],
+        "expected": plan.expected,
+        "bullet_texts": plan.bullet_texts,
+        "numbered_texts": plan.numbered_texts,
+        "expected_marks": plan.expected_marks,
+    }
+    for request in actual["batch_a"]:
+        operation = next(iter(request.values()))
+        if isinstance(operation.get("fields"), str) and "," in operation["fields"]:
+            operation["fields"] = ",".join(sorted(operation["fields"].split(",")))
+    for request in golden["batch_a"]:
+        operation = next(iter(request.values()))
+        if isinstance(operation.get("fields"), str) and "," in operation["fields"]:
+            operation["fields"] = ",".join(sorted(operation["fields"].split(",")))
+    assert json.loads(json.dumps(actual)) == golden
+
+
+def test_compile_doc_offsets_newline_tabs_and_utf16_indices():
+    blocks = [
+        {"type": "paragraph", "spans": [{"text": "😀"}, {"text": " linked", "bold": True}]},
+        {"type": "table", "header": ["A"], "rows": [["𠀋"]]},
+        {"type": "table", "header": ["B"], "rows": [["two"]]},
+    ]
+    plan = compile_doc(
+        blocks, GoogleSettings(), base_index=12, leading_newline=True, tab_id="tab-2"
+    )
+    assert plan.body_text.startswith("\n😀 linked")
+    assert plan.batch_a[0]["insertText"]["location"] == {"index": 12, "tabId": "tab-2"}
+    assert [table.placeholder_index for table in plan.tables] == [23, 24]
+    for request in (*plan.batch_a, *plan.batch_b):
+        operation = next(iter(request.values()))
+        for key in ("location", "range"):
+            if key in operation:
+                assert operation[key]["tabId"] == "tab-2"
+
+
+def test_doc_body_selection_requires_tab_id_for_multiple_tabs():
+    first = [{"startIndex": 1, "endIndex": 2, "paragraph": {"elements": []}}]
+    second = [{"startIndex": 1, "endIndex": 2, "paragraph": {"elements": []}}]
+    document = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-a"},
+                "documentTab": {"body": {"content": first}},
+            },
+            {
+                "tabProperties": {"tabId": "tab-b"},
+                "documentTab": {"body": {"content": second}},
+            },
+        ]
+    }
+    assert _body_content(document) is None
+    assert _body_content(document, tab_id="tab-b") is second
 
 
 def test_table_placeholders_use_utf16_offsets_between_tables():

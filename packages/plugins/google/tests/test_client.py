@@ -40,6 +40,24 @@ async def test_rename_file_uses_fixed_drive_patch(tmp_path):
     assert request.content == b'{"name":"Renamed"}'
 
 
+async def test_trash_file_uses_fixed_drive_patch(tmp_path):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        return httpx.Response(200, json={"id": "file", "trashed": True})
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        await client.trash_file("file")
+    request = next(call for call in calls if call.method == "PATCH")
+    assert request.url.path == "/drive/v3/files/file"
+    assert dict(request.url.params) == {"fields": "id,trashed", "supportsAllDrives": "true"}
+    assert request.content == b'{"trashed":true}'
+
+
 async def test_tokens_are_cached_and_owner_is_verified(tmp_path):
     calls = []
 
