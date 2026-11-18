@@ -1,6 +1,8 @@
 # General Google Sheets and Docs output tools
 
-Status: Planned (approved by the owner 2026-11-16). Date: 2026-11-16.
+Status: Shipped inactive. Approved by the owner 2026-11-16; released 2026-11-19 as v0.21.0–v0.24.0
+(PRs #53, #55, #56, #60). Member creates are off until an app sets `GOOGLE_CREATE_USERS=members`.
+Date: 2026-11-16.
 
 ## Goal
 
