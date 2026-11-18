@@ -51,6 +51,16 @@ payloads and pending confirmations use application storage. Result records can i
 IDs and partial or uncertain outcomes, so a later check can inspect the known destination instead
 of blindly creating another copy. This is not a backup of every Google file or full revision history.
 
+### Workbook output
+`google_create_workbook(title, tabs, link_access)` builds formatted, filtered and banded Sheet tabs
+with frozen headers, headings/notes and estimated widths. Columns support text, number, money,
+percent, date, local datetime, checkbox booleans and linked URLs. Text is literal; generated `SUM`
+totals are the only formulas. Limits use `GOOGLE_MAX_TABS` (at most 80), `GOOGLE_MAX_ROWS`,
+`GOOGLE_MAX_COLUMNS`, `GOOGLE_MAX_CELL_CHARS`, `GOOGLE_EXPORT_MAX_CELLS` and
+`GOOGLE_OUTPUT_MAX_CHARS` (60,000). Partial writes keep `(incomplete)` in the title and are never
+retried. The tool follows create-tier permissions, non-writer sharing and the preview switch;
+`google_create_sheet` remains for plain rows.
+
 ## Safety
 Writes normally need requester confirmation of their preview. A manager can turn previews off per
 chat with `/google confirm off` or `configure_google`; creates and appends to a requester's own

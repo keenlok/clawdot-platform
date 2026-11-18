@@ -28,6 +28,7 @@ from chatcore_google.render import doc_text, literal_rows
 
 DOC = "application/vnd.google-apps.document"
 SHEET = "application/vnd.google-apps.spreadsheet"
+CREATE_KINDS = frozenset({"create_doc", "create_sheet", "create_workbook"})
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _logger = logging.getLogger("chatcore_google")
 
@@ -513,15 +514,16 @@ class GoogleService:
         link_viewer=None,
         link_access=None,
         sheet_link_access=None,
+        tabs=None,
     ):
-        await self.authorize(ctx, create=kind in {"create_doc", "create_sheet", "append"})
-        if kind not in ("append", "create_doc", "create_sheet"):
+        await self.authorize(ctx, create=kind in CREATE_KINDS | {"append"})
+        if kind not in {"append", *CREATE_KINDS}:
             raise ValueError("Unknown Google write operation.")
-        if kind not in {"create_doc", "create_sheet"} and (
-            link_access is not None or link_viewer is not None
-        ):
+        if kind not in CREATE_KINDS and (link_access is not None or link_viewer is not None):
             raise ValueError("Link access choices apply only to a new Google Doc.")
-        if kind == "create_sheet" and link_access is not None:
+        if kind in {"create_sheet", "create_workbook"} and link_viewer is not None:
+            raise ValueError("Use link_access for a new Sheet.")
+        if kind in {"create_sheet", "create_workbook"} and link_access is not None:
             sheet_link_access, link_access = link_access, None
         payload = {"owner_email": self.settings.owner_email}
         grid_columns = None
@@ -552,7 +554,39 @@ class GoogleService:
                     "For a Doc tab, use its tab URL; spreadsheet tab names are not valid."
                 )
         else:
-            owner = await self.client.identity()
+            if not isinstance(title, str) or not title.strip() or len(title) > 200:
+                raise ValueError("Provide a title of 1–200 characters.")
+            workbook_model = None
+            sheet_rows = None
+            sheet_access = None
+            link_forced = False
+            if kind == "create_workbook":
+                from chatcore_google.workbook import render_workbook
+                from chatcore_google.workbook_builder import compile_workbook
+
+                workbook_model = compile_workbook(tabs, self.settings, title)
+                render_workbook(
+                    workbook_model,
+                    title=title,
+                    max_cells=self.settings.export_max_cells,
+                    max_cell_chars=self.settings.max_cell_chars,
+                )
+            elif kind == "create_sheet":
+                if text is not None:
+                    raise ValueError("Provide rows for a Sheet.")
+                sheet_rows = self.rows(rows)
+            if kind in {"create_sheet", "create_workbook"}:
+                sheet_access = (
+                    "private"
+                    if sheet_link_access is None
+                    else resolve_link_access(self.settings, sheet_link_access)
+                )
+                if (
+                    not is_writer(self.settings, self.access, ctx.user.ref)
+                    and sheet_access == "private"
+                ):
+                    sheet_access = "viewer"
+                    link_forced = True
             if (
                 not is_writer(self.settings, self.access, ctx.user.ref)
                 and await self.repo.creates_today(ctx.chat.key, ctx.user.ref.key)
@@ -563,8 +597,7 @@ class GoogleService:
                     "new Google files; "
                     "try again tomorrow or ask a bot admin."
                 )
-            if not isinstance(title, str) or not title.strip() or len(title) > 200:
-                raise ValueError("Provide a title of 1–200 characters.")
+            owner = await self.client.identity()
             payload["title"] = title
             payload["mime"] = DOC if kind == "create_doc" else SHEET
             name = title
@@ -576,17 +609,21 @@ class GoogleService:
                 payload["link_access"] = access
                 if access != "editor":
                     payload["link_viewer"] = access == "viewer"
-            elif kind == "create_sheet":
-                access = (
-                    "private"
-                    if sheet_link_access is None
-                    else resolve_link_access(self.settings, sheet_link_access)
-                )
-                if not is_writer(self.settings, self.access, ctx.user.ref) and access == "private":
-                    access = "viewer"
+            elif kind in {"create_sheet", "create_workbook"}:
+                payload["link_access"] = sheet_access
+                if link_forced:
                     payload["link_forced"] = True
-                payload["link_access"] = access
-        if payload["mime"] == SHEET:
+                if kind == "create_workbook":
+                    payload["tabs"] = copy.deepcopy(tabs)
+                else:
+                    payload["rows"] = sheet_rows
+        if kind == "create_workbook":
+            from chatcore_google.workbook_builder import preview_workbook
+
+            preview = preview_workbook(payload["tabs"])
+        elif kind == "create_sheet":
+            preview = json.dumps(payload["rows"], ensure_ascii=False)
+        elif payload["mime"] == SHEET:
             if text is not None:
                 raise ValueError("Provide rows for a Sheet.")
             payload["rows"] = self.rows(rows, grid_columns=grid_columns)
@@ -614,7 +651,7 @@ class GoogleService:
                 f"Access: {access_text[payload['link_access']]}"
                 + (" (required for files you create)" if payload.get("link_forced") else "")
                 + ".\n"
-                if kind == "create_sheet"
+                if kind in {"create_sheet", "create_workbook"}
                 else ""
             )
         )
@@ -622,7 +659,7 @@ class GoogleService:
             f"new Doc ({link_access} link access)"
             if kind == "create_doc"
             else "new Sheet"
-            if kind == "create_sheet"
+            if kind in {"create_sheet", "create_workbook"}
             else url
         )
         summary = (
@@ -643,8 +680,8 @@ class GoogleService:
         payload = action.payload
         if payload.get("owner_email") != self.settings.owner_email:
             raise ValueError("Google owner configuration changed; request again.")
-        create = action.kind in {"create_doc", "create_sheet"}
-        write = action.kind not in {"configure", "create_doc", "create_sheet"}
+        create = action.kind in CREATE_KINDS
+        write = action.kind not in {"configure", *CREATE_KINDS}
         if action.kind == "append":
             if payload.get("via_output") is True:
                 output = await self.repo.output(ctx.chat.key, ctx.thread_id, payload.get("file_id"))
@@ -660,9 +697,7 @@ class GoogleService:
             raise ValueError("Google settings changed; request again.")
         if action.kind != "configure" and await self.client.identity() != payload["owner"]:
             raise ValueError("Google owner identity changed; request again.")
-        if action.kind in {"create_doc", "create_sheet"} and not is_writer(
-            self.settings, self.access, ctx.user.ref
-        ):
+        if action.kind in CREATE_KINDS and not is_writer(self.settings, self.access, ctx.user.ref):
             # Previews frozen before v0.21.0 carry no Sheet access (implicitly private) and may
             # carry only the legacy Doc link_viewer flag; both decode to private here.
             frozen_access = (
@@ -688,6 +723,26 @@ class GoogleService:
         )
 
     async def commit(self, action, ctx):
+        workbook_plan = None
+        if action.kind == "create_workbook":
+            from chatcore_google.workbook import render_workbook
+            from chatcore_google.workbook_builder import compile_workbook
+
+            model = compile_workbook(action.payload["tabs"], self.settings, action.payload["title"])
+            try:
+                workbook_plan = render_workbook(
+                    model,
+                    title=action.payload["title"],
+                    max_cells=self.settings.export_max_cells,
+                    max_cell_chars=self.settings.max_cell_chars,
+                )
+            except ValueError as exc:
+                if "This export needs more than" in str(exc):
+                    raise ValueError(
+                        f"This workbook needs more than "
+                        f"{self.settings.export_max_cells:,} cells; split it up."
+                    ) from None
+                raise
         payload = await self.verify_commit(action, ctx)
         if action.kind == "configure":
             await self.repo.configure_fields(
@@ -776,14 +831,59 @@ class GoogleService:
                 await self.reserve(action, ctx)
                 await self.append_doc(payload["file_id"], payload["text"], payload.get("doc_tab"))
             return "Content appended to the confirmed file."
-        if action.kind not in ("create_doc", "create_sheet"):
+        if action.kind not in CREATE_KINDS:
             raise ValueError("Unknown Google action.")
         if action.kind == "create_sheet":
             rows = self.rows(payload["rows"])
-        elif not 0 < len(payload["text"]) <= self.settings.max_chars:
+        elif (
+            action.kind == "create_doc" and not 0 < len(payload["text"]) <= self.settings.max_chars
+        ):
             raise ValueError("Document text exceeds the current character limit; request again.")
         if action.kind == "create_doc":
             return await self._create_output_doc(action, ctx, payload)
+        if action.kind == "create_workbook":
+            from chatcore_google.workbook import write_workbook
+
+            await self.reserve(action, ctx)
+
+            async def record(file_id):
+                await self.repo.record_output(
+                    ctx.chat.key,
+                    file_id,
+                    SHEET,
+                    ctx.user.ref.key,
+                    action.thread_id,
+                    payload["owner"],
+                    action.id,
+                )
+
+            url, failure = await write_workbook(self.client, workbook_plan, on_created=record)
+            shared, message = True, ""
+            if payload.get("link_access") in {"viewer", "editor"}:
+                shared, message = await publish_sheet_link_access(
+                    self, action, ctx, payload, url.split("/d/", 1)[1].split("/", 1)[0]
+                )
+            if failure:
+                result = (
+                    f"Created {url}, but the workbook is incomplete ({failure}). "
+                    'Its title ends with "(incomplete)". Nothing was retried; '
+                    "check or delete it, then request it again."
+                )
+                if payload.get("link_access") in {"viewer", "editor"}:
+                    sharing = (
+                        message if not shared else f"{payload['link_access']} link access was set."
+                    )
+                    result += f" {sharing}"
+                else:
+                    result += " Sharing unchanged."
+                return result
+            if payload.get("link_access") in {"viewer", "editor"}:
+                return (
+                    f"Created {url} ({payload['link_access']} link access)."
+                    if shared
+                    else f"Created {url}, but {message}"
+                )
+            return f"Created {url} (sharing unchanged)."
         await self.reserve(action, ctx)
         result = await self.client.request(
             "POST",

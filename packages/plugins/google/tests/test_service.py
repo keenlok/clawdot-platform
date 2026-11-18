@@ -145,6 +145,114 @@ async def test_read_checks_provenance_before_authentication_and_returns_capped_d
     assert client.values.await_args.args[1].startswith("'Day 1'!")
 
 
+def workbook_tabs():
+    return [{"name": "Compare", "columns": [{"header": "Hotel", "type": "text"}], "rows": [["A"]]}]
+
+
+async def test_create_workbook_proposes_then_creates_and_records_output():
+    service, client, ctx, _ = setup()
+    action = await service.propose(ctx, "create_workbook", title="Hotels", tabs=workbook_tabs())
+    assert action.kind == "create_workbook"
+    assert "Create Workbook: Hotels" in action.summary
+    assert 'Tab "Compare": 1 rows' in action.summary
+    client.request.return_value = {"spreadsheetId": "workbook-id"}
+    result = await service.commit(action, ctx)
+    assert (
+        result
+        == "Created https://docs.google.com/spreadsheets/d/workbook-id/edit (sharing unchanged)."
+    )
+    output = await service.repo.output(ctx.chat.key, ctx.thread_id, "workbook-id")
+    assert {
+        key: output[key]
+        for key in (
+            "chat_key",
+            "file_id",
+            "mime",
+            "requester_key",
+            "thread_id",
+            "owner_id",
+            "action_id",
+            "trashed_at",
+        )
+    } == {
+        "chat_key": ctx.chat.key,
+        "file_id": "workbook-id",
+        "mime": SHEET,
+        "requester_key": ctx.user.ref.key,
+        "thread_id": ctx.thread_id,
+        "owner_id": "owner-id",
+        "action_id": action.id,
+        "trashed_at": None,
+    }
+    assert client.request.await_args.kwargs["json"]["properties"]["title"] == "Hotels (incomplete)"
+    assert client.batch.await_count >= 2
+
+
+async def test_create_workbook_validation_and_changed_limits_stop_before_write():
+    service, client, ctx, _ = setup()
+    bad = [{"name": "Bad", "columns": [{"header": "Price", "type": "money"}], "rows": [[True]]}]
+    with pytest.raises(ValueError, match='Tab "Bad", row 1, column "Price"'):
+        await service.propose(ctx, "create_workbook", title="Bad", tabs=bad)
+    client.identity.assert_not_awaited()
+    client.request.assert_not_awaited()
+    tabs = [
+        {
+            "name": "Compare",
+            "columns": [{"header": "Hotel", "type": "text"}],
+            "rows": [["A"], ["B"]],
+        }
+    ]
+    action = await service.propose(ctx, "create_workbook", title="Hotels", tabs=tabs)
+    client.identity.reset_mock()
+    service.settings.max_rows = 1
+    service.settings.max_cell_chars = 100
+    with pytest.raises(ValueError, match="rows"):
+        await service.commit(action, ctx)
+    client.identity.assert_not_awaited()
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", ["create_sheet", "create_workbook"])
+async def test_invalid_link_access_fails_before_google_identity(kind):
+    service, client, ctx, _ = setup()
+    if kind == "create_sheet":
+        arguments = {"rows": [["x"]]}
+    else:
+        arguments = {"tabs": workbook_tabs()}
+    with pytest.raises(ValueError):
+        await service.propose(ctx, kind, title="Invalid access", link_access="anyone", **arguments)
+    client.identity.assert_not_awaited()
+    client.request.assert_not_awaited()
+
+
+async def test_invalid_sheet_rows_fail_before_google_identity():
+    service, client, ctx, _ = setup()
+    with pytest.raises(ValueError):
+        await service.propose(ctx, "create_sheet", title="Invalid rows", rows=[])
+    client.identity.assert_not_awaited()
+    client.request.assert_not_awaited()
+
+
+async def test_partial_workbook_is_journaled_and_sharing_is_still_attempted(monkeypatch):
+    service, client, ctx, _ = setup()
+    ctx.user = user("member")
+    ctx.is_admin = False
+    service.settings.create_users = "members"
+    action = await service.propose(
+        ctx, "create_workbook", title="Hotels", tabs=workbook_tabs(), link_access="viewer"
+    )
+    client.request.return_value = {"spreadsheetId": "partial-book"}
+    client.batch.side_effect = [None, RuntimeError("private batch detail")]
+    share = __import__("chatcore_google.service", fromlist=["publish_sheet_link_access"])
+    publish = AsyncMock(return_value=(True, ""))
+    monkeypatch.setattr(share, "publish_sheet_link_access", publish)
+    result = await service.commit(action, ctx)
+    assert "https://docs.google.com/spreadsheets/d/partial-book/edit" in result
+    assert "(incomplete)" in result and "step 2 of 2 failed" in result
+    assert await service.repo.output(ctx.chat.key, ctx.thread_id, "partial-book")
+    publish.assert_awaited_once()
+
+
 async def test_read_uses_retained_same_topic_output_binding_without_human_repost():
     service, client, ctx, _ = setup()
     doc_url = "https://docs.google.com/document/d/output-id/edit"
@@ -1258,11 +1366,58 @@ async def test_member_create_setting_allows_create_but_not_human_file_append():
     ctx.is_admin = False
     with pytest.raises(PermissionError, match="creation"):
         await service.propose(ctx, "create_sheet", title="New", rows=[["plain"]])
+    with pytest.raises(PermissionError, match="creation"):
+        await service.propose(ctx, "create_workbook", title="New", tabs=workbook_tabs())
     service.settings.create_users = "members"
     action = await service.propose(ctx, "create_sheet", title="New", rows=[["plain"]])
     assert action.kind == "create_sheet"
     with pytest.raises(PermissionError, match="writer"):
         await service.propose(ctx, "append", url=URL, rows=[["human"]])
+
+
+async def test_member_workbook_forces_viewer_and_rechecks_daily_cap():
+    service, _, ctx, _ = setup()
+    ctx.user = user("member")
+    ctx.is_admin = False
+    service.settings.create_users = "members"
+    service.settings.creates_per_user_day = 2
+    action = await service.propose(
+        ctx,
+        "create_workbook",
+        title="Member book",
+        tabs=workbook_tabs(),
+        link_access="private",
+    )
+    assert action.payload["link_access"] == "viewer"
+    assert action.payload["link_forced"] is True
+    assert "required for files you create" in action.summary
+    for index in range(2):
+        await service.repo.reserve_create(ctx.chat.key, f"crossed-{index}", ctx.user.ref.key, 2)
+    with pytest.raises(PermissionError, match="today's limit"):
+        await service.commit(action, ctx)
+    with pytest.raises(PermissionError, match="today's limit"):
+        await service.propose(ctx, "create_workbook", title="Over cap", tabs=workbook_tabs())
+
+
+async def test_workbook_private_preview_is_refused_after_writer_demotion():
+    service, client, ctx, _ = setup()
+    action = await service.propose(ctx, "create_workbook", title="Private", tabs=workbook_tabs())
+    service.access = AccessPolicy([GROUP.key], [], owners=[])
+    service.settings.create_users = "members"
+    with pytest.raises(PermissionError, match="access changed"):
+        await service.commit(action, ctx)
+    client.request.assert_not_awaited()
+
+
+async def test_workbook_settings_revision_change_invalidates_preview():
+    service, client, ctx, _ = setup()
+    action = await service.propose(ctx, "create_workbook", title="Hotels", tabs=workbook_tabs())
+    await service.repo.configure_fields(
+        ctx.chat.key, confirm_writes=False, expected_revision=action.payload["revision"]
+    )
+    with pytest.raises(ValueError, match="settings changed"):
+        await service.commit(action, ctx)
+    client.request.assert_not_awaited()
 
 
 async def test_member_private_sheet_is_forced_to_viewer_and_daily_cap_is_rechecked():
@@ -1306,13 +1461,19 @@ async def test_nonwriter_doc_private_choice_is_raised_to_viewer_in_preview():
     assert "required for files you create" in action.summary
 
 
-async def test_sheet_sharing_requires_output_binding_and_verifies_non_discoverable_acl():
+@pytest.mark.parametrize("kind", ["create_sheet", "create_workbook"])
+async def test_sheet_sharing_requires_output_binding_and_verifies_non_discoverable_acl(kind):
     from chatcore_google.link_sharing import publish_sheet_link_access
 
     service, client, ctx, _ = setup()
-    action = await service.propose(
-        ctx, "create_sheet", title="Shared", rows=[["x"]], link_access="viewer"
-    )
+    if kind == "create_sheet":
+        action = await service.propose(
+            ctx, kind, title="Shared", rows=[["x"]], link_access="viewer"
+        )
+    else:
+        action = await service.propose(
+            ctx, kind, title="Shared", tabs=workbook_tabs(), link_access="viewer"
+        )
     await service.repo.record_output(
         ctx.chat.key, "shared-id", SHEET, ctx.user.ref.key, action.thread_id, "owner-id", action.id
     )

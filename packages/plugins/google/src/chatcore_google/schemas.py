@@ -54,6 +54,57 @@ ROWS = {
     "items": {"type": "array", "items": {"type": ["string", "number", "boolean", "null"]}},
 }
 
+TABS = {
+    "type": "array",
+    "description": "Formatted workbook tabs with typed columns and literal cell values.",
+    "minItems": 1,
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "columns", "rows"],
+        "properties": {
+            "name": text("Tab name."),
+            "heading": text("Optional title row."),
+            "note": text("Optional note row."),
+            "columns": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["header", "type"],
+                    "properties": {
+                        "header": text("Column heading."),
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "text",
+                                "number",
+                                "money",
+                                "percent",
+                                "date",
+                                "datetime",
+                                "bool",
+                                "url",
+                            ],
+                        },
+                        "decimals": {"type": "integer", "minimum": 0, "maximum": 4},
+                        "total": {"type": "boolean"},
+                        "width": {"type": "integer", "minimum": 20, "maximum": 1000},
+                    },
+                },
+            },
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {"type": ["string", "number", "boolean", "null"]},
+                },
+            },
+        },
+    },
+}
+
 
 def parameters(properties, required=()):
     return {

@@ -321,7 +321,7 @@ async def publish_sheet_link_access(google, action, ctx, payload, destination_id
         )
     owners = metadata.get("owners") or []
     if (
-        action.kind != "create_sheet"
+        action.kind not in {"create_sheet", "create_workbook"}
         or not row
         or row.get("action_id") != action.id
         or row.get("owner_id") != identity
