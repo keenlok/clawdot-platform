@@ -2,6 +2,7 @@
 
 | Plan | Status | Notes |
 | --- | --- | --- |
+| [DM card and export delivery](2026-11-18-dm-card-delivery.md) | Planned | Patch release: with `dm_ledger="private"`, balance/summary cards and expense exports requested in a DM for a group ledger are sent to the DM, not the group chat. Owner-approved 2026-11-18; Codex executes and reviews, Claude final review |
 | [Tool-step cap and loop guard](2026-11-16-tool-step-cap-loop-guard.md) | Planned | [PR #58](https://github.com/keenlok/clawdot-platform/pull/58), v0.20.0 (next release): default per-turn tool-step cap 8 → 20 (`google_workspace` 6 → 16), plus a loop guard (identical-call limit, consecutive-error limit, optional per-turn input-token limit) that forces a no-tools final answer. Codex execution stalled, so Claude implemented; Codex reviewed, Claude final review |
 | [Tool-step cap and loop guard execution](2026-11-16-tool-step-cap-loop-guard-execution.md) | Record | Codex execution plan: `gpt-6-luna` executes, `gpt-6.1-sol` reviews, Claude does the final review |
 | [Owner-granted DM access](2026-11-16-owner-dm-grants.md) | Shipped inactive | [PR #54](https://github.com/keenlok/clawdot-platform/pull/54), approved 2026-11-16; released in v0.20.0, inactive until the owner grants someone. Owner-only, confirmed, audited, revocable `/admin dmgrant` grants (optional expiry) and a natural-language batch let chosen people DM the bot without a shared group; optional off-by-default access-request notice. Claude plans, Codex executes and reviews, Claude final review |
