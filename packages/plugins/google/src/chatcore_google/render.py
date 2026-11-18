@@ -4,10 +4,6 @@ import math
 from typing import Any
 
 
-def neutralize(value: str) -> str:
-    return "'" + value if value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
-
-
 def literal_rows(rows: list[list[Any]]) -> list[dict]:
     result = []
     for row in rows:
@@ -16,7 +12,7 @@ def literal_rows(rows: list[list[Any]]) -> list[dict]:
             if value is None:
                 literal = {"stringValue": ""}
             elif isinstance(value, str):
-                literal = {"stringValue": neutralize(value)}
+                literal = {"stringValue": value}
             elif type(value) is bool:
                 literal = {"boolValue": value}
             elif type(value) in (int, float) and abs(value) <= 2**53 and math.isfinite(value):

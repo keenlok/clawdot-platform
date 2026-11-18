@@ -124,6 +124,11 @@ async def test_workbook_commit_writes_latest_snapshot_once(google_service):
     assert "Added after preview" in written  # latest data at confirmation (owner decision)
     final = client.batch.await_args_list[-1].args[1][-1]
     assert final["updateSpreadsheetProperties"]["properties"]["title"] == "Trip money"
+    output = await service.repo.output(ctx.chat.key, ctx.thread_id, "book")
+    assert output["mime"] == "application/vnd.google-apps.spreadsheet"
+    assert output["requester_key"] == ctx.user.ref.key
+    assert output["thread_id"] == ctx.thread_id
+    assert sum(row["action_id"] == action.id for row in service.repo._outputs.values()) == 1
     with pytest.raises(ValueError, match="handled"):
         await bridge.commit(action, commit)  # reservation: one confirmation, one workbook
     assert client.request.await_count == 1
@@ -150,6 +155,11 @@ async def test_workbook_partial_failure_is_reported_honestly(google_service):
     assert "spreadsheets/d/half/edit" in result and "incomplete" in result
     assert "Nothing was retried" in result
     assert client.batch.await_count == 1
+    output = await service.repo.output(ctx.chat.key, ctx.thread_id, "half")
+    assert output["mime"] == "application/vnd.google-apps.spreadsheet"
+    assert output["requester_key"] == ctx.user.ref.key
+    assert output["thread_id"] == ctx.thread_id
+    assert sum(row["action_id"] == action.id for row in service.repo._outputs.values()) == 1
 
 
 async def test_workbook_cell_cap_refuses_at_preview(google_service):

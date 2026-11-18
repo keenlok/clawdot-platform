@@ -25,9 +25,9 @@ def build_gates(plugin):
             return Gate(GateState.NOT_ALLOWED)
         return await scope(chat, is_dm)
 
-    async def check(ctx, *, write=False, configure=False):
+    async def check(ctx, *, write=False, configure=False, create=False):
         try:
-            await plugin.service.authorize(ctx, write=write, configure=configure)
+            await plugin.service.authorize(ctx, write=write, configure=configure, create=create)
             return Gate(GateState.AVAILABLE)
         except (PermissionError, ValueError):
             return Gate(GateState.NOT_ALLOWED)
@@ -40,6 +40,9 @@ def build_gates(plugin):
 
     async def configure(ctx):
         return await check(ctx, configure=True)
+
+    async def create(ctx):
+        return await check(ctx, create=True)
 
     async def browser_write(ctx):
         if plugin.browser_edits is None or ctx.chat.key not in (
@@ -62,6 +65,8 @@ def build_gates(plugin):
                 if tool.name == "configure_google"
                 else browser_write
                 if tool.name == "google_browser_edit_doc"
+                else create
+                if tool.name in {"google_create_doc", "google_create_sheet", "google_append"}
                 else write
                 if tool.writes
                 else read

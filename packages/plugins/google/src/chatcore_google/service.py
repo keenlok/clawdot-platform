@@ -16,12 +16,13 @@ from chatcore_google.docx import docx_text
 from chatcore_google.link_sharing import (
     payload_link_access,
     publish_doc_link_access,
+    publish_sheet_link_access,
     record_result,
     resolve_link_access,
     web_url,
     write_outcome_uncertain,
 )
-from chatcore_google.permissions import authorize
+from chatcore_google.permissions import authorize, is_writer
 from chatcore_google.refs import approved_ref, approved_source_ref, parse_google_ref
 from chatcore_google.render import doc_text, literal_rows
 
@@ -65,6 +66,15 @@ def _same_output_binding(left, right):
     )
 
 
+def _same_append_output_binding(output, action, ctx, payload):
+    return (
+        output is not None
+        and output.get("requester_key") == ctx.user.ref.key
+        and output.get("owner_id") == payload.get("owner")
+        and output.get("thread_id") == action.thread_id
+    )
+
+
 def select_tab(sheet, ref, tab=None):
     tabs = [value["properties"] for value in sheet.get("sheets", [])]
     by_gid = next((value for value in tabs if value["sheetId"] == ref.gid), None)
@@ -83,9 +93,15 @@ class GoogleService:
     def __init__(self, settings, access, client, repo):
         self.settings, self.access, self.client, self.repo = settings, access, client, repo
 
-    async def authorize(self, ctx, *, write=False, configure=False):
+    async def authorize(self, ctx, *, write=False, configure=False, create=False):
         await authorize(
-            self.settings, self.access, self.repo, ctx, write=write, configure=configure
+            self.settings,
+            self.access,
+            self.repo,
+            ctx,
+            write=write,
+            configure=configure,
+            create=create,
         )
 
     def rows(self, rows, *, grid_columns=None):
@@ -243,6 +259,19 @@ class GoogleService:
             raise ValueError("Post the actual file link; folders and shortcuts are not supported.")
 
     async def file(self, ctx, url, expected=None, *, allow_docx=False, source_message_ref=None):
+        ref = parse_google_ref(url)
+        await self.authorize(ctx)
+        output = await self.repo.output(ctx.chat.key, ctx.thread_id, ref.file_id)
+        if output is not None:
+            owner = await self.client.identity()
+            metadata = await self.client.metadata(ref.file_id)
+            self.check_metadata(ref.file_id, metadata)
+            self.check_type(metadata, expected, allow_docx=allow_docx)
+            if output["owner_id"] != owner or metadata.get("ownedByMe") is not True:
+                raise PermissionError(
+                    "The journaled output is no longer owned by the Google owner."
+                )
+            return ref, metadata, owner
         ref, metadata, owner = await self.source_file(
             ctx, url, source_message_ref=source_message_ref
         )
@@ -431,17 +460,44 @@ class GoogleService:
             )
         return action
 
-    async def propose_configure(self, ctx, enabled):
+    async def propose_configure(self, ctx, enabled=None, confirm_writes=None):
         await self.authorize(ctx, configure=True)
-        if type(enabled) is not bool:
-            raise ValueError("Specify on or off.")
+        if enabled is None and confirm_writes is None:
+            raise ValueError("Specify enabled or confirm_writes.")
+        if (
+            enabled is not None
+            and type(enabled) is not bool
+            or confirm_writes is not None
+            and type(confirm_writes) is not bool
+        ):
+            raise ValueError("Settings must be true or false.")
         _, revision = await self.repo.settings(ctx.chat.key)
+        changes = {"revision": revision, "owner_email": self.settings.owner_email}
+        if enabled is not None:
+            changes["enabled"] = enabled
+        if confirm_writes is not None:
+            changes["confirm_writes"] = confirm_writes
+        parts = []
+        if enabled is not None:
+            parts.append(f"Turn Google tools {'on' if enabled else 'off'} in this chat?")
+        if confirm_writes is not None:
+            if confirm_writes:
+                parts.append(
+                    "Turn on write previews in this chat? New Google files and edits to files "
+                    "the bot made here will show a preview to confirm first."
+                )
+            else:
+                parts.append(
+                    "Turn off write previews in this chat? New Google files and edits to files "
+                    "the bot made here will happen without a confirmation step."
+                )
+        parts.append("Edits to other files, trashing and settings still need confirmation.")
+        summary = " ".join(parts)
         return await self.action(
             ctx,
             "configure",
-            {"enabled": enabled, "revision": revision, "owner_email": self.settings.owner_email},
-            f"Turn Google tools {'on' if enabled else 'off'} in this chat? "
-            "This applies to Google and itinerary reads/writes.",
+            changes,
+            summary,
         )
 
     async def propose(
@@ -456,16 +512,32 @@ class GoogleService:
         tab=None,
         link_viewer=None,
         link_access=None,
+        sheet_link_access=None,
     ):
-        await self.authorize(ctx, write=True)
+        await self.authorize(ctx, create=kind in {"create_doc", "create_sheet", "append"})
         if kind not in ("append", "create_doc", "create_sheet"):
             raise ValueError("Unknown Google write operation.")
-        if kind != "create_doc" and (link_access is not None or link_viewer is not None):
+        if kind not in {"create_doc", "create_sheet"} and (
+            link_access is not None or link_viewer is not None
+        ):
             raise ValueError("Link access choices apply only to a new Google Doc.")
+        if kind == "create_sheet" and link_access is not None:
+            sheet_link_access, link_access = link_access, None
         payload = {"owner_email": self.settings.owner_email}
         grid_columns = None
         if kind == "append":
             ref, metadata, owner = await self.file(ctx, url)
+            output = await self.repo.output(ctx.chat.key, ctx.thread_id, ref.file_id)
+            via_output = bool(
+                output
+                and output["requester_key"] == ctx.user.ref.key
+                and output["owner_id"] == owner
+                and metadata.get("ownedByMe") is True
+                and not metadata.get("trashed")
+            )
+            if not via_output:
+                await self.authorize(ctx, write=True)
+            payload["via_output"] = via_output
             payload.update(file_id=ref.file_id, mime=metadata["mimeType"], doc_tab=ref.doc_tab)
             name = str(metadata.get("name", "File"))[:300]
             if metadata["mimeType"] == SHEET:
@@ -481,6 +553,16 @@ class GoogleService:
                 )
         else:
             owner = await self.client.identity()
+            if (
+                not is_writer(self.settings, self.access, ctx.user.ref)
+                and await self.repo.creates_today(ctx.chat.key, ctx.user.ref.key)
+                >= self.settings.creates_per_user_day
+            ):
+                raise PermissionError(
+                    f"You've reached today's limit of {self.settings.creates_per_user_day} "
+                    "new Google files; "
+                    "try again tomorrow or ask a bot admin."
+                )
             if not isinstance(title, str) or not title.strip() or len(title) > 200:
                 raise ValueError("Provide a title of 1–200 characters.")
             payload["title"] = title
@@ -488,9 +570,22 @@ class GoogleService:
             name = title
             if kind == "create_doc":
                 access = resolve_link_access(self.settings, link_access, link_viewer)
+                if not is_writer(self.settings, self.access, ctx.user.ref) and access == "private":
+                    access = "viewer"
+                    payload["link_forced"] = True
                 payload["link_access"] = access
                 if access != "editor":
                     payload["link_viewer"] = access == "viewer"
+            elif kind == "create_sheet":
+                access = (
+                    "private"
+                    if sheet_link_access is None
+                    else resolve_link_access(self.settings, sheet_link_access)
+                )
+                if not is_writer(self.settings, self.access, ctx.user.ref) and access == "private":
+                    access = "viewer"
+                    payload["link_forced"] = True
+                payload["link_access"] = access
         if payload["mime"] == SHEET:
             if text is not None:
                 raise ValueError("Provide rows for a Sheet.")
@@ -510,11 +605,23 @@ class GoogleService:
             "viewer": "anyone with the link can view; search discovery is off",
             "editor": "anyone with the link can edit; search discovery is off",
         }
-        link_line = f"Access: {access_text[link_access]}.\n" if kind == "create_doc" else ""
+        link_line = (
+            f"Access: {access_text[link_access]}"
+            + (" (required for files you create)" if payload.get("link_forced") else "")
+            + ".\n"
+            if kind == "create_doc"
+            else (
+                f"Access: {access_text[payload['link_access']]}"
+                + (" (required for files you create)" if payload.get("link_forced") else "")
+                + ".\n"
+                if kind == "create_sheet"
+                else ""
+            )
+        )
         target = (
             f"new Doc ({link_access} link access)"
             if kind == "create_doc"
-            else "new private file"
+            else "new Sheet"
             if kind == "create_sheet"
             else url
         )
@@ -536,13 +643,38 @@ class GoogleService:
         payload = action.payload
         if payload.get("owner_email") != self.settings.owner_email:
             raise ValueError("Google owner configuration changed; request again.")
-        await self.authorize(
-            ctx, write=action.kind != "configure", configure=action.kind == "configure"
-        )
+        create = action.kind in {"create_doc", "create_sheet"}
+        write = action.kind not in {"configure", "create_doc", "create_sheet"}
+        if action.kind == "append":
+            if payload.get("via_output") is True:
+                output = await self.repo.output(ctx.chat.key, ctx.thread_id, payload.get("file_id"))
+                if not _same_append_output_binding(output, action, ctx, payload):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
+                    )
+                write, create = False, True
+            else:
+                write, create = True, False
+        await self.authorize(ctx, write=write, create=create, configure=action.kind == "configure")
         if (await self.repo.settings(ctx.chat.key))[1] != payload["revision"]:
             raise ValueError("Google settings changed; request again.")
         if action.kind != "configure" and await self.client.identity() != payload["owner"]:
             raise ValueError("Google owner identity changed; request again.")
+        if action.kind in {"create_doc", "create_sheet"} and not is_writer(
+            self.settings, self.access, ctx.user.ref
+        ):
+            # Previews frozen before v0.21.0 carry no Sheet access (implicitly private) and may
+            # carry only the legacy Doc link_viewer flag; both decode to private here.
+            frozen_access = (
+                payload_link_access(payload)
+                if action.kind == "create_doc"
+                else payload.get("link_access", "private")
+            )
+            if frozen_access == "private":
+                raise PermissionError("Your access changed; request the file again.")
+            await self.repo.reserve_create(
+                ctx.chat.key, action.id, ctx.user.ref.key, self.settings.creates_per_user_day
+            )
         return payload
 
     async def reserve(self, action, ctx, *, suggestion_rows=0):
@@ -558,11 +690,36 @@ class GoogleService:
     async def commit(self, action, ctx):
         payload = await self.verify_commit(action, ctx)
         if action.kind == "configure":
-            await self.repo.configure(ctx.chat.key, payload["enabled"], payload["revision"])
-            return "Google tools are " + ("on" if payload["enabled"] else "off") + " in this chat."
+            await self.repo.configure_fields(
+                ctx.chat.key,
+                enabled=payload.get("enabled"),
+                confirm_writes=payload.get("confirm_writes"),
+                expected_revision=payload["revision"],
+            )
+            results = []
+            if "enabled" in payload:
+                results.append("Google tools are " + ("on" if payload["enabled"] else "off"))
+            if "confirm_writes" in payload:
+                results.append(
+                    "Write previews are " + ("on" if payload["confirm_writes"] else "off")
+                )
+            return (
+                ". ".join(result[0].upper() + result[1:] for result in results) + " in this chat."
+            )
         if action.kind == "append":
             metadata = await self.client.metadata(payload["file_id"])
             self.check_type(metadata, payload["mime"])
+            output = await self.repo.output(ctx.chat.key, ctx.thread_id, payload["file_id"])
+            if payload.get("via_output") is True and not _same_append_output_binding(
+                output, action, ctx, payload
+            ):
+                raise PermissionError("The output authorization binding changed; request again.")
+            if output is not None and (
+                output["owner_id"] != payload.get("owner")
+                or metadata.get("ownedByMe") is not True
+                or metadata.get("trashed")
+            ):
+                raise PermissionError("This output is no longer owned by the Google owner.")
             if payload["mime"] == SHEET:
                 tabs = (await self.client.sheet(payload["file_id"])).get("sheets", [])
                 selected = next(
@@ -580,6 +737,15 @@ class GoogleService:
                     payload["rows"],
                     grid_columns=selected.get("gridProperties", {}).get("columnCount"),
                 )
+                if payload.get("via_output") is True and not _same_append_output_binding(
+                    await self.repo.output(ctx.chat.key, ctx.thread_id, payload["file_id"]),
+                    action,
+                    ctx,
+                    payload,
+                ):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
+                    )
                 await self.reserve(action, ctx)
                 await self.client.batch(
                     payload["file_id"],
@@ -597,6 +763,15 @@ class GoogleService:
                 if not 0 < len(payload["text"]) <= self.settings.max_chars:
                     raise ValueError(
                         "Document text exceeds the current character limit; request again."
+                    )
+                if payload.get("via_output") is True and not _same_append_output_binding(
+                    await self.repo.output(ctx.chat.key, ctx.thread_id, payload["file_id"]),
+                    action,
+                    ctx,
+                    payload,
+                ):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
                     )
                 await self.reserve(action, ctx)
                 await self.append_doc(payload["file_id"], payload["text"], payload.get("doc_tab"))
@@ -629,7 +804,18 @@ class GoogleService:
                 ],
             },
         )
-        file_id = result["spreadsheetId"]
+        file_id = result.get("spreadsheetId") if isinstance(result, dict) else None
+        if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+            return "Uncertain: Google may have created a Sheet with an invalid ID; inspect Drive."
+        await self.repo.record_output(
+            ctx.chat.key,
+            file_id,
+            SHEET,
+            ctx.user.ref.key,
+            action.thread_id,
+            payload["owner"],
+            action.id,
+        )
         sheet_id = result["sheets"][0]["properties"]["sheetId"]
         await self.client.batch(
             file_id,
@@ -643,7 +829,13 @@ class GoogleService:
                 }
             ],
         )
-        return f"Created https://docs.google.com/spreadsheets/d/{file_id}/edit (sharing unchanged)."
+        url = f"https://docs.google.com/spreadsheets/d/{file_id}/edit"
+        if payload.get("link_access") in {"viewer", "editor"}:
+            shared, message = await publish_sheet_link_access(self, action, ctx, payload, file_id)
+            if not shared:
+                return f"Created {url}, but {message}"
+            return f"Created {url} ({payload['link_access']} link access)."
+        return f"Created {url} (sharing unchanged)."
 
     async def _create_output_doc(self, action, ctx, payload):
         """Create, journal, verify and optionally share a confirmed native Doc output."""
@@ -704,6 +896,29 @@ class GoogleService:
                 "Uncertain: Google may have created the Doc without returning a valid ID; "
                 "inspect Drive."
             )
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id):
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="partial",
+                destination_id=destination_id,
+                failed_stage="destination_validation",
+                error_category="invalid_remote_id",
+            )
+            return (
+                "Partial: Google returned a destination ID that cannot be opened safely; "
+                "inspect Drive."
+            )
+        await self.repo.record_output(
+            ctx.chat.key,
+            destination_id,
+            DOC,
+            ctx.user.ref.key,
+            action.thread_id,
+            payload["owner"],
+            action.id,
+        )
         safe_url = (
             web_url(destination_id)
             if re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id)

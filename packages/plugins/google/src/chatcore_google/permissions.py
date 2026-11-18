@@ -3,7 +3,11 @@
 from chatcore.group_access import GroupAdminPlatform
 
 
-async def authorize(settings, access, repo, ctx, *, write=False, configure=False):
+def is_writer(settings, access, user_ref) -> bool:
+    return access.is_admin(user_ref) or user_ref.key in settings.writers
+
+
+async def authorize(settings, access, repo, ctx, *, write=False, configure=False, create=False):
     if not settings.configured:
         raise PermissionError("Google tools are not configured.")
     await access.refresh()
@@ -36,3 +40,12 @@ async def authorize(settings, access, repo, ctx, *, write=False, configure=False
         and not (access.is_admin(ctx.user.ref) or ctx.user.ref.key in settings.writers)
     ):
         raise PermissionError("Google writes require a bot admin or an explicitly allowed writer.")
+    if (
+        create
+        and not write
+        and settings.create_users != "members"
+        and not is_writer(settings, access, ctx.user.ref)
+    ):
+        raise PermissionError(
+            "Google file creation requires a bot admin or an explicitly allowed writer."
+        )
