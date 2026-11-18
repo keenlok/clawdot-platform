@@ -695,6 +695,15 @@ class GoogleEditService:
                 action, ctx, "uncertain", stage="destination", category="invalid_remote_id"
             )
             raise GoogleError("Google may have created a destination with an invalid ID.")
+        await self.repo.record_output(
+            ctx.chat.key,
+            created["id"],
+            DOC,
+            ctx.user.ref.key,
+            action.thread_id,
+            payload["owner"],
+            action.id,
+        )
         await self._phase(action, ctx, "destination_created", destination_id=created["id"])
         return created
 
@@ -1004,6 +1013,16 @@ class GoogleEditService:
                 return (
                     f"Partial: destination {safe_url} could not be validated; "
                     "no edit was attempted."
+                )
+            if dest["mime"] in {DOC, SHEET}:
+                await self.repo.record_output(
+                    ctx.chat.key,
+                    destination_id,
+                    dest["mime"],
+                    ctx.user.ref.key,
+                    action.thread_id,
+                    payload["owner"],
+                    action.id,
                 )
 
         if action.kind == "edit_doc":

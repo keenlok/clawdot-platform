@@ -21,10 +21,9 @@ destinations. A source-derived separate revision uses the qualified copy path; D
 import the original package before bounded edits instead of reconstructing its text. Creating a
 document from scratch is a different operation. Browser editing requires an explicit request and
 separate qualification; an API failure never automatically authorizes browser fallback.
-New native Doc outputs can be private, link viewers, or link editors when the confirmed preview
-freezes that choice. The framework default is private; an explicit tool choice overrides it for
-that action. Original Docs retain their permissions; Sheets and browser trials use their existing
-policies.
+Previews freeze Doc and Sheet access. Writers default to private for Sheets. Non-writers who may
+create receive at least viewer access, even if they request private, because files belong to the
+owner's Drive. Their creates are capped by `GOOGLE_CREATES_PER_USER_DAY` (default 20 per 24 hours).
 
 When the trip resolver is wired, `trip_edit_doc(trip, find, replacement)` resolves only the saved
 primary itinerary and accepts no source URL. Native Docs are edited in place after requester
@@ -44,19 +43,25 @@ its title keeps "(incomplete)"; nothing is retried automatically.
 
 ## Storage
 Original file contents and saved changes live in Google services, not chat memory. The plugin stores
-trip-file associations and edit-result journal records in its configured repository. Frozen action
+trip-file associations, edit-result records and a `google_outputs` journal binding created files to
+their chat, topic, requester, owner and action. Only an owner-owned, non-trashed file in the same
+chat/topic counts as an output here. Separate create reservations, taken atomically at
+confirmation, count each non-writer's daily creates. Both are removed by retention purges. Frozen action
 payloads and pending confirmations use application storage. Result records can include destination
 IDs and partial or uncertain outcomes, so a later check can inspect the known destination instead
 of blindly creating another copy. This is not a backup of every Google file or full revision history.
 
 ## Safety
-Writes need requester confirmation of their preview. Handlers recheck source provenance, access,
+Writes normally need requester confirmation of their preview. A manager can turn previews off per
+chat with `/google confirm off` or `configure_google`; creates and appends to a requester's own
+journaled output then run immediately. Edits to human-shared files, expense exports and
+settings changes still require confirmation. `/google` reports the switch. Handlers recheck source provenance, access,
 destinations and preconditions. Docs use revision-aware UTF-16 targets; bounded read-back checks
 the whole text and relevant target style/coverage before any requested output sharing. Effective
 text styles include provable named-style inheritance; unknown defaults or table-style parents
 remain unverified. Link access
-applies only to a new Doc output: viewer uses anyone/reader and editor uses anyone/writer, both
-with search discovery disabled. Existing source permissions stay unchanged. Browser copy access is
+applies only to a new Doc or Sheet output: viewer uses anyone/reader and editor uses anyone/writer,
+both with search discovery disabled. Existing source permissions stay unchanged. Browser copy access is
 separately disclosed and constrained. File contents are untrusted data and cannot authorize a
 different write.
 
