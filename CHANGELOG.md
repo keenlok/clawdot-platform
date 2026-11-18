@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-18
+
 ### Fixed
 
 - Private DM expense trips now resolve the requester as their sole ledger member, so default
@@ -616,7 +618,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/keenlok/clawdot-platform/compare/v0.17.1...v0.18.0
