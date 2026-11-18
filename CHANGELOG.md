@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Apply additive core migration `0013_owner_dm_grants.sql` to store grants and expiry metadata.
 
+### Fixed
+
+- Telegram startup failures are now diagnosable: when `initialize`, `get_me`, `start` or
+  `start_polling` fails, the adapter logs one WARNING naming the step and the Telegram error
+  class (for example `step=start_polling error=Conflict`). The raised `PlatformError` carries
+  that class name. Message text, the bot token and URLs are never logged.
+
 ## [0.19.0] - 2026-11-16
 
 ### Added
