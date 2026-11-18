@@ -21,6 +21,9 @@ class GoogleRepository:
         self._edit_results = {}
         self._links = {}
         self._files = {}
+        self._outputs = {}
+        self._create_reservations = {}
+        self._confirm_writes = {}
         self._lock = asyncio.Lock()
 
     async def settings(self, chat):
@@ -32,7 +35,14 @@ class GoogleRepository:
         return self._settings.get(chat, (True, 0))
 
     async def configure(self, chat, enabled, expected_revision):
-        if type(enabled) is not bool:
+        await self.configure_fields(chat, enabled=enabled, expected_revision=expected_revision)
+
+    async def configure_fields(self, chat, *, enabled=None, confirm_writes=None, expected_revision):
+        if enabled is None and confirm_writes is None:
+            raise ValueError("Specify a Google setting to change.")
+        if (enabled is not None and type(enabled) is not bool) or (
+            confirm_writes is not None and type(confirm_writes) is not bool
+        ):
             raise ValueError("Specify on or off.")
         if self.db is not None:
             async with self.db.transaction() as tx:
@@ -43,17 +53,188 @@ class GoogleRepository:
                 if (row["revision"] if row else 0) != expected_revision:
                     raise ValueError("Google settings changed; request the change again.")
                 await tx.execute(
-                    "INSERT INTO google_settings(chat_key,enabled,revision) VALUES($1,$2,1) "
-                    "ON CONFLICT(chat_key) DO UPDATE "
-                    "SET enabled=$2,revision=google_settings.revision+1",
+                    "INSERT INTO google_settings(chat_key,enabled,confirm_writes,revision) "
+                    "VALUES($1,COALESCE($2,TRUE),COALESCE($3,TRUE),1) ON CONFLICT(chat_key) "
+                    "DO UPDATE SET enabled=COALESCE($2,google_settings.enabled), "
+                    "confirm_writes=COALESCE($3,google_settings.confirm_writes), "
+                    "revision=google_settings.revision+1",
                     chat,
                     enabled,
+                    confirm_writes,
                 )
         else:
             async with self._lock:
                 if (await self.settings(chat))[1] != expected_revision:
                     raise ValueError("Google settings changed; request the change again.")
-                self._settings[chat] = (enabled, expected_revision + 1)
+                old_enabled = self._settings.get(chat, (True, 0))[0]
+                self._settings[chat] = (
+                    old_enabled if enabled is None else enabled,
+                    expected_revision + 1,
+                )
+                if confirm_writes is not None:
+                    self._confirm_writes[chat] = confirm_writes
+
+    async def confirm_writes(self, chat):
+        if self.db is not None:
+            value = await self.db.fetchval(
+                "SELECT confirm_writes FROM google_settings WHERE chat_key=$1", chat
+            )
+            return True if value is None else value
+        return self._confirm_writes.get(chat, True)
+
+    async def record_output(
+        self, chat, file_id, mime, requester_key, thread_id, owner_id, action_id
+    ):
+        if self.db is not None:
+            await self.db.execute(
+                "INSERT INTO google_outputs(chat_key,file_id,mime,requester_key,thread_id,"
+                "owner_id,action_id) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(chat_key,file_id) DO NOTHING",
+                chat,
+                file_id,
+                mime,
+                requester_key,
+                thread_id,
+                owner_id,
+                action_id,
+            )
+        else:
+            self._outputs.setdefault(
+                (chat, file_id),
+                dict(
+                    chat_key=chat,
+                    file_id=file_id,
+                    mime=mime,
+                    requester_key=requester_key,
+                    thread_id=thread_id,
+                    owner_id=owner_id,
+                    action_id=action_id,
+                    created_at=datetime.now(UTC),
+                    trashed_at=None,
+                ),
+            )
+
+    async def output(self, chat, thread_id, file_id):
+        if self.db is not None:
+            row = await self.db.fetchrow(
+                "SELECT * FROM google_outputs WHERE chat_key=$1 "
+                "AND thread_id IS NOT DISTINCT FROM $2 "
+                "AND file_id=$3 AND trashed_at IS NULL",
+                chat,
+                thread_id,
+                file_id,
+            )
+            return dict(row) if row else None
+        row = self._outputs.get((chat, file_id))
+        return row if row and row["thread_id"] == thread_id and row["trashed_at"] is None else None
+
+    async def output_any(self, chat, file_id):
+        if self.db is not None:
+            row = await self.db.fetchrow(
+                "SELECT * FROM google_outputs WHERE chat_key=$1 AND file_id=$2", chat, file_id
+            )
+            return dict(row) if row else None
+        return self._outputs.get((chat, file_id))
+
+    async def mark_output_trashed(self, chat, file_id, action_id):
+        if self.db is not None:
+            result = await self.db.execute(
+                "UPDATE google_outputs SET trashed_at=now() WHERE chat_key=$1 AND file_id=$2 "
+                "AND action_id=$3 AND trashed_at IS NULL",
+                chat,
+                file_id,
+                action_id,
+            )
+            return result.endswith(" 1")
+        row = self._outputs.get((chat, file_id))
+        if row is None or row["action_id"] != action_id or row["trashed_at"] is not None:
+            return False
+        row["trashed_at"] = datetime.now(UTC)
+        return True
+
+    async def creates_today(self, chat, requester_key):
+        since = datetime.now(UTC) - timedelta(hours=24)
+        if self.db is not None:
+            return await self.db.fetchval(
+                "SELECT count(*) FROM google_create_reservations WHERE chat_key=$1 "
+                "AND requester_key=$2 AND created_at >= $3",
+                chat,
+                requester_key,
+                since,
+            )
+        return sum(
+            1
+            for (scope, _), row in self._create_reservations.items()
+            if scope == chat
+            and row["requester_key"] == requester_key
+            and row["created_at"] >= since
+        )
+
+    async def reserve_create(self, chat, action_id, requester_key, limit):
+        """Atomically reserve one of a member's daily create slots for this action."""
+        since = datetime.now(UTC) - timedelta(hours=24)
+        message = (
+            f"You've reached today's limit of {limit} new Google files; "
+            "try again tomorrow or ask a bot admin."
+        )
+        if self.db is not None:
+            async with self.db.transaction() as tx:
+                await tx.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1 || ':' || $2))",
+                    chat,
+                    requester_key,
+                )
+                existing = await tx.fetchrow(
+                    "SELECT requester_key FROM google_create_reservations "
+                    "WHERE chat_key=$1 AND action_id=$2",
+                    chat,
+                    action_id,
+                )
+                if existing:
+                    if existing["requester_key"] != requester_key:
+                        raise PermissionError(
+                            "This create reservation belongs to another requester."
+                        )
+                    return
+                used = await tx.fetchval(
+                    "SELECT count(*) FROM google_create_reservations "
+                    "WHERE chat_key=$1 AND requester_key=$2 AND created_at >= $3",
+                    chat,
+                    requester_key,
+                    since,
+                )
+                if used >= limit:
+                    raise PermissionError(message)
+                await tx.execute(
+                    "INSERT INTO google_create_reservations(chat_key,action_id,requester_key) "
+                    "VALUES($1,$2,$3)",
+                    chat,
+                    action_id,
+                    requester_key,
+                )
+            return
+        async with self._lock:
+            key = (chat, action_id)
+            existing = self._create_reservations.get(key)
+            if existing is not None:
+                if existing["requester_key"] != requester_key:
+                    raise PermissionError("This create reservation belongs to another requester.")
+                return
+            used = sum(
+                1
+                for (scope, _), row in self._create_reservations.items()
+                if scope == chat
+                and row["requester_key"] == requester_key
+                and row["created_at"] >= since
+            )
+            if used >= limit:
+                raise PermissionError(message)
+            self._create_reservations[key] = {
+                "chat_key": chat,
+                "action_id": action_id,
+                "requester_key": requester_key,
+                "created_at": datetime.now(UTC),
+            }
 
     async def reserve(self, chat, action_id, requester, rows, daily_limit, revision):
         """Commit the reservation BEFORE any remote write, so a crash cannot authorize replay."""
@@ -327,6 +508,10 @@ class GoogleRepository:
                 "AND e.phase IN ('destination_created','applying','shared','verified','partial',"
                 "'uncertain') AND e.output_owner_id IS NOT NULL "
                 "AND e.output_owner_email IS NOT NULL AND e.output_mode IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM google_outputs o WHERE o.chat_key=e.chat_key "
+                "AND o.file_id=e.destination_id "
+                "AND o.thread_id IS NOT DISTINCT FROM e.output_thread_id "
+                "AND o.trashed_at IS NOT NULL) "
                 "AND ((e.kind='create_doc' AND e.source_id IS NULL AND e.output_mode='create') "
                 "OR (e.kind='edit_doc' AND e.source_id IS NOT NULL "
                 "AND e.source_id<>e.destination_id AND e.output_mode IN ('copy','docx_import'))) "
@@ -346,6 +531,11 @@ class GoogleRepository:
             in {"destination_created", "applying", "shared", "verified", "partial", "uncertain"}
             and result.get("output_owner_id")
             and result.get("output_owner_email")
+            and not (
+                (output := self._outputs.get((chat, destination_id))) is not None
+                and output.get("thread_id") == thread_id
+                and output.get("trashed_at") is not None
+            )
             and (
                 result.get("kind") == "create_doc"
                 and result.get("source_id") is None
@@ -667,6 +857,18 @@ class GoogleRepository:
     async def purge(self, chat, user=None):
         if self.db is not None:
             await self.db.execute(
+                "DELETE FROM google_create_reservations WHERE chat_key=$1 "
+                "AND ($2::text IS NULL OR requester_key=$2)",
+                chat,
+                user,
+            )
+            await self.db.execute(
+                "DELETE FROM google_outputs WHERE chat_key=$1 "
+                "AND ($2::text IS NULL OR requester_key=$2)",
+                chat,
+                user,
+            )
+            await self.db.execute(
                 "DELETE FROM google_actions WHERE chat_key=$1 "
                 "AND ($2::text IS NULL OR requester_key=$2)",
                 chat,
@@ -687,6 +889,16 @@ class GoogleRepository:
             if user is None:
                 await self.db.execute("DELETE FROM google_settings WHERE chat_key=$1", chat)
         else:
+            self._create_reservations = {
+                key: value
+                for key, value in self._create_reservations.items()
+                if key[0] != chat or user is not None and value["requester_key"] != user
+            }
+            self._outputs = {
+                key: value
+                for key, value in self._outputs.items()
+                if key[0] != chat or user is not None and value["requester_key"] != user
+            }
             self._actions = {
                 k: v
                 for k, v in self._actions.items()
@@ -704,6 +916,7 @@ class GoogleRepository:
             }
             if user is None:
                 self._settings.pop(chat, None)
+                self._confirm_writes.pop(chat, None)
             self._edit_results = {k: v for k, v in self._edit_results.items() if k in self._actions}
 
     async def purge_older_than(self, cutoff, *, unresolved_before=None):
@@ -711,6 +924,10 @@ class GoogleRepository:
             days=self.unresolved_retention_days
         )
         if self.db is not None:
+            await self.db.execute(
+                "DELETE FROM google_create_reservations WHERE created_at<$1", cutoff
+            )
+            await self.db.execute("DELETE FROM google_outputs WHERE created_at<$1", cutoff)
             await self.db.execute(
                 "DELETE FROM google_actions a WHERE a.created_at<$1 AND NOT EXISTS ("
                 "SELECT 1 FROM google_edit_results r WHERE r.chat_key=a.chat_key "
@@ -721,6 +938,14 @@ class GoogleRepository:
                 unresolved_before,
             )
         else:
+            self._create_reservations = {
+                key: row
+                for key, row in self._create_reservations.items()
+                if row["created_at"] >= cutoff
+            }
+            self._outputs = {
+                key: value for key, value in self._outputs.items() if value["created_at"] >= cutoff
+            }
             keep = {
                 k
                 for k, result in self._edit_results.items()

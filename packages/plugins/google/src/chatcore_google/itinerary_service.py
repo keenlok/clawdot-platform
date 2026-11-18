@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from decimal import Decimal
 
@@ -290,7 +291,18 @@ class ItineraryService:
                     ],
                 },
             )
-            file_id = created["spreadsheetId"]
+            file_id = created.get("spreadsheetId") if isinstance(created, dict) else None
+            if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+                raise ValueError("Google returned an invalid spreadsheet ID; inspect Drive.")
+            await self.google.repo.record_output(
+                ctx.chat.key,
+                file_id,
+                SHEET,
+                ctx.user.ref.key,
+                action.thread_id,
+                payload["owner"],
+                action.id,
+            )
         requests = []
         for group in groups:
             rows = [VERSION, HEADER, *group["rows"]] if group["new"] else group["rows"]

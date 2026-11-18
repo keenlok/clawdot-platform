@@ -60,6 +60,128 @@ async def test_settings_and_reservations_survive_new_repository_and_reject_repla
         await GoogleRepository(google_db).reserve("fake:a", "once", "fake:user", 1, 10, 2)
 
 
+async def test_output_journal_and_confirm_switch_persist_and_purge(google_db):
+    repo = GoogleRepository(google_db)
+    await repo.configure_fields("fake:out", confirm_writes=False, expected_revision=0)
+    assert await repo.confirm_writes("fake:out") is False
+    assert await repo.settings("fake:out") == (True, 1)
+    await repo.record_output(
+        "fake:out", "file-id", "sheet", "fake:alice", "topic-a", "owner", "action"
+    )
+    await repo.reserve_create("fake:out", "action", "fake:alice", 1)
+    await repo.record_output(
+        "fake:out", "recent-file", "sheet", "fake:alice", "topic-a", "owner", "recent-action"
+    )
+    await repo.reserve_create("fake:out", "recent-action", "fake:alice", 2)
+    assert await repo.output("fake:out", "topic-a", "file-id") is not None
+    assert await repo.output("fake:other", "topic-a", "file-id") is None
+    assert await repo.output("fake:out", "topic-b", "file-id") is None
+    assert (
+        await google_db.fetchval(
+            "SELECT count(*) FROM google_outputs WHERE chat_key=$1", "fake:out"
+        )
+        == 2
+    )
+    assert (
+        await google_db.fetchval(
+            "SELECT count(*) FROM google_create_reservations WHERE chat_key=$1", "fake:out"
+        )
+        == 2
+    )
+    assert await repo.creates_today("fake:out", "fake:alice") == 2
+    await google_db.execute(
+        "UPDATE google_create_reservations SET created_at=$3 WHERE chat_key=$1 AND action_id=$2",
+        "fake:out",
+        "action",
+        datetime.now(UTC) - timedelta(days=10),
+    )
+    await google_db.execute(
+        "UPDATE google_outputs SET created_at=$3 WHERE chat_key=$1 AND file_id=$2",
+        "fake:out",
+        "file-id",
+        datetime.now(UTC) - timedelta(days=10),
+    )
+    cutoff = datetime.now(UTC) - timedelta(days=1)
+    await google_db.execute(
+        "UPDATE google_outputs SET created_at=$3 WHERE chat_key=$1 AND file_id=$2",
+        "fake:out",
+        "recent-file",
+        cutoff + timedelta(seconds=1),
+    )
+    await google_db.execute(
+        "UPDATE google_create_reservations SET created_at=$3 WHERE chat_key=$1 AND action_id=$2",
+        "fake:out",
+        "recent-action",
+        cutoff + timedelta(seconds=1),
+    )
+    await repo.purge_older_than(cutoff)
+    assert await repo.output("fake:out", "topic-a", "file-id") is None
+    assert await repo.output("fake:out", "topic-a", "recent-file") is not None
+    assert (
+        await google_db.fetchval(
+            "SELECT count(*) FROM google_outputs WHERE chat_key=$1", "fake:out"
+        )
+        == 1
+    )
+    assert (
+        await google_db.fetchval(
+            "SELECT count(*) FROM google_create_reservations WHERE chat_key=$1", "fake:out"
+        )
+        == 1
+    )
+
+
+async def test_output_trash_timestamp_persists_and_removes_output_binding(google_db):
+    repo = GoogleRepository(google_db)
+    await repo.record_output(
+        "fake:trash", "trash-file", "sheet", "fake:user", "topic", "owner", "create-action"
+    )
+    assert await repo.mark_output_trashed("fake:trash", "trash-file", "create-action") is True
+    assert await GoogleRepository(google_db).output("fake:trash", "topic", "trash-file") is None
+    row = await repo.output_any("fake:trash", "trash-file")
+    assert row["trashed_at"] is not None
+    assert await repo.mark_output_trashed("fake:trash", "trash-file", "create-action") is False
+
+
+async def test_trashed_doc_output_revokes_edit_result_authority(google_db):
+    repo = GoogleRepository(google_db)
+    binding = {
+        "owner_id": "owner-id",
+        "owner_email": "owner@example.com",
+        "thread_id": "topic",
+        "mode": "create",
+    }
+    await repo.reserve_edit(
+        "fake:doc-trash",
+        "create-action",
+        "fake:alice",
+        0,
+        10,
+        0,
+        kind="create_doc",
+        source_id=None,
+        output_binding=binding,
+    )
+    await repo.update_edit_result(
+        "fake:doc-trash", "create-action", phase="destination_created", destination_id="doc-id"
+    )
+    await repo.record_output(
+        "fake:doc-trash",
+        "doc-id",
+        "application/vnd.google-apps.document",
+        "fake:alice",
+        "topic",
+        "owner-id",
+        "create-action",
+    )
+    assert await repo.output_destination("fake:doc-trash", "topic", "doc-id") is not None
+    assert await repo.mark_output_trashed("fake:doc-trash", "doc-id", "create-action")
+    assert (
+        await GoogleRepository(google_db).output_destination("fake:doc-trash", "topic", "doc-id")
+        is None
+    )
+
+
 async def test_concurrent_daily_quota_is_atomic_and_scoped(google_db):
     repo = GoogleRepository(google_db)
     results = await asyncio.gather(
@@ -69,6 +191,20 @@ async def test_concurrent_daily_quota_is_atomic_and_scoped(google_db):
     assert sum(isinstance(value, ValueError) for value in results) == 1
     await repo.reserve("fake:b", "other", "fake:user", 3, 3, 0)
     assert await google_db.fetchval("SELECT count(*) FROM google_actions") == 2
+
+
+async def test_member_create_reservations_are_atomic_and_idempotent(google_db):
+    repo = GoogleRepository(google_db)
+    results = await asyncio.gather(
+        repo.reserve_create("fake:cap", "action-1", "fake:member", 1),
+        repo.reserve_create("fake:cap", "action-2", "fake:member", 1),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, PermissionError) for result in results) == 1
+    assert sum(result is None for result in results) == 1
+    assert await repo.creates_today("fake:cap", "fake:member") == 1
+    await repo.reserve_create("fake:cap", "action-1", "fake:member", 1)
+    assert await repo.creates_today("fake:cap", "fake:member") == 1
 
 
 async def test_links_and_privacy_hooks_cannot_cross_chat_or_user(google_db):

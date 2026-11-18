@@ -8,6 +8,8 @@ from collections import Counter
 from chatcore_google.client import GoogleError
 from chatcore_google.edit_models import DOC
 
+SHEET = "application/vnd.google-apps.spreadsheet"
+
 ACCESS_LEVELS = frozenset({"private", "viewer", "editor"})
 
 
@@ -110,14 +112,14 @@ async def publish_doc_link_access(google, action, ctx, payload, destination_id):
     if access not in {"viewer", "editor"}:
         raise ValueError("The confirmed Doc has no link-access grant to publish.")
     requested_role = "reader" if access == "viewer" else "writer"
-    expected_kind = action.kind
+    expected_kind = "create_doc" if action.kind == "create_rich_doc" else action.kind
     expected_source = None
     if action.kind == "edit_doc":
         destination = payload.get("destination") or {}
         if destination.get("mode") not in {"copy", "docx_import"}:
             raise ValueError("Only a new Doc destination can receive link access.")
         expected_source = (payload.get("source") or {}).get("file_id")
-    elif action.kind != "create_doc":
+    elif action.kind not in {"create_doc", "create_rich_doc"}:
         raise ValueError("Only a confirmed new Doc action can receive link access.")
     if (
         result is None
@@ -299,3 +301,114 @@ async def publish_doc_link_access(google, action, ctx, payload, destination_id):
 async def publish_doc_link_viewer(google, action, ctx, payload, destination_id):
     """Backward-compatible entry point for existing viewer payloads."""
     return await publish_doc_link_access(google, action, ctx, payload, destination_id)
+
+
+async def publish_sheet_link_access(google, action, ctx, payload, destination_id):
+    """Share only the newly-created Sheet bound to this action's output journal row."""
+    access = payload.get("link_access")
+    if access not in {"viewer", "editor"}:
+        return True, ""
+    row = await google.repo.output(ctx.chat.key, action.thread_id, destination_id)
+    client = google.client
+    try:
+        await google.verify_commit(action, ctx)
+        identity = await client.identity()
+        metadata = await client.metadata(destination_id)
+    except Exception:
+        return False, (
+            f"Sharing failed for https://docs.google.com/spreadsheets/d/{destination_id}/edit; "
+            "authorization could not be rechecked."
+        )
+    owners = metadata.get("owners") or []
+    if (
+        action.kind not in {"create_sheet", "create_workbook"}
+        or not row
+        or row.get("action_id") != action.id
+        or row.get("owner_id") != identity
+        or row.get("mime") != SHEET
+        or metadata.get("id") != destination_id
+        or metadata.get("mimeType") != SHEET
+        or metadata.get("ownedByMe") is not True
+        or metadata.get("isAppAuthorized") is not True
+        or metadata.get("trashed")
+        or metadata.get("capabilities", {}).get("canEdit") is not True
+        or metadata.get("capabilities", {}).get("canShare") is not True
+        or not any(
+            str(owner.get("emailAddress", "")).casefold() == google.settings.owner_email.casefold()
+            and owner.get("permissionId") == identity
+            for owner in owners
+        )
+    ):
+        return (
+            False,
+            f"Sharing failed for https://docs.google.com/spreadsheets/d/{destination_id}/edit; "
+            "the file is available, but ownership or sharing could not be verified.",
+        )
+    try:
+        permissions = await client.list_permissions(destination_id)
+    except Exception:
+        return False, (
+            f"Sharing failed for https://docs.google.com/spreadsheets/d/{destination_id}/edit; "
+            "existing access could not be checked, so no link permission was added."
+        )
+    entries = permissions.get("permissions")
+    role = "reader" if access == "viewer" else "writer"
+    existing_public = isinstance(entries, list) and any(
+        entry.get("type") == "anyone" for entry in entries
+    )
+    if (
+        permissions.get("nextPageToken")
+        or not isinstance(entries, list)
+        or any(entry.get("type") == "domain" and entry.get("role") != "reader" for entry in entries)
+        or existing_public
+        and not _public_acl_is_safe(entries, role)
+    ):
+        return (
+            False,
+            f"Sharing failed for https://docs.google.com/spreadsheets/d/{destination_id}/edit; "
+            "existing access was unsafe, so no link permission was added.",
+        )
+    try:
+        before = list(entries)
+        old_acl = Counter(map(_permission_key, before))
+        if not existing_public:
+            await google.verify_commit(action, ctx)
+            binding = await google.repo.output(ctx.chat.key, action.thread_id, destination_id)
+            if not (
+                binding
+                and binding.get("action_id") == action.id
+                and binding.get("requester_key") == action.requester.key
+                and binding.get("owner_id") == payload.get("owner")
+                and binding.get("thread_id") == action.thread_id
+            ):
+                raise PermissionError("The output authorization binding changed.")
+        if not existing_public:
+            if role == "reader":
+                await client.grant_link_viewer(destination_id)
+            else:
+                await client.grant_link_editor(destination_id)
+        after = await client.list_permissions(destination_id)
+        after_entries = after.get("permissions", [])
+        post_acl = Counter(map(_permission_key, after_entries))
+        added = post_acl - old_acl
+        removed = old_acl - post_acl
+        expected_delta = (
+            sum(added.values()) == 1
+            and sum(removed.values()) == 0
+            and all(key[1] == "anyone" and key[2] == role and key[5] is False for key in added)
+            if not existing_public
+            else not added and not removed
+        )
+        if (
+            after.get("nextPageToken")
+            or not _public_acl_is_safe(after_entries, role)
+            or not expected_delta
+        ):
+            raise ValueError("readback failed")
+    except Exception:
+        return (
+            False,
+            f"Sharing failed for https://docs.google.com/spreadsheets/d/{destination_id}/edit; "
+            "the file is available and no retry was made.",
+        )
+    return True, ""

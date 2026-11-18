@@ -78,7 +78,7 @@ class GoogleHttp:
             or parsed.host not in HOSTS
             or parsed.port not in (None, 443)
             or parsed.userinfo
-            or method not in {"GET", "POST"}
+            or method not in {"GET", "POST", "PATCH"}
         ):
             raise GoogleError("Google requests require a fixed Google HTTPS endpoint.")
         try:
@@ -228,6 +228,16 @@ class GoogleClient:
             },
         )
 
+    async def rename_file(self, file_id, name):
+        """Rename a Drive file using its fixed metadata endpoint."""
+        return await self.request(
+            "PATCH",
+            "www.googleapis.com",
+            f"/drive/v3/files/{file_id}",
+            params={"fields": "id,name", "supportsAllDrives": "true"},
+            json={"name": name},
+        )
+
     async def media(self, file_id):
         return await self.http.request_bytes(
             "GET",
@@ -273,6 +283,18 @@ class GoogleClient:
             "sheets.googleapis.com",
             f"/v4/spreadsheets/{file_id}",
             params={"fields": "spreadsheetId,properties(title),sheets(properties)"},
+        )
+
+    async def sheet_for_replace(self, file_id):
+        return await self.request(
+            "GET",
+            "sheets.googleapis.com",
+            f"/v4/spreadsheets/{file_id}",
+            params={
+                "fields": "sheets(properties,bandedRanges(bandedRangeId,range),basicFilter,merges,"
+                "conditionalFormats,charts(chartId),protectedRanges(protectedRangeId),"
+                "filterViews(filterViewId))"
+            },
         )
 
     async def grid_for_edit(self, file_id, sheet_id, cell_range):
@@ -452,4 +474,13 @@ class GoogleClient:
             "sheets.googleapis.com",
             f"/v4/spreadsheets/{file_id}:batchUpdate",
             json={"requests": requests},
+        )
+
+    async def trash_file(self, file_id):
+        return await self.request(
+            "PATCH",
+            "www.googleapis.com",
+            f"/drive/v3/files/{file_id}",
+            params={"fields": "id,trashed", "supportsAllDrives": "true"},
+            json={"trashed": True},
         )

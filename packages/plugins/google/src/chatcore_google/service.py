@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import random
 import re
 from dataclasses import replace
 
@@ -16,17 +17,21 @@ from chatcore_google.docx import docx_text
 from chatcore_google.link_sharing import (
     payload_link_access,
     publish_doc_link_access,
+    publish_sheet_link_access,
     record_result,
     resolve_link_access,
     web_url,
     write_outcome_uncertain,
 )
-from chatcore_google.permissions import authorize
+from chatcore_google.permissions import authorize, is_writer
 from chatcore_google.refs import approved_ref, approved_source_ref, parse_google_ref
 from chatcore_google.render import doc_text, literal_rows
 
 DOC = "application/vnd.google-apps.document"
 SHEET = "application/vnd.google-apps.spreadsheet"
+CREATE_KINDS = frozenset({"create_doc", "create_sheet", "create_workbook", "create_rich_doc"})
+OUTPUT_EDIT_KINDS = frozenset({"add_sheet_tab", "replace_sheet_tab", "trash_file"})
+DOC_APPEND_KINDS = frozenset({"append_doc_blocks"})
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _logger = logging.getLogger("chatcore_google")
 
@@ -44,6 +49,11 @@ def column_number(value):
     for char in value:
         result = result * 26 + ord(char) - 64
     return result
+
+
+def _file_url(file_id, mime):
+    kind = "spreadsheets" if mime == SHEET else "document"
+    return f"https://docs.google.com/{kind}/d/{file_id}/edit"
 
 
 def _same_output_binding(left, right):
@@ -65,6 +75,28 @@ def _same_output_binding(left, right):
     )
 
 
+def _same_append_output_binding(output, action, ctx, payload):
+    return (
+        output is not None
+        and output.get("requester_key") == ctx.user.ref.key
+        and output.get("owner_id") == payload.get("owner")
+        and output.get("thread_id") == action.thread_id
+    )
+
+
+def _same_target_output_binding(output, action, ctx, payload):
+    return (
+        output is not None
+        and output.get("chat_key") == ctx.chat.key
+        and output.get("thread_id") == action.thread_id
+        and output.get("owner_id") == payload.get("owner")
+        and output.get("file_id") == payload.get("file_id")
+        and output.get("trashed_at") is None
+        and (output.get("requester_key") == ctx.user.ref.key)
+        == (payload.get("target") == "own_output")
+    )
+
+
 def select_tab(sheet, ref, tab=None):
     tabs = [value["properties"] for value in sheet.get("sheets", [])]
     by_gid = next((value for value in tabs if value["sheetId"] == ref.gid), None)
@@ -82,10 +114,17 @@ def select_tab(sheet, ref, tab=None):
 class GoogleService:
     def __init__(self, settings, access, client, repo):
         self.settings, self.access, self.client, self.repo = settings, access, client, repo
+        self.sheet_id_generator = random.SystemRandom().randint
 
-    async def authorize(self, ctx, *, write=False, configure=False):
+    async def authorize(self, ctx, *, write=False, configure=False, create=False):
         await authorize(
-            self.settings, self.access, self.repo, ctx, write=write, configure=configure
+            self.settings,
+            self.access,
+            self.repo,
+            ctx,
+            write=write,
+            configure=configure,
+            create=create,
         )
 
     def rows(self, rows, *, grid_columns=None):
@@ -243,6 +282,19 @@ class GoogleService:
             raise ValueError("Post the actual file link; folders and shortcuts are not supported.")
 
     async def file(self, ctx, url, expected=None, *, allow_docx=False, source_message_ref=None):
+        ref = parse_google_ref(url)
+        await self.authorize(ctx)
+        output = await self.repo.output(ctx.chat.key, ctx.thread_id, ref.file_id)
+        if output is not None:
+            owner = await self.client.identity()
+            metadata = await self.client.metadata(ref.file_id)
+            self.check_metadata(ref.file_id, metadata)
+            self.check_type(metadata, expected, allow_docx=allow_docx)
+            if output["owner_id"] != owner or metadata.get("ownedByMe") is not True:
+                raise PermissionError(
+                    "The journaled output is no longer owned by the Google owner."
+                )
+            return ref, metadata, owner
         ref, metadata, owner = await self.source_file(
             ctx, url, source_message_ref=source_message_ref
         )
@@ -431,18 +483,124 @@ class GoogleService:
             )
         return action
 
-    async def propose_configure(self, ctx, enabled):
+    async def propose_configure(self, ctx, enabled=None, confirm_writes=None):
         await self.authorize(ctx, configure=True)
-        if type(enabled) is not bool:
-            raise ValueError("Specify on or off.")
+        if enabled is None and confirm_writes is None:
+            raise ValueError("Specify enabled or confirm_writes.")
+        if (
+            enabled is not None
+            and type(enabled) is not bool
+            or confirm_writes is not None
+            and type(confirm_writes) is not bool
+        ):
+            raise ValueError("Settings must be true or false.")
         _, revision = await self.repo.settings(ctx.chat.key)
+        changes = {"revision": revision, "owner_email": self.settings.owner_email}
+        if enabled is not None:
+            changes["enabled"] = enabled
+        if confirm_writes is not None:
+            changes["confirm_writes"] = confirm_writes
+        parts = []
+        if enabled is not None:
+            parts.append(f"Turn Google tools {'on' if enabled else 'off'} in this chat?")
+        if confirm_writes is not None:
+            if confirm_writes:
+                parts.append(
+                    "Turn on write previews in this chat? New Google files and edits to files "
+                    "the bot made here will show a preview to confirm first."
+                )
+            else:
+                parts.append(
+                    "Turn off write previews in this chat? New Google files and edits to files "
+                    "the bot made here will happen without a confirmation step."
+                )
+        parts.append("Edits to other files, trashing and settings still need confirmation.")
+        summary = " ".join(parts)
         return await self.action(
             ctx,
             "configure",
-            {"enabled": enabled, "revision": revision, "owner_email": self.settings.owner_email},
-            f"Turn Google tools {'on' if enabled else 'off'} in this chat? "
-            "This applies to Google and itinerary reads/writes.",
+            changes,
+            summary,
         )
+
+    async def propose_doc_blocks(self, ctx, *, url, blocks, tab_id=None):
+        from chatcore_google.rich_doc import compile_doc, preview_doc
+
+        if not isinstance(blocks, list) or any(
+            isinstance(block, dict) and block.get("type") == "title" for block in blocks
+        ):
+            raise ValueError("Title blocks cannot be appended; a title belongs at the top.")
+        compile_doc(blocks, self.settings)
+        ref, metadata, owner, proof = await self.doc_source(ctx, url, write=False)
+        row = await self.repo.output(ctx.chat.key, ctx.thread_id, ref.file_id)
+        if row is None and hasattr(self.repo, "output_any"):
+            prior = await self.repo.output_any(ctx.chat.key, ref.file_id)
+            if prior is not None and prior.get("thread_id") == ctx.thread_id:
+                if prior.get("trashed_at") is not None:
+                    raise ValueError("This output is in Drive trash and cannot be edited.")
+            elif prior is not None:
+                raise PermissionError("This output belongs to another chat topic.")
+        via_output = row is not None
+        if via_output:
+            if row.get("owner_id") != owner or row.get("mime") != DOC:
+                raise PermissionError("The journaled output binding no longer matches this Doc.")
+            self._check_output_doc(ref.file_id, metadata, owner, write=True)
+        target = (
+            "own_output"
+            if via_output and row.get("requester_key") == ctx.user.ref.key
+            else ("output" if via_output else "human")
+        )
+        await self.authorize(ctx, create=True) if target == "own_output" else await self.authorize(
+            ctx, write=True
+        )
+        doc = await self.client.document_for_edit(ref.file_id)
+        from chatcore_google.rich_doc import _body_content
+
+        body = _body_content(doc, tab_id=tab_id)
+        tabs = self._doc_tab_ids(doc)
+        if body is None:
+            if len(tabs) > 1 and tab_id is None:
+                raise ValueError("Specify tab_id because this document has multiple tabs.")
+            raise ValueError("The requested document tab could not be read safely.")
+        if len(tabs) > 1 and tab_id is None:
+            raise ValueError("Specify tab_id because this document has multiple tabs.")
+        if tabs and tab_id is not None and tab_id not in tabs:
+            raise ValueError("The requested document tab was not found.")
+        _, revision = await self.repo.settings(ctx.chat.key)
+        payload = {
+            "file_id": ref.file_id,
+            "url": url,
+            "blocks": copy.deepcopy(blocks),
+            "tab_id": tab_id,
+            "via_output": via_output,
+            "target": target,
+            "owner": owner,
+            "owner_email": self.settings.owner_email,
+            "revision": revision,
+            "proof": proof,
+        }
+        if target == "human":
+            payload["human_revision"] = doc.get("revisionId")
+        summary = (
+            f"Append {len(blocks)} structured blocks to {metadata.get('name', 'Doc')}\n"
+            f"Target: {target}\n\n{preview_doc(blocks)}"
+        )
+        return await self.action(ctx, "append_doc_blocks", payload, summary)
+
+    @staticmethod
+    def _doc_tab_ids(document):
+        found = []
+
+        def visit(tab):
+            props = tab.get("tabProperties") or {}
+            if props.get("tabId"):
+                found.append(props["tabId"])
+            for child in tab.get("childTabs", ()):
+                visit(child)
+
+        for tab in document.get("tabs", ()):
+            visit(tab)
+        return found
 
     async def propose(
         self,
@@ -456,16 +614,42 @@ class GoogleService:
         tab=None,
         link_viewer=None,
         link_access=None,
+        sheet_link_access=None,
+        tabs=None,
+        blocks=None,
+        tab_name=None,
+        tab_id=None,
     ):
-        await self.authorize(ctx, write=True)
-        if kind not in ("append", "create_doc", "create_sheet"):
+        if kind in DOC_APPEND_KINDS:
+            return await self.propose_doc_blocks(ctx, url=url, blocks=blocks, tab_id=tab_id)
+        if kind not in {"append", *CREATE_KINDS, *OUTPUT_EDIT_KINDS, *DOC_APPEND_KINDS}:
             raise ValueError("Unknown Google write operation.")
-        if kind != "create_doc" and (link_access is not None or link_viewer is not None):
+        if kind in OUTPUT_EDIT_KINDS:
+            return await self.propose_output_edit(ctx, kind, url=url, tab=tab, tab_name=tab_name)
+        await self.authorize(ctx, create=kind in CREATE_KINDS | {"append"})
+        if kind == "create_rich_doc" and link_viewer is not None:
+            raise ValueError("Use link_access for a new Rich Doc.")
+        if kind not in CREATE_KINDS and (link_access is not None or link_viewer is not None):
             raise ValueError("Link access choices apply only to a new Google Doc.")
+        if kind in {"create_sheet", "create_workbook"} and link_viewer is not None:
+            raise ValueError("Use link_access for a new Sheet.")
+        if kind in {"create_sheet", "create_workbook"} and link_access is not None:
+            sheet_link_access, link_access = link_access, None
         payload = {"owner_email": self.settings.owner_email}
         grid_columns = None
         if kind == "append":
             ref, metadata, owner = await self.file(ctx, url)
+            output = await self.repo.output(ctx.chat.key, ctx.thread_id, ref.file_id)
+            via_output = bool(
+                output
+                and output["requester_key"] == ctx.user.ref.key
+                and output["owner_id"] == owner
+                and metadata.get("ownedByMe") is True
+                and not metadata.get("trashed")
+            )
+            if not via_output:
+                await self.authorize(ctx, write=True)
+            payload["via_output"] = via_output
             payload.update(file_id=ref.file_id, mime=metadata["mimeType"], doc_tab=ref.doc_tab)
             name = str(metadata.get("name", "File"))[:300]
             if metadata["mimeType"] == SHEET:
@@ -480,18 +664,90 @@ class GoogleService:
                     "For a Doc tab, use its tab URL; spreadsheet tab names are not valid."
                 )
         else:
-            owner = await self.client.identity()
             if not isinstance(title, str) or not title.strip() or len(title) > 200:
                 raise ValueError("Provide a title of 1–200 characters.")
+            workbook_model = None
+            sheet_rows = None
+            sheet_access = None
+            link_forced = False
+            if kind == "create_rich_doc":
+                from chatcore_google.rich_doc import compile_doc
+
+                compile_doc(blocks, self.settings)
+            elif kind == "create_workbook":
+                from chatcore_google.workbook import render_workbook
+                from chatcore_google.workbook_builder import compile_workbook
+
+                workbook_model = compile_workbook(tabs, self.settings, title)
+                render_workbook(
+                    workbook_model,
+                    title=title,
+                    max_cells=self.settings.export_max_cells,
+                    max_cell_chars=self.settings.max_cell_chars,
+                )
+            elif kind == "create_sheet":
+                if text is not None:
+                    raise ValueError("Provide rows for a Sheet.")
+                sheet_rows = self.rows(rows)
+            if kind in {"create_sheet", "create_workbook"}:
+                sheet_access = (
+                    "private"
+                    if sheet_link_access is None
+                    else resolve_link_access(self.settings, sheet_link_access)
+                )
+                if (
+                    not is_writer(self.settings, self.access, ctx.user.ref)
+                    and sheet_access == "private"
+                ):
+                    sheet_access = "viewer"
+                    link_forced = True
+            if (
+                not is_writer(self.settings, self.access, ctx.user.ref)
+                and await self.repo.creates_today(ctx.chat.key, ctx.user.ref.key)
+                >= self.settings.creates_per_user_day
+            ):
+                raise PermissionError(
+                    f"You've reached today's limit of {self.settings.creates_per_user_day} "
+                    "new Google files; "
+                    "try again tomorrow or ask a bot admin."
+                )
+            owner = await self.client.identity()
             payload["title"] = title
-            payload["mime"] = DOC if kind == "create_doc" else SHEET
+            payload["mime"] = DOC if kind in {"create_doc", "create_rich_doc"} else SHEET
             name = title
             if kind == "create_doc":
                 access = resolve_link_access(self.settings, link_access, link_viewer)
+                if not is_writer(self.settings, self.access, ctx.user.ref) and access == "private":
+                    access = "viewer"
+                    payload["link_forced"] = True
                 payload["link_access"] = access
                 if access != "editor":
                     payload["link_viewer"] = access == "viewer"
-        if payload["mime"] == SHEET:
+            elif kind == "create_rich_doc":
+                access = resolve_link_access(self.settings, link_access)
+                if not is_writer(self.settings, self.access, ctx.user.ref) and access == "private":
+                    access = "viewer"
+                    payload["link_forced"] = True
+                payload.update(link_access=access, blocks=copy.deepcopy(blocks))
+            elif kind in {"create_sheet", "create_workbook"}:
+                payload["link_access"] = sheet_access
+                if link_forced:
+                    payload["link_forced"] = True
+                if kind == "create_workbook":
+                    payload["tabs"] = copy.deepcopy(tabs)
+                else:
+                    payload["rows"] = sheet_rows
+        if kind == "create_workbook":
+            from chatcore_google.workbook_builder import preview_workbook
+
+            preview = preview_workbook(payload["tabs"])
+        elif kind == "create_rich_doc":
+            from chatcore_google.rich_doc import preview_doc
+
+            preview = preview_doc(payload["blocks"])
+        elif kind == "create_sheet":
+            preview = json.dumps(payload["rows"], ensure_ascii=False)
+        elif payload["mime"] == SHEET:
             if text is not None:
                 raise ValueError("Provide rows for a Sheet.")
             payload["rows"] = self.rows(rows, grid_columns=grid_columns)
@@ -504,18 +760,32 @@ class GoogleService:
         _, revision = await self.repo.settings(ctx.chat.key)
         payload.update(owner=owner, revision=revision)
         # Long previews are attached in full by action(); the pending payload stays frozen.
-        link_access = payload_link_access(payload) if kind == "create_doc" else None
+        link_access = (
+            payload_link_access(payload) if kind in {"create_doc", "create_rich_doc"} else None
+        )
         access_text = {
             "private": "private; existing access settings are unchanged",
             "viewer": "anyone with the link can view; search discovery is off",
             "editor": "anyone with the link can edit; search discovery is off",
         }
-        link_line = f"Access: {access_text[link_access]}.\n" if kind == "create_doc" else ""
+        link_line = (
+            f"Access: {access_text[link_access]}"
+            + (" (required for files you create)" if payload.get("link_forced") else "")
+            + ".\n"
+            if kind in {"create_doc", "create_rich_doc"}
+            else (
+                f"Access: {access_text[payload['link_access']]}"
+                + (" (required for files you create)" if payload.get("link_forced") else "")
+                + ".\n"
+                if kind in {"create_sheet", "create_workbook"}
+                else ""
+            )
+        )
         target = (
             f"new Doc ({link_access} link access)"
-            if kind == "create_doc"
-            else "new private file"
-            if kind == "create_sheet"
+            if kind in {"create_doc", "create_rich_doc"}
+            else "new Sheet"
+            if kind in {"create_sheet", "create_workbook"}
             else url
         )
         summary = (
@@ -523,6 +793,129 @@ class GoogleService:
             + link_line
             + f"Owner: {self.settings.owner_email}\nTarget: {target}\n\n{preview}"
         )
+        return await self.action(ctx, kind, payload, summary)
+
+    async def propose_output_edit(self, ctx, kind, *, url, tab=None, tab_name=None):
+        from chatcore_google.workbook import render_workbook
+        from chatcore_google.workbook_builder import compile_workbook, preview_workbook
+
+        tab_model = None
+        if kind in {"add_sheet_tab", "replace_sheet_tab"}:
+            if not isinstance(tab, dict):
+                raise ValueError("Provide one formatted tab.")
+            if kind == "replace_sheet_tab" and tab.get("name") != tab_name:
+                raise ValueError("The tab name must exactly match tab_name.")
+            tab_model = compile_workbook([tab], self.settings, "Sheet")
+            render_workbook(
+                tab_model,
+                title="Sheet",
+                max_cells=self.settings.export_max_cells,
+                max_cell_chars=self.settings.max_cell_chars,
+            )
+
+        if kind == "trash_file":
+            parsed = parse_google_ref(url)
+            old = await self.repo.output_any(ctx.chat.key, parsed.file_id)
+            if old is not None and old.get("trashed_at") is not None:
+                raise ValueError("This output is already in Drive trash.")
+        ref, metadata, owner = await self.file(ctx, url, SHEET if kind != "trash_file" else None)
+        row = await self.repo.output(ctx.chat.key, ctx.thread_id, ref.file_id)
+        target = "human"
+        if row is not None:
+            target = "own_output" if row["requester_key"] == ctx.user.ref.key else "output"
+        if kind == "replace_sheet_tab" and row is None:
+            raise PermissionError("Only a Google output in this chat and topic can be replaced.")
+        if kind == "trash_file" and row is None:
+            any_row = await self.repo.output_any(ctx.chat.key, ref.file_id)
+            if any_row and any_row.get("trashed_at") is not None:
+                raise ValueError("This output is already in Drive trash.")
+            raise PermissionError(
+                "Only a Google output in this chat and topic can be moved to trash."
+            )
+        own = row is not None and row["requester_key"] == ctx.user.ref.key
+        await self.authorize(ctx, create=True) if own else await self.authorize(ctx, write=True)
+        if row is not None and (row["owner_id"] != owner or metadata.get("ownedByMe") is not True):
+            raise PermissionError("This output is no longer owned by the Google owner.")
+        if row is not None and row.get("mime") != metadata.get("mimeType"):
+            raise PermissionError("The output type changed; request the file again.")
+        if kind == "trash_file":
+            if metadata.get("trashed"):
+                raise ValueError("This output is already in Drive trash.")
+            if await self.repo.trip_file(ctx.chat.key, ref.file_id) is not None:
+                raise ValueError("Remove this file from its trip before moving it to trash.")
+            payload = dict(
+                file_id=ref.file_id,
+                mime=metadata["mimeType"],
+                via_output=True,
+                target=target,
+                owner=owner,
+                url=url,
+            )
+            summary = (
+                f"Move {metadata.get('name', 'file')} to Drive trash?\nTarget: {url}\n\n"
+                "The file can be restored from Drive for 30 days."
+            )
+        else:
+            sheet = await (
+                self.client.sheet_for_replace(ref.file_id)
+                if kind == "replace_sheet_tab"
+                else self.client.sheet(ref.file_id)
+            )
+            values = sheet.get("sheets", [])
+            if kind == "add_sheet_tab":
+                title = tab["name"]
+                if any(
+                    item["properties"]["title"].casefold() == title.casefold() for item in values
+                ):
+                    raise ValueError("A tab with that name already exists.")
+                if len(values) >= self.settings.max_tabs:
+                    raise ValueError("This spreadsheet has reached the tab limit.")
+                payload = dict(
+                    file_id=ref.file_id,
+                    via_output=row is not None,
+                    target=target,
+                    owner=owner,
+                    tab=copy.deepcopy(tab),
+                    mime=SHEET,
+                    url=url,
+                )
+            else:
+                selected = next(
+                    (item for item in values if item["properties"]["title"] == tab_name), None
+                )
+                if selected is None:
+                    raise ValueError("The exact tab title was not found.")
+                props = selected["properties"]
+                for key in ("charts", "protectedRanges", "filterViews"):
+                    if selected.get(key):
+                        raise ValueError(f"This tab has {key} and cannot be safely replaced.")
+                sheet_id = props["sheetId"]
+                payload = dict(
+                    file_id=ref.file_id,
+                    via_output=True,
+                    target=target,
+                    owner=owner,
+                    tab=copy.deepcopy(tab),
+                    tab_name=tab_name,
+                    sheet_id=sheet_id,
+                    properties=copy.deepcopy(props),
+                    mime=SHEET,
+                    url=url,
+                )
+            preview = preview_workbook([copy.deepcopy(tab)])
+            summary = (
+                f"{kind.replace('_', ' ').title()} in {metadata.get('name', 'Sheet')}\n"
+                f"Target: {target}\n\n{preview}"
+            )
+            if kind == "replace_sheet_tab":
+                summary = (
+                    f"Replace tab {tab_name} in {metadata.get('name', 'Sheet')}\n"
+                    f"Target: {url}\n\n{preview}"
+                )
+        _, revision = await self.repo.settings(ctx.chat.key)
+        payload.update(owner_email=self.settings.owner_email, revision=revision)
+        if kind != "trash_file" and target == "human":
+            payload["via_output"] = False
         return await self.action(ctx, kind, payload, summary)
 
     async def verify_commit(self, action, ctx):
@@ -536,13 +929,64 @@ class GoogleService:
         payload = action.payload
         if payload.get("owner_email") != self.settings.owner_email:
             raise ValueError("Google owner configuration changed; request again.")
-        await self.authorize(
-            ctx, write=action.kind != "configure", configure=action.kind == "configure"
-        )
+        create = action.kind in CREATE_KINDS
+        write = action.kind not in {"configure", *CREATE_KINDS}
+        if action.kind in OUTPUT_EDIT_KINDS | DOC_APPEND_KINDS:
+            if payload.get("via_output") is True and payload.get("target") not in {
+                "own_output",
+                "output",
+            }:
+                raise PermissionError("The output target binding changed; request again.")
+            if payload.get("via_output") is False and payload.get("target") != "human":
+                raise PermissionError("The human-file target binding changed; request again.")
+            own_output = payload.get("via_output") is True and payload.get("target") == "own_output"
+            create, write = own_output, not own_output
+            if payload.get("via_output") is True:
+                output = await self.repo.output(
+                    ctx.chat.key, action.thread_id, payload.get("file_id")
+                )
+                if not _same_target_output_binding(output, action, ctx, payload):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
+                    )
+                requester_matches = output.get("requester_key") == ctx.user.ref.key
+                if requester_matches != own_output:
+                    raise PermissionError("The output requester binding changed; request again.")
+                if action.kind == "trash_file" and payload.get("target") not in {
+                    "own_output",
+                    "output",
+                }:
+                    raise PermissionError("Only a journaled output can be moved to trash.")
+            elif await self.repo.output(ctx.chat.key, action.thread_id, payload.get("file_id")):
+                raise PermissionError("The target changed to a journaled output; request again.")
+        if action.kind == "append":
+            if payload.get("via_output") is True:
+                output = await self.repo.output(ctx.chat.key, ctx.thread_id, payload.get("file_id"))
+                if not _same_append_output_binding(output, action, ctx, payload):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
+                    )
+                write, create = False, True
+            else:
+                write, create = True, False
+        await self.authorize(ctx, write=write, create=create, configure=action.kind == "configure")
         if (await self.repo.settings(ctx.chat.key))[1] != payload["revision"]:
             raise ValueError("Google settings changed; request again.")
         if action.kind != "configure" and await self.client.identity() != payload["owner"]:
             raise ValueError("Google owner identity changed; request again.")
+        if action.kind in CREATE_KINDS and not is_writer(self.settings, self.access, ctx.user.ref):
+            # Previews frozen before v0.21.0 carry no Sheet access (implicitly private) and may
+            # carry only the legacy Doc link_viewer flag; both decode to private here.
+            frozen_access = (
+                payload_link_access(payload)
+                if action.kind == "create_doc"
+                else payload.get("link_access", "private")
+            )
+            if frozen_access == "private":
+                raise PermissionError("Your access changed; request the file again.")
+            await self.repo.reserve_create(
+                ctx.chat.key, action.id, ctx.user.ref.key, self.settings.creates_per_user_day
+            )
         return payload
 
     async def reserve(self, action, ctx, *, suggestion_rows=0):
@@ -555,14 +999,480 @@ class GoogleService:
             action.payload["revision"],
         )
 
+    async def _commit_output_edit(self, action, ctx, payload, plan):
+        file_id = payload["file_id"]
+        output = await self.repo.output(ctx.chat.key, action.thread_id, file_id)
+        if payload.get("via_output") is True and not _same_target_output_binding(
+            output, action, ctx, payload
+        ):
+            raise PermissionError("The output authorization binding changed; request again.")
+        metadata = await self.client.metadata(file_id)
+        self.check_metadata(file_id, metadata)
+        self.check_type(metadata, payload["mime"])
+        if payload.get("via_output") is True and (
+            output["owner_id"] != payload["owner"] or metadata.get("ownedByMe") is not True
+        ):
+            raise PermissionError("This output is no longer owned by the Google owner.")
+        if output is not None and output.get("mime") != metadata.get("mimeType"):
+            raise PermissionError("The output type changed; request the file again.")
+        if payload.get("via_output") is False and await self.repo.output(
+            ctx.chat.key, action.thread_id, file_id
+        ):
+            raise PermissionError("The target changed to a journaled output; request again.")
+        if action.kind == "trash_file":
+            if metadata.get("trashed"):
+                raise ValueError("This output is already in Drive trash.")
+            owners = metadata.get("owners", [])
+            if not any(owner.get("permissionId") == payload["owner"] for owner in owners):
+                raise PermissionError("This file is no longer owned by the Google owner.")
+            if await self.repo.trip_file(ctx.chat.key, file_id) is not None:
+                raise ValueError("Remove this file from its trip before moving it to trash.")
+            await self._recheck_output_write_authority(action, ctx, payload)
+            result = await self.client.trash_file(file_id)
+            if not isinstance(result, dict) or result.get("trashed") is not True:
+                refreshed = await self.client.metadata(file_id)
+                if refreshed.get("trashed") is not True:
+                    url = _file_url(file_id, payload["mime"])
+                    return f"Uncertain: Drive trash status could not be verified for {url}."
+            marked = await self.repo.mark_output_trashed(ctx.chat.key, file_id, output["action_id"])
+            if not marked:
+                return (
+                    f"Uncertain: Drive moved {_file_url(file_id, payload['mime'])} to trash, "
+                    "but its output journal could not be updated. Inspect before retrying."
+                )
+            return (
+                f"Moved {_file_url(file_id, payload['mime'])} to Drive trash "
+                "(restorable for 30 days)."
+            )
+
+        if action.kind == "add_sheet_tab":
+            sheet = await self.client.sheet(file_id)
+            existing = sheet.get("sheets", [])
+            name = payload["tab"]["name"]
+            if any(item["properties"]["title"].casefold() == name.casefold() for item in existing):
+                raise ValueError("A tab with that name now exists; request again.")
+            if len(existing) >= self.settings.max_tabs:
+                raise ValueError("This spreadsheet has reached the tab limit.")
+            used = {item["properties"]["sheetId"] for item in existing}
+            sheet_id = self.sheet_id_generator(1, 2**31 - 1)
+            while sheet_id in used:
+                sheet_id = self.sheet_id_generator(1, 2**31 - 1)
+            from chatcore_google.sheet_tabs import tab_requests
+
+            batches = tab_requests(plan, sheet_id=sheet_id, index=len(existing))
+            await self.repo.reserve(
+                ctx.chat.key,
+                action.id,
+                ctx.user.ref.key,
+                0,
+                self.settings.suggestion_rows_per_day,
+                payload["revision"],
+            )
+            await self._recheck_output_write_authority(action, ctx, payload)
+            added = False
+            try:
+                for batch in batches:
+                    await self.client.batch(file_id, batch)
+                    if any("addSheet" in request for request in batch):
+                        added = True
+            except Exception:
+                if added:
+                    return (
+                        f"Partial: {_file_url(file_id, SHEET)} has a partially written "
+                        f'tab "{name}". '
+                        "Nothing was retried."
+                    )
+                raise
+            return f'Added tab "{name}" to {_file_url(file_id, SHEET)}.'
+
+        return await self._replace_sheet_tab(action, ctx, payload, plan)
+
+    async def _recheck_output_write_authority(self, action, ctx, payload):
+        own_output = payload.get("via_output") is True and payload.get("target") == "own_output"
+        await self.authorize(ctx, create=own_output, write=not own_output)
+        if (await self.repo.settings(ctx.chat.key))[1] != payload.get("revision"):
+            raise ValueError("Google settings changed; request again.")
+        output = await self.repo.output(ctx.chat.key, action.thread_id, payload.get("file_id"))
+        if payload.get("via_output") is True:
+            if not _same_target_output_binding(output, action, ctx, payload):
+                raise PermissionError("The output authorization binding changed; request again.")
+        elif output is not None:
+            raise PermissionError("The target changed to a journaled output; request again.")
+        return output
+
+    async def _replace_sheet_tab(self, action, ctx, payload, plan):
+        file_id, tab_name, sheet_id = payload["file_id"], payload["tab_name"], payload["sheet_id"]
+        sheet = await self.client.sheet_for_replace(file_id)
+        selected = next(
+            (
+                item
+                for item in sheet.get("sheets", [])
+                if item.get("properties", {}).get("sheetId") == sheet_id
+                and item.get("properties", {}).get("title") == tab_name
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError("The target tab changed; request again.")
+        for key in ("charts", "protectedRanges", "filterViews"):
+            if selected.get(key):
+                raise ValueError(f"This tab has {key} and cannot be safely replaced.")
+        grid = plan.create["sheets"][0]["properties"]["gridProperties"]
+        rows, columns = grid["rowCount"], grid["columnCount"]
+        requests = []
+        for banded in selected.get("bandedRanges", []):
+            if banded.get("range", {}).get("sheetId") == sheet_id:
+                requests.append({"deleteBanding": {"bandedRangeId": banded["bandedRangeId"]}})
+        if selected.get("basicFilter"):
+            requests.append({"clearBasicFilter": {"sheetId": sheet_id}})
+        for index in reversed(range(len(selected.get("conditionalFormats", [])))):
+            requests.append({"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": index}})
+        if selected.get("merges"):
+            requests.append({"unmergeCells": {"range": {"sheetId": sheet_id}}})
+        clear = {"updateCells": {"range": {"sheetId": sheet_id}, "fields": "*"}}
+        resize = {
+            "updateSheetProperties": {
+                "properties": {
+                    "sheetId": sheet_id,
+                    "gridProperties": {
+                        "rowCount": rows,
+                        "columnCount": columns,
+                        "frozenRowCount": 0,
+                    },
+                },
+                "fields": "gridProperties(rowCount,columnCount,frozenRowCount)",
+            }
+        }
+        clear_requests = requests + [clear, resize]
+        latest = await self.repo.output(ctx.chat.key, action.thread_id, file_id)
+        if not _same_target_output_binding(latest, action, ctx, payload):
+            raise PermissionError("The output authorization binding changed; request again.")
+        await self.repo.reserve(
+            ctx.chat.key,
+            action.id,
+            ctx.user.ref.key,
+            0,
+            self.settings.suggestion_rows_per_day,
+            payload["revision"],
+        )
+        await self._recheck_output_write_authority(action, ctx, payload)
+        try:
+            await self.client.batch(file_id, clear_requests)
+        except Exception:
+            raise
+        try:
+            from chatcore_google.sheet_tabs import tab_requests
+
+            for batch in tab_requests(plan, sheet_id=sheet_id, index=0)[1:]:
+                await self.client.batch(file_id, batch)
+        except Exception:
+            return (
+                "Partial: the tab was cleared but not fully rewritten: "
+                f"{_file_url(file_id, SHEET)}. Nothing was retried."
+            )
+        return f'Replaced tab "{tab_name}" in {_file_url(file_id, SHEET)}.'
+
+    @staticmethod
+    def _doc_prefix(content, boundary):
+        from chatcore_google.rich_doc import _paragraph_text
+
+        result = []
+        for item in content:
+            start = item.get("startIndex", 0)
+            if start >= boundary:
+                continue
+            if "paragraph" in item:
+                value = _paragraph_text(item["paragraph"])
+                if value is None:
+                    raise ValueError("The target Doc tab contains unsupported content.")
+                take = max(0, min(len(value.encode("utf-16-le")) // 2, boundary - start))
+                raw = value.encode("utf-16-le")[: take * 2].decode("utf-16-le", errors="ignore")
+                result.append(("paragraph", raw))
+            elif "table" in item:
+                result.append(("table", GoogleService._doc_table_text(item["table"])))
+        return result
+
+    @staticmethod
+    def _doc_table_text(table):
+        from chatcore_google.rich_doc import _paragraph_text
+
+        rows = []
+        for row in table.get("tableRows", ()):
+            cells = []
+            row_cells = row.get("tableCells", ())
+            for cell in row_cells:
+                cell_content = cell.get("content", ())
+                parts = []
+                for part in cell_content:
+                    if "paragraph" in part:
+                        value = _paragraph_text(part["paragraph"])
+                        if value is None:
+                            raise ValueError("The target Doc tab contains unsupported content.")
+                        parts.append(("paragraph", value))
+                    elif "table" in part:
+                        parts.append(("table", GoogleService._doc_table_text(part["table"])))
+                    elif "sectionBreak" not in part:
+                        raise ValueError("The target Doc tab contains unsupported content.")
+                cells.append(tuple(parts))
+            rows.append((len(row_cells), tuple(cells)))
+        return tuple(rows)
+
+    async def _commit_doc_blocks(self, action, ctx, payload, *, verified=False):
+        from chatcore_google.rich_doc import (
+            _body_content,
+            _has_suggestion,
+            compile_doc,
+            fill_tables,
+            verify_rich_doc,
+        )
+
+        blocks = payload.get("blocks")
+        if not isinstance(blocks, list) or any(
+            isinstance(block, dict) and block.get("type") == "title" for block in blocks
+        ):
+            raise ValueError("Title blocks cannot be appended; a title belongs at the top.")
+        compile_doc(blocks, self.settings)
+        if not verified:
+            await self.verify_commit(action, ctx)
+        await self.recheck_doc_source(ctx, payload["file_id"], payload.get("proof"), write=True)
+        metadata = await self.client.metadata(payload["file_id"])
+        self.check_metadata(payload["file_id"], metadata)
+        self.check_type(metadata, DOC)
+        if payload.get("via_output") is True:
+            self._check_output_doc(payload["file_id"], metadata, payload["owner"], write=True)
+        document = await self.client.document_for_edit(payload["file_id"])
+        if payload.get("target") == "human" and document.get("revisionId") != payload.get(
+            "human_revision"
+        ):
+            raise ValueError("The Doc changed since the preview; request again.")
+        if _has_suggestion(document):
+            raise ValueError("This Doc has pending suggestions; resolve them before appending.")
+        content = _body_content(document, tab_id=payload.get("tab_id"))
+        if content is None:
+            raise ValueError("The requested document tab could not be read safely.")
+        paragraphs = [item for item in content if "paragraph" in item]
+        if not paragraphs:
+            raise ValueError("The target Doc tab has no appendable final paragraph.")
+        last = paragraphs[-1]
+        paragraph = last["paragraph"]
+        elements = paragraph.get("elements", ())
+        text = "".join(
+            element.get("textRun", {}).get("content", "")
+            for element in elements
+            if isinstance(element.get("textRun", {}).get("content"), str)
+        )
+        style = paragraph.get("paragraphStyle") or {}
+        empty_unstyled = (
+            text == "\n"
+            and not paragraph.get("bullet")
+            and style.get("namedStyleType", "NORMAL_TEXT") == "NORMAL_TEXT"
+            and not any(key != "namedStyleType" and value for key, value in style.items())
+        )
+        insert_at = (
+            int(last.get("startIndex", 1)) if empty_unstyled else int(last.get("endIndex", 2)) - 1
+        )
+        leading_newline = not empty_unstyled
+        prefix = self._doc_prefix(content, insert_at)
+        tab_id = payload.get("tab_id")
+        plan = compile_doc(
+            blocks,
+            self.settings,
+            base_index=insert_at,
+            leading_newline=leading_newline,
+            tab_id=tab_id,
+        )
+        content_start = insert_at + (1 if leading_newline else 0)
+        tab_range = {
+            "startIndex": content_start,
+            "endIndex": insert_at
+            + (len(plan.body_text.encode("utf-16-le")) // 2)
+            + (1 if plan.tables else 0),
+        }
+        if tab_id is not None:
+            tab_range["tabId"] = tab_id
+        batch_a = []
+        if plan.body_text:
+            batch_a.append(
+                {
+                    "insertText": {
+                        "location": {"index": insert_at, **({"tabId": tab_id} if tab_id else {})},
+                        "text": plan.body_text,
+                    }
+                }
+            )
+        batch_a.extend(
+            [
+                {
+                    "updateTextStyle": {
+                        "range": copy.deepcopy(tab_range),
+                        "textStyle": {},
+                        "fields": "*",
+                    }
+                },
+                {
+                    "updateParagraphStyle": {
+                        "range": copy.deepcopy(tab_range),
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                        "fields": "*",
+                    }
+                },
+                {"deleteParagraphBullets": {"range": copy.deepcopy(tab_range)}},
+            ]
+        )
+        batch_a.extend(request for request in plan.batch_a if "insertText" not in request)
+        revision = document.get("revisionId")
+        if not isinstance(revision, str) or not revision:
+            raise ValueError("Google returned a document without a stable revision ID.")
+        if payload.get("via_output") is True:
+            latest = await self.repo.output(ctx.chat.key, action.thread_id, payload["file_id"])
+            if not _same_target_output_binding(latest, action, ctx, payload):
+                raise PermissionError("The output authorization binding changed; request again.")
+        elif await self.repo.output(ctx.chat.key, action.thread_id, payload["file_id"]):
+            raise PermissionError("The target changed to a journaled output; request again.")
+        await self._recheck_output_write_authority(action, ctx, payload)
+        await self.reserve(action, ctx)
+        try:
+            response = await self.client.edit_document(payload["file_id"], batch_a, revision)
+        except Exception as exc:
+            if not write_outcome_uncertain(exc):
+                return (
+                    "Google refused the append; nothing was written to "
+                    f"{payload['url']}. Request it again if the Doc is still right."
+                )
+            return (
+                "Uncertain: Google may or may not have appended the text to "
+                f"{payload['url']}. Inspect the Doc before retrying; no retry was made."
+            )
+        try:
+            revision = self._doc_revision_after_batch(response)
+            if plan.batch_b:
+                response = await self.client.edit_document(
+                    payload["file_id"], list(plan.batch_b), revision
+                )
+                revision = self._doc_revision_after_batch(response)
+            await fill_tables(
+                self.client,
+                payload["file_id"],
+                plan,
+                tab_id=tab_id,
+                after_index=insert_at,
+            )
+            result = await self.client.document_for_edit(payload["file_id"])
+            after = _body_content(result, tab_id=tab_id)
+            if after is None or self._doc_prefix(after, insert_at) != prefix:
+                return (
+                    "Append may be partial; the original content could not be verified: "
+                    f"{payload['url']}"
+                )
+            text_ok, warnings = verify_rich_doc(
+                result,
+                plan,
+                tab_id=tab_id,
+                after_index=insert_at + (1 if leading_newline else 0),
+            )
+            if not text_ok:
+                return (
+                    "Append may be partial or uncertain; verify the Doc before retrying: "
+                    f"{payload['url']}"
+                )
+        except Exception:
+            return (
+                "Partial: the text was appended to "
+                f"{payload['url']}, but tables, cell text or verification did not complete. "
+                "Inspect the Doc before retrying; no retry was made."
+            )
+        suffix = f" Formatting warnings: {', '.join(warnings)}." if warnings else ""
+        return f"Appended {len(blocks)} blocks to {payload['url']}.{suffix}"
+
+    def _doc_revision_after_batch(self, response):
+        write_control = response.get("writeControl") if isinstance(response, dict) else None
+        revision = (
+            write_control.get("requiredRevisionId") if isinstance(write_control, dict) else None
+        )
+        if isinstance(revision, str) and revision:
+            return revision
+        raise ValueError("Google did not return a fresh Docs revision ID.")
+
     async def commit(self, action, ctx):
+        workbook_plan = None
+        rich_doc_plan = None
+        output_tab_plan = None
+        if action.kind in {"add_sheet_tab", "replace_sheet_tab"}:
+            from chatcore_google.workbook import render_workbook
+            from chatcore_google.workbook_builder import compile_workbook
+
+            model = compile_workbook(
+                [action.payload.get("tab")], self.settings, action.payload.get("title", "Sheet")
+            )
+            output_tab_plan = render_workbook(
+                model,
+                title="Sheet",
+                max_cells=self.settings.export_max_cells,
+                max_cell_chars=self.settings.max_cell_chars,
+            )
+        if action.kind == "create_rich_doc":
+            from chatcore_google.rich_doc import compile_doc
+
+            rich_doc_plan = compile_doc(action.payload.get("blocks"), self.settings)
+        if action.kind == "create_workbook":
+            from chatcore_google.workbook import render_workbook
+            from chatcore_google.workbook_builder import compile_workbook
+
+            model = compile_workbook(action.payload["tabs"], self.settings, action.payload["title"])
+            try:
+                workbook_plan = render_workbook(
+                    model,
+                    title=action.payload["title"],
+                    max_cells=self.settings.export_max_cells,
+                    max_cell_chars=self.settings.max_cell_chars,
+                )
+            except ValueError as exc:
+                if "This export needs more than" in str(exc):
+                    raise ValueError(
+                        f"This workbook needs more than "
+                        f"{self.settings.export_max_cells:,} cells; split it up."
+                    ) from None
+                raise
+        if action.kind in DOC_APPEND_KINDS:
+            from chatcore_google.rich_doc import compile_doc
+
+            compile_doc(action.payload.get("blocks"), self.settings)
+            payload = await self.verify_commit(action, ctx)
+            return await self._commit_doc_blocks(action, ctx, payload, verified=True)
         payload = await self.verify_commit(action, ctx)
         if action.kind == "configure":
-            await self.repo.configure(ctx.chat.key, payload["enabled"], payload["revision"])
-            return "Google tools are " + ("on" if payload["enabled"] else "off") + " in this chat."
+            await self.repo.configure_fields(
+                ctx.chat.key,
+                enabled=payload.get("enabled"),
+                confirm_writes=payload.get("confirm_writes"),
+                expected_revision=payload["revision"],
+            )
+            results = []
+            if "enabled" in payload:
+                results.append("Google tools are " + ("on" if payload["enabled"] else "off"))
+            if "confirm_writes" in payload:
+                results.append(
+                    "Write previews are " + ("on" if payload["confirm_writes"] else "off")
+                )
+            return (
+                ". ".join(result[0].upper() + result[1:] for result in results) + " in this chat."
+            )
+        if action.kind in OUTPUT_EDIT_KINDS:
+            return await self._commit_output_edit(action, ctx, payload, output_tab_plan)
         if action.kind == "append":
             metadata = await self.client.metadata(payload["file_id"])
             self.check_type(metadata, payload["mime"])
+            output = await self.repo.output(ctx.chat.key, ctx.thread_id, payload["file_id"])
+            if payload.get("via_output") is True and not _same_append_output_binding(
+                output, action, ctx, payload
+            ):
+                raise PermissionError("The output authorization binding changed; request again.")
+            if output is not None and (
+                output["owner_id"] != payload.get("owner")
+                or metadata.get("ownedByMe") is not True
+                or metadata.get("trashed")
+            ):
+                raise PermissionError("This output is no longer owned by the Google owner.")
             if payload["mime"] == SHEET:
                 tabs = (await self.client.sheet(payload["file_id"])).get("sheets", [])
                 selected = next(
@@ -580,6 +1490,15 @@ class GoogleService:
                     payload["rows"],
                     grid_columns=selected.get("gridProperties", {}).get("columnCount"),
                 )
+                if payload.get("via_output") is True and not _same_append_output_binding(
+                    await self.repo.output(ctx.chat.key, ctx.thread_id, payload["file_id"]),
+                    action,
+                    ctx,
+                    payload,
+                ):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
+                    )
                 await self.reserve(action, ctx)
                 await self.client.batch(
                     payload["file_id"],
@@ -598,17 +1517,71 @@ class GoogleService:
                     raise ValueError(
                         "Document text exceeds the current character limit; request again."
                     )
+                if payload.get("via_output") is True and not _same_append_output_binding(
+                    await self.repo.output(ctx.chat.key, ctx.thread_id, payload["file_id"]),
+                    action,
+                    ctx,
+                    payload,
+                ):
+                    raise PermissionError(
+                        "The output authorization binding changed; request again."
+                    )
                 await self.reserve(action, ctx)
                 await self.append_doc(payload["file_id"], payload["text"], payload.get("doc_tab"))
             return "Content appended to the confirmed file."
-        if action.kind not in ("create_doc", "create_sheet"):
+        if action.kind not in CREATE_KINDS:
             raise ValueError("Unknown Google action.")
         if action.kind == "create_sheet":
             rows = self.rows(payload["rows"])
-        elif not 0 < len(payload["text"]) <= self.settings.max_chars:
+        elif (
+            action.kind == "create_doc" and not 0 < len(payload["text"]) <= self.settings.max_chars
+        ):
             raise ValueError("Document text exceeds the current character limit; request again.")
-        if action.kind == "create_doc":
-            return await self._create_output_doc(action, ctx, payload)
+        if action.kind in {"create_doc", "create_rich_doc"}:
+            return await self._create_output_doc(action, ctx, payload, rich_doc_plan)
+        if action.kind == "create_workbook":
+            from chatcore_google.workbook import write_workbook
+
+            await self.reserve(action, ctx)
+
+            async def record(file_id):
+                await self.repo.record_output(
+                    ctx.chat.key,
+                    file_id,
+                    SHEET,
+                    ctx.user.ref.key,
+                    action.thread_id,
+                    payload["owner"],
+                    action.id,
+                )
+
+            url, failure = await write_workbook(self.client, workbook_plan, on_created=record)
+            shared, message = True, ""
+            if payload.get("link_access") in {"viewer", "editor"}:
+                shared, message = await publish_sheet_link_access(
+                    self, action, ctx, payload, url.split("/d/", 1)[1].split("/", 1)[0]
+                )
+            if failure:
+                result = (
+                    f"Created {url}, but the workbook is incomplete ({failure}). "
+                    'Its title ends with "(incomplete)". Nothing was retried; '
+                    "check or delete it, then request it again."
+                )
+                if payload.get("link_access") in {"viewer", "editor"}:
+                    sharing = (
+                        message if not shared else f"{payload['link_access']} link access was set."
+                    )
+                    result += f" {sharing}"
+                else:
+                    result += " Sharing unchanged."
+                return result
+            if payload.get("link_access") in {"viewer", "editor"}:
+                return (
+                    f"Created {url} ({payload['link_access']} link access)."
+                    if shared
+                    else f"Created {url}, but {message}"
+                )
+            return f"Created {url} (sharing unchanged)."
         await self.reserve(action, ctx)
         result = await self.client.request(
             "POST",
@@ -629,7 +1602,18 @@ class GoogleService:
                 ],
             },
         )
-        file_id = result["spreadsheetId"]
+        file_id = result.get("spreadsheetId") if isinstance(result, dict) else None
+        if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+            return "Uncertain: Google may have created a Sheet with an invalid ID; inspect Drive."
+        await self.repo.record_output(
+            ctx.chat.key,
+            file_id,
+            SHEET,
+            ctx.user.ref.key,
+            action.thread_id,
+            payload["owner"],
+            action.id,
+        )
         sheet_id = result["sheets"][0]["properties"]["sheetId"]
         await self.client.batch(
             file_id,
@@ -643,9 +1627,15 @@ class GoogleService:
                 }
             ],
         )
-        return f"Created https://docs.google.com/spreadsheets/d/{file_id}/edit (sharing unchanged)."
+        url = f"https://docs.google.com/spreadsheets/d/{file_id}/edit"
+        if payload.get("link_access") in {"viewer", "editor"}:
+            shared, message = await publish_sheet_link_access(self, action, ctx, payload, file_id)
+            if not shared:
+                return f"Created {url}, but {message}"
+            return f"Created {url} ({payload['link_access']} link access)."
+        return f"Created {url} (sharing unchanged)."
 
-    async def _create_output_doc(self, action, ctx, payload):
+    async def _create_output_doc(self, action, ctx, payload, rich_doc_plan=None):
         """Create, journal, verify and optionally share a confirmed native Doc output."""
         await self.repo.reserve_edit(
             ctx.chat.key,
@@ -671,8 +1661,13 @@ class GoogleService:
             revision=payload["revision"],
         )
         try:
+            create_title = (
+                payload["title"][:186] + " (incomplete)"
+                if action.kind == "create_rich_doc"
+                else payload["title"]
+            )
             result = await self.client.request(
-                "POST", "docs.googleapis.com", "/v1/documents", json={"title": payload["title"]}
+                "POST", "docs.googleapis.com", "/v1/documents", json={"title": create_title}
             )
         except Exception as exc:
             uncertain = write_outcome_uncertain(exc)
@@ -704,6 +1699,29 @@ class GoogleService:
                 "Uncertain: Google may have created the Doc without returning a valid ID; "
                 "inspect Drive."
             )
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id):
+            await record_result(
+                self,
+                action,
+                ctx,
+                phase="partial",
+                destination_id=destination_id,
+                failed_stage="destination_validation",
+                error_category="invalid_remote_id",
+            )
+            return (
+                "Partial: Google returned a destination ID that cannot be opened safely; "
+                "inspect Drive."
+            )
+        await self.repo.record_output(
+            ctx.chat.key,
+            destination_id,
+            DOC,
+            ctx.user.ref.key,
+            action.thread_id,
+            payload["owner"],
+            action.id,
+        )
         safe_url = (
             web_url(destination_id)
             if re.fullmatch(r"[A-Za-z0-9_-]{1,200}", destination_id)
@@ -770,24 +1788,55 @@ class GoogleService:
                 "so no content was written."
             )
         append_error = None
-        try:
-            await self.append_doc(destination_id, payload["text"])
-        except Exception as exc:
-            append_error = exc
-        verification = await verify_doc_readback(
-            self.client,
-            destination_id,
-            payload["text"] + "\n",
-            max_chars=self.settings.max_chars + 1,
-            require_complete=True,
-        )
-        if not verification.verified:
-            _logger.info(
-                "Google Doc read-back verification failed category=%s attempts=%d",
-                verification.category,
-                verification.attempts,
+        if action.kind == "create_rich_doc":
+            from chatcore_google.rich_doc import fill_tables, verify_rich_doc_readback
+
+            try:
+                requests = list(rich_doc_plan.batch_a)
+                if requests:
+                    await self.client.request(
+                        "POST",
+                        "docs.googleapis.com",
+                        f"/v1/documents/{destination_id}:batchUpdate",
+                        json={"requests": requests},
+                    )
+                if rich_doc_plan.batch_b:
+                    await self.client.request(
+                        "POST",
+                        "docs.googleapis.com",
+                        f"/v1/documents/{destination_id}:batchUpdate",
+                        json={"requests": list(rich_doc_plan.batch_b)},
+                    )
+                await fill_tables(self.client, destination_id, rich_doc_plan)
+            except Exception as exc:
+                append_error = exc
+            text_verified, format_warnings, verification_category = await verify_rich_doc_readback(
+                self.client, destination_id, rich_doc_plan
             )
-            uncertain = append_error is None or write_outcome_uncertain(append_error)
+        else:
+            try:
+                await self.append_doc(destination_id, payload["text"])
+            except Exception as exc:
+                append_error = exc
+            verification = await verify_doc_readback(
+                self.client,
+                destination_id,
+                payload["text"] + "\n",
+                max_chars=self.settings.max_chars + 1,
+                require_complete=True,
+            )
+            text_verified, format_warnings = verification.verified, []
+            verification_category = verification.category
+        if not text_verified:
+            _logger.info(
+                "Google Doc read-back verification failed category=%s", verification_category
+            )
+            known_render_failure = action.kind == "create_rich_doc" and isinstance(
+                append_error, ValueError
+            )
+            uncertain = append_error is None or (
+                not known_render_failure and write_outcome_uncertain(append_error)
+            )
             await record_result(
                 self,
                 action,
@@ -795,14 +1844,29 @@ class GoogleService:
                 phase="uncertain" if uncertain else "partial",
                 destination_id=destination_id,
                 failed_stage="content_verification",
-                error_category=verification.category,
+                error_category=verification_category,
             )
             return (
                 f"{'Uncertain' if uncertain else 'Partial'}: the Doc is at {url}; content "
-                f"verification failed ({verification.category}), so no link-access change "
+                f"verification failed ({verification_category}), so no link-access change "
                 "was attempted. Inspect before retrying."
             )
 
+        rename_problem = None
+        if action.kind == "create_rich_doc":
+            try:
+                await self.client.rename_file(destination_id, payload["title"])
+            except Exception:
+                try:
+                    actual_name = (await self.client.metadata(destination_id)).get("name")
+                except Exception:
+                    actual_name = None
+                if actual_name == payload["title"]:
+                    rename_problem = None
+                elif isinstance(actual_name, str) and actual_name.endswith(" (incomplete)"):
+                    rename_problem = "incomplete"
+                else:
+                    rename_problem = "unknown"
         access = payload_link_access(payload)
         if access in {"viewer", "editor"}:
             try:
@@ -829,8 +1893,10 @@ class GoogleService:
             self,
             action,
             ctx,
-            phase="verified",
+            phase="partial" if rename_problem else "verified",
             destination_id=destination_id,
+            failed_stage="title_rename" if rename_problem else None,
+            error_category="rename_failed" if rename_problem else None,
         )
         if isinstance(finalized, Exception):
             return (
@@ -842,7 +1908,23 @@ class GoogleService:
             "viewer": "anyone with the link can view",
             "editor": "anyone with the link can edit",
         }[access]
-        return f"Created and verified {url}; {suffix}."
+        if rename_problem:
+            title_message = (
+                'its title still ends with "(incomplete)"'
+                if rename_problem == "incomplete"
+                else "the final title could not be confirmed"
+            )
+            return f"Partial: content was verified at {url}, but {title_message}; {suffix}. " + (
+                f"Formatting could not be fully verified: {', '.join(format_warnings)}."
+                if format_warnings
+                else ""
+            )
+        warning = (
+            f" Formatting could not be fully verified: {', '.join(format_warnings)}."
+            if format_warnings
+            else ""
+        )
+        return f"Created and verified {url}; {suffix}.{warning}"
 
     async def append_doc(self, file_id, text, tab_id=None):
         location = {"tabId": tab_id} if tab_id else {}

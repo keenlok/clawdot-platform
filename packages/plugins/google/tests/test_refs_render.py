@@ -69,9 +69,17 @@ def test_docs_nested_tabs_and_tables_are_flattened_with_labels():
     assert "[Truncated]" in doc_text(document, max_chars=8)
 
 
-def test_sheet_values_are_literal_and_formula_neutralized():
-    values = literal_rows([['=IMPORTDATA("x")', "+a", "-b", "@c", "normal"], [12, True]])
-    assert values[0]["values"][0] == {"userEnteredValue": {"stringValue": '\'=IMPORTDATA("x")'}}
+def test_sheet_values_are_literal_string_values():
+    values = literal_rows(
+        [['=IMPORTXML("x")', "-5 apples", "+65 1234", "@here", "normal"], [12, True]]
+    )
+    assert [cell["userEnteredValue"]["stringValue"] for cell in values[0]["values"]] == [
+        '=IMPORTXML("x")',
+        "-5 apples",
+        "+65 1234",
+        "@here",
+        "normal",
+    ]
     assert values[1]["values"][0] == {"userEnteredValue": {"numberValue": 12}}
     with pytest.raises(ValueError):
         literal_rows([[{"formulaValue": "=BAD()"}]])

@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from chatcore.events import ChatRef
 
+from chatcore_google.refs import parse_google_ref
 from chatcore_google.service import SHEET
 from chatcore_google.workbook import render_workbook, write_workbook
 
@@ -90,6 +91,16 @@ class ExpenseService:
             raise ValueError("Expense group/scope changed; request a fresh export.")
         await self.google.reserve(action, ctx)
         url, failure = await write_workbook(self.google.client, plan)
+        file_id = parse_google_ref(url).file_id
+        await self.google.repo.record_output(
+            ctx.chat.key,
+            file_id,
+            SHEET,
+            ctx.user.ref.key,
+            action.thread_id,
+            payload["owner"],
+            action.id,
+        )
         if failure:
             return (
                 f"Created {url}, but the workbook is incomplete ({failure}). Its title ends "

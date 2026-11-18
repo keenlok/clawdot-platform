@@ -54,6 +54,170 @@ ROWS = {
     "items": {"type": "array", "items": {"type": ["string", "number", "boolean", "null"]}},
 }
 
+TABS = {
+    "type": "array",
+    "description": "Formatted workbook tabs with typed columns and literal cell values.",
+    "minItems": 1,
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "columns", "rows"],
+        "properties": {
+            "name": text("Tab name."),
+            "heading": text("Optional title row."),
+            "note": text("Optional note row."),
+            "columns": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["header", "type"],
+                    "properties": {
+                        "header": text("Column heading."),
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "text",
+                                "number",
+                                "money",
+                                "percent",
+                                "date",
+                                "datetime",
+                                "bool",
+                                "url",
+                            ],
+                        },
+                        "decimals": {"type": "integer", "minimum": 0, "maximum": 4},
+                        "total": {"type": "boolean"},
+                        "width": {"type": "integer", "minimum": 20, "maximum": 1000},
+                    },
+                },
+            },
+            "rows": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "items": {"type": ["string", "number", "boolean", "null"]},
+                },
+            },
+        },
+    },
+}
+
+SPAN_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["text"],
+    "properties": {
+        "text": text("Nonempty text within one paragraph."),
+        "bold": {"type": "boolean"},
+        "italic": {"type": "boolean"},
+        "underline": {"type": "boolean"},
+        "code": {"type": "boolean"},
+        "link": text("HTTP or HTTPS URL with a host."),
+    },
+}
+
+BLOCKS = {
+    "type": "array",
+    "description": "Structured Google Doc content blocks.",
+    "minItems": 1,
+    "maxItems": 200,
+    "items": {
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["type"],
+                "properties": {"type": {"const": "divider", "description": "Horizontal divider."}},
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["type", "items"],
+                "properties": {
+                    "type": {"enum": ["bullets", "numbered"]},
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 100,
+                                    "items": SPAN_SCHEMA,
+                                },
+                            ]
+                        },
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["type", "header", "rows"],
+                "properties": {
+                    "type": {"const": "table"},
+                    "header": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 8,
+                        "items": {"type": "string"},
+                    },
+                    "rows": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "items": {"type": "array", "items": {"type": ["string", "null"]}},
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["type"],
+                "oneOf": [
+                    {"required": ["text"], "not": {"required": ["spans"]}},
+                    {"required": ["spans"], "not": {"required": ["text"]}},
+                ],
+                "properties": {
+                    "type": {"enum": ["title", "paragraph"]},
+                    "text": {"type": "string"},
+                    "spans": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": SPAN_SCHEMA,
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["type", "level"],
+                "oneOf": [
+                    {"required": ["text"], "not": {"required": ["spans"]}},
+                    {"required": ["spans"], "not": {"required": ["text"]}},
+                ],
+                "properties": {
+                    "type": {"const": "heading"},
+                    "level": {"type": "integer", "minimum": 1, "maximum": 3},
+                    "text": {"type": "string"},
+                    "spans": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": SPAN_SCHEMA,
+                    },
+                },
+            },
+        ]
+    },
+}
+
 
 def parameters(properties, required=()):
     return {

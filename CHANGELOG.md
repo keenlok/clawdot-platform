@@ -10,6 +10,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In private-ledger mode, balance cards, trip summary cards and expense exports requested in a DM
   for a group ledger are sent to the DM instead of the group chat. No configuration change.
 
+## [0.24.0] - 2026-11-19
+
+### Added
+- Google: `google_add_sheet_tab(url, tab)` adds a formatted tab (the `google_create_workbook` tab schema) to a Sheet. It never renames the file or touches other tabs; name collisions and `GOOGLE_MAX_TABS` are checked at preview and again at confirmation.
+- Google: `google_replace_sheet_tab(url, tab_name, tab)` clears one tab of a bot-made Sheet (values, formats, validation, banding, filter, conditional formats, merges) and rewrites it in place, keeping its `sheetId`. It refuses tabs with charts, protected ranges or filter views and never changes other tabs.
+- Google: `google_append_doc_blocks(url, blocks, tab_id)` appends `google_create_rich_doc` blocks to the end of a Doc or a chosen tab. New paragraphs don't inherit the previous paragraph's style, marks or bullets; only the new tables are filled, from read-back indices; every write carries a Docs revision precondition; the existing content is verified unchanged. A shared (human) Doc's revision is frozen at preview, so a Doc edited since then is refused.
+- Google: `google_trash_file(url)` moves a bot-made file from this chat and topic to Drive trash (restorable for 30 days) and records `trashed_at`. It always asks for confirmation, refuses human files, trip-attached files and files already trashed, and a trashed file stops counting as a bot output for every tool.
+- Google client and repository: `GoogleClient.sheet_for_replace`, `GoogleClient.trash_file`, `GoogleRepository.output_any` and `GoogleRepository.mark_output_trashed`. No migration (`google_outputs.trashed_at` already exists).
+
+### Fixed
+- Google: `google_create_rich_doc` now emits `updateTextStyle.fields` in a fixed order (it varied between processes).
+
+### Security
+- Permission change in `chatcore_google/gates.py`: the four new tools use the create gate. The handlers then apply the create tier to the requester's own bot-made files and the writer tier to other members' bot-made files and to shared files, re-checking the tier, settings revision and output binding immediately before the first write. Shared files: tab adds and block appends need a writer and always confirm; replace and trash are refused. Previews-off runs immediately only for bot-made files, never for trash.
+
+## [0.23.0] - 2026-11-19
+
+### Added
+- Google: `google_create_rich_doc(title, blocks, link_access)` creates a formatted native Doc from blocks: `title`, `heading` (levels 1–3), `paragraph` (plain text or spans marked bold, italic, underline, monospace `code` or an http(s) `link`), `bullets`, `numbered`, `table` (header plus up to 50 rows, 8 columns) and `divider`. Limits: 200 blocks, 10 tables, `GOOGLE_MAX_CHARS` of text, `GOOGLE_MAX_CELL_CHARS` per cell and `GOOGLE_OUTPUT_MAX_CHARS` for the argument; input is validated before any Google call, and errors name the block, item, row and column.
+- Google: rich Docs are built in three batches (text and styles, then tables last-to-first, then cells filled from read-back indices under a revision precondition), then read back and verified against the plan. The title keeps "(incomplete)" until the text is verified; formatting mismatches are reported as warnings; unverified text is never shared. Results use the existing `create_doc` journal kind, so no migration.
+- Google: `GoogleClient.rename_file(file_id, name)` (Drive `PATCH`); the HTTP client now allows `PATCH`.
+
+### Security
+- Permission change in `chatcore_google/gates.py`: `google_create_rich_doc` uses the create tier, with the existing daily cap and non-writer viewer-link rules.
+
+## [0.22.0] - 2026-11-19
+
+### Added
+- Google: `google_create_workbook(title, tabs, link_access)` creates a formatted multi-tab Sheet from typed columns (`text`, `number`, `money` with 0–4 decimals, `percent`, `date`, `datetime`, `bool` checkboxes, `url` links). Each tab gets an optional heading and note, a frozen styled header, a banded filtered table, estimated or given column widths and optional `SUM` totals. Text is always literal; generated `SUM` totals are the only formulas, and links must be http(s). Input is validated before any Google call, and errors name the tab, row and column. It follows the create tier, daily cap, non-writer viewer link and preview switch from 0.21.0. A partial failure leaves "(incomplete)" in the title and is never retried.
+- Google: `GOOGLE_OUTPUT_MAX_CHARS` (default 60,000) caps the workbook argument. Existing `GOOGLE_MAX_TABS` (capped at 80 here), `GOOGLE_MAX_ROWS`, `GOOGLE_MAX_COLUMNS`, `GOOGLE_MAX_CELL_CHARS` and `GOOGLE_EXPORT_MAX_CELLS` also apply.
+- Google workbook model (`chatcore_google.workbook`): additive `percent`, `bool` and `url` cell kinds and an optional `as` (`money`, `number`, `percent`) on `sum` cells; `write_workbook` takes an optional `on_created` callback. Expense workbook exports render byte-for-byte as before.
+
+### Security
+- Permission change in `chatcore_google/gates.py`: `google_create_workbook` uses the create tier, with its existing create quota and non-writer viewer-link rules.
+
+## [0.21.0] - 2026-11-19
+
+### Added
+- Google: a create permission tier. `GOOGLE_CREATE_USERS=members` lets any member of an allowed chat with Google on create new Docs and Sheets and append to their own outputs; the default, `writers`, keeps today's admins-and-writers rule. Non-writer creates are capped by `GOOGLE_CREATES_PER_USER_DAY` (default 20 per 24 hours).
+- Google: `google_create_sheet` takes `link_access` (`private`, `viewer`, `editor`), with the same verified anyone-with-link sharing as new Docs. Writers still default to private.
+- Google: per-chat write previews switch. A manager turns it off with `/google confirm off` or by asking in plain language (`configure_google` gains `confirm_writes`); creates and appends to the requester's own outputs then run without a confirmation step. Edits to human-shared files, expense exports and settings changes always confirm. `/google` shows the switch.
+- Google: migration `0006_outputs.sql` adds the `google_outputs` journal, `google_create_reservations` and `google_settings.confirm_writes`. Additive; applied automatically on start.
+
+### Changed
+- Google: text written to Sheets (`google_create_sheet`, `google_append`, `google_edit_sheet`, itinerary writes) is stored exactly as given. Text starting with `=`, `+`, `-` or `@` no longer gets a visible leading apostrophe; it is still literal `stringValue` text and is never evaluated as a formula.
+
+### Security
+- Permission change in `chatcore_google/permissions.py` and `gates.py`: files created by non-writers always get at least an anyone-with-link viewer link, because they cannot open a private file in the owner's Drive. Tiers, quota and sharing are rechecked at confirmation. Behaviour is unchanged unless an app sets `GOOGLE_CREATE_USERS=members`.
+
+## [0.20.1] - 2026-11-19
+
+### Fixed
+
+- Telegram startup failures are now diagnosable: when `initialize`, `get_me`, `start` or
+  `start_polling` fails, the adapter logs one WARNING naming the step and the Telegram error
+  class (for example `step=start_polling error=Conflict`). The raised `PlatformError` carries
+  that class name. Message text, the bot token and URLs are never logged.
+
 ## [0.20.0] - 2026-11-18
 
 ### Fixed
@@ -623,7 +681,12 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/keenlok/clawdot-platform/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/keenlok/clawdot-platform/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/keenlok/clawdot-platform/compare/v0.18.0...v0.18.1

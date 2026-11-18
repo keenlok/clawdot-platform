@@ -766,6 +766,9 @@ async def test_qualified_native_copy_remaps_tab_id_and_journals_destination_befo
     assert requests[0]["deleteContentRange"]["range"]["tabId"] == "copy-tab"
     journal = await base.repo.edit_result(ctx.chat.key, action.id)
     assert journal["phase"] == "verified" and journal["destination_id"] == "copy-id"
+    output = await base.repo.output(ctx.chat.key, ctx.thread_id, "copy-id")
+    assert output["mime"] == DOC and output["requester_key"] == ctx.user.ref.key
+    assert output["owner_id"] == action.payload["owner"]
 
 
 @pytest.mark.parametrize("write_error", [False, True])
@@ -792,7 +795,16 @@ async def test_link_viewer_copy_is_shared_after_both_verified_edit_paths(
         )
     client.list_permissions.side_effect = [
         {"permissions": []},
-        {"permissions": [{"type": "anyone", "role": "reader", "allowFileDiscovery": False}]},
+        {
+            "permissions": [
+                {
+                    "id": "anyoneWithLink",
+                    "type": "anyone",
+                    "role": "reader",
+                    "allowFileDiscovery": False,
+                }
+            ]
+        },
     ]
     action = await GoogleEditService(base).propose_doc(
         ctx,
@@ -935,6 +947,11 @@ async def test_docx_converts_to_native_copy_without_source_app_file_grant(
     }
     assert requests[1]["insertText"]["location"] == {"index": 1, "tabId": "tab-1"}
     assert requests[1]["insertText"]["text"] == "Tokyo plans"
+    output = await base.repo.output(ctx.chat.key, ctx.thread_id, "native-id")
+    assert output["mime"] == DOC
+    assert output["requester_key"] == ctx.user.ref.key
+    assert output["thread_id"] == ctx.thread_id
+    assert sum(row["action_id"] == action.id for row in base.repo._outputs.values()) == 1
 
 
 async def test_reserved_destination_claim_prevents_concurrent_duplicate_copies(google_service):
@@ -1104,6 +1121,10 @@ async def test_copied_sheet_resolves_destination_tab_by_title_and_new_numeric_id
     update = client.edit_cells.await_args.args[1]["requests"][0]["updateCells"]
     assert update["range"]["sheetId"] == 99
     assert "verified" in result.lower()
+    output = await base.repo.output(ctx.chat.key, ctx.thread_id, "copy-id")
+    assert output is not None
+    assert output["mime"] == SHEET
+    assert output["requester_key"] == ctx.user.ref.key
 
 
 async def test_doc_verification_accepts_equivalent_normal_text_inheritance(monkeypatch):

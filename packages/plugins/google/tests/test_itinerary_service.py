@@ -29,6 +29,12 @@ async def test_drive_docx_import_is_read_and_previewed_without_writing(google_se
     client.batch.assert_not_awaited()
     client.request.return_value = {"spreadsheetId": "new-trip"}
     await ItineraryService(service).commit(action, commit)
+    output = await service.repo.output(ctx.chat.key, ctx.thread_id, "new-trip")
+    assert output["requester_key"] == ctx.user.ref.key
+    assert output["action_id"] == action.id
+    assert output["mime"] == "application/vnd.google-apps.spreadsheet"
+    assert output["thread_id"] == ctx.thread_id
+    assert sum(row["action_id"] == action.id for row in service.repo._outputs.values()) == 1
     assert client.media.await_count == 2  # Source content access is rechecked at confirmation.
     client.batch.assert_awaited_once()
 
@@ -111,6 +117,7 @@ async def test_csv_import_uses_one_source_and_creates_only_named_new_tabs(google
     assert new_id not in (7, 8)
     assert requests[1]["updateCells"]["start"]["sheetId"] == new_id
     assert not any("deleteSheet" in value or "deleteDimension" in value for value in requests)
+    assert "formulaValue" not in str(requests)
 
 
 async def test_suggestions_are_frozen_confirmed_and_append_only_to_recognized_tabs(google_service):
@@ -139,6 +146,7 @@ async def test_suggestions_are_frozen_confirmed_and_append_only_to_recognized_ta
     request = client.batch.await_args.args[1][0]
     assert request["appendCells"]["sheetId"] == 8
     assert "Proposed" in str(request) and "changed" not in str(request)
+    assert "formulaValue" not in str(request)
 
 
 async def test_human_edits_between_preview_and_commit_force_a_fresh_preview(google_service):
