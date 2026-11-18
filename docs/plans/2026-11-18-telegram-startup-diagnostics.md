@@ -1,8 +1,8 @@
 # Telegram startup failure diagnostics
 
-Status: Planned; requested 2026-11-18 after a downstream deploy incident. Claude planned; Codex CLI
-is installed, so Codex executes and reviews, then Claude does the final review. No release in this
-PR.
+Status: Live; merged in [PR #61](https://github.com/keenlok/clawdot-platform/pull/61) and released in
+v0.20.1. Requested 2026-11-18 after a downstream deploy incident. Claude planned; Codex executed and
+reviewed, then Claude did the final review.
 
 ## Problem
 
