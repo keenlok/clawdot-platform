@@ -66,7 +66,13 @@ def build_gates(plugin):
                 else browser_write
                 if tool.name == "google_browser_edit_doc"
                 else create
-                if tool.name in {"google_create_doc", "google_create_sheet", "google_append"}
+                if tool.name
+                in {
+                    "google_create_doc",
+                    "google_create_sheet",
+                    "google_create_workbook",
+                    "google_append",
+                }
                 else write
                 if tool.writes
                 else read

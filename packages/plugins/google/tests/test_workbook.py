@@ -217,3 +217,76 @@ async def test_write_without_spreadsheet_id_fails_before_batches():
     with pytest.raises(ValueError):
         await write_workbook(client, render(model(tab())))
     client.batch.assert_not_awaited()
+
+
+def test_new_workbook_cell_kinds_and_sum_formats():
+    plan = render(
+        model(
+            tab(
+                rows=[
+                    [
+                        {"k": "percent", "v": "0.25"},
+                        {"k": "bool", "v": True},
+                        {"k": "url", "v": "https://example.com"},
+                        {"k": "number", "v": "12"},
+                    ],
+                    [None, None, None, {"k": "sum", "v": [0, 0], "as": "number"}],
+                    [None, None, None, {"k": "sum", "v": [0, 1], "as": "percent"}],
+                ]
+            )
+        )
+    )
+    rendered = cells(plan)
+    percent, boolean, url = rendered[:3]
+    assert percent["userEnteredFormat"]["numberFormat"] == {"type": "PERCENT", "pattern": "0.0%"}
+    assert boolean["dataValidation"] == {"condition": {"type": "BOOLEAN"}}
+    assert url["userEnteredValue"] == {"stringValue": "https://example.com"}
+    assert url["textFormatRuns"][0]["format"]["link"]["uri"] == "https://example.com"
+    assert rendered[7]["userEnteredFormat"]["numberFormat"]["pattern"] == "#,##0.########"
+    assert rendered[-1]["userEnteredFormat"]["numberFormat"] == {
+        "type": "PERCENT",
+        "pattern": "0.0%",
+    }
+    masks = [request["updateCells"]["fields"] for batch in plan.batches for request in batch]
+    assert masks == ["userEnteredValue,userEnteredFormat,dataValidation,textFormatRuns"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript:alert(1)",
+        "ftp://example.com",
+        "data:text/plain,x",
+        "https:///missing",
+        "https://exa mple.com",
+        "https://example.com/" + "x" * 2000,
+    ],
+)
+def test_url_cells_reject_unsafe_or_overlong_values(url):
+    with pytest.raises(ValueError):
+        render(model(tab(rows=[[{"k": "url", "v": url}]])))
+
+
+async def test_write_records_created_file_before_batches():
+    client = AsyncMock()
+    client.request.return_value = {"spreadsheetId": "new-file"}
+    on_created = AsyncMock()
+
+    async def batch(*args):
+        assert on_created.await_count == 1
+
+    client.batch.side_effect = batch
+    await write_workbook(client, render(model(tab())), on_created=on_created)
+    on_created.assert_awaited_once_with("new-file")
+    batches_after_success = client.batch.await_count
+
+    on_created.side_effect = RuntimeError("private detail")
+    url, failure = await write_workbook(client, render(model(tab())), on_created=on_created)
+    assert url.endswith("/new-file/edit")
+    assert failure == "recording the new file failed"
+    assert client.batch.await_count == batches_after_success
+
+
+def test_existing_cells_keep_the_original_update_mask():
+    plan = render(model(tab(rows=[[{"k": "text", "v": "ordinary"}]])))
+    assert plan.batches[0][0]["updateCells"]["fields"] == "userEnteredValue,userEnteredFormat"

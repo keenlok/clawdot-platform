@@ -4,7 +4,7 @@ import pytest
 from chatcore.confirm import ConfirmService
 from chatcore.plugin import CommandContext
 from chatcore.skills import GateState
-from chatcore.testing import GROUP, press
+from chatcore.testing import GROUP, press, user
 from chatcore.tools.registry import ToolRegistry
 from chatcore_google.plugin import GOOGLE_INSTRUCTIONS, GooglePlugin
 from chatcore_google.settings import GoogleSettings
@@ -47,6 +47,48 @@ async def test_edit_tools_are_gated_writes_in_google_workspace_skill(google_serv
     assert len(GOOGLE_INSTRUCTIONS) <= 800
     gates = plugin.tool_gates()
     assert (await gates["google_edit_doc"].scope(GROUP, False)).state == GateState.AVAILABLE
+
+
+async def test_workbook_tool_is_in_skill_and_runs_immediately_when_previews_are_off(google_service):
+    service, client, ctx, _ = google_service
+    plugin = GooglePlugin(service.settings, service.access, service=service)
+    tool_map = {tool.name: tool for tool in plugin.tools()}
+    assert "google_create_workbook" in tool_map
+    assert "google_create_workbook" in plugin.skills()[0].tools
+    assert tool_map["google_create_workbook"].writes
+    assert (
+        await plugin.tool_gates()["google_create_workbook"].user(ctx)
+    ).state == GateState.AVAILABLE
+    ctx.user = user("member")
+    ctx.is_admin = False
+    assert (
+        await plugin.tool_gates()["google_create_workbook"].user(ctx)
+    ).state == GateState.NOT_ALLOWED
+    service.settings.create_users = "members"
+    assert (
+        await plugin.tool_gates()["google_create_workbook"].user(ctx)
+    ).state == GateState.AVAILABLE
+    ctx.user = user("owner")
+    ctx.is_admin = True
+    tabs = [{"name": "Compare", "columns": [{"header": "Name", "type": "text"}], "rows": [["A"]]}]
+    invalid = await plugin.create_workbook(
+        ctx,
+        "Bad",
+        [{"name": "Bad", "columns": [{"header": "Price", "type": "money"}], "rows": [[True]]}],
+    )
+    assert invalid.is_error
+    client.request.assert_not_awaited()
+    pending = await plugin.create_workbook(ctx, "Hotels", tabs)
+    assert pending.pending_action is not None
+    client.request.assert_not_awaited()
+    await service.repo.configure_fields(GROUP.key, confirm_writes=False, expected_revision=0)
+    client.request.return_value = {"spreadsheetId": "immediate-workbook"}
+    result = await plugin.create_workbook(ctx, "Hotels", tabs)
+    assert result.pending_action is None
+    assert (
+        "Created https://docs.google.com/spreadsheets/d/immediate-workbook/edit" in result.content
+    )
+    assert client.request.await_count == 1
 
 
 async def test_source_derived_doc_guidance_preserves_original_package_and_uses_copy(google_service):

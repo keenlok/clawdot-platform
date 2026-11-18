@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-19
+
+### Added
+- Google: `google_create_workbook(title, tabs, link_access)` creates a formatted multi-tab Sheet from typed columns (`text`, `number`, `money` with 0–4 decimals, `percent`, `date`, `datetime`, `bool` checkboxes, `url` links). Each tab gets an optional heading and note, a frozen styled header, a banded filtered table, estimated or given column widths and optional `SUM` totals. Text is always literal; generated `SUM` totals are the only formulas, and links must be http(s). Input is validated before any Google call, and errors name the tab, row and column. It follows the create tier, daily cap, non-writer viewer link and preview switch from 0.21.0. A partial failure leaves "(incomplete)" in the title and is never retried.
+- Google: `GOOGLE_OUTPUT_MAX_CHARS` (default 60,000) caps the workbook argument. Existing `GOOGLE_MAX_TABS` (capped at 80 here), `GOOGLE_MAX_ROWS`, `GOOGLE_MAX_COLUMNS`, `GOOGLE_MAX_CELL_CHARS` and `GOOGLE_EXPORT_MAX_CELLS` also apply.
+- Google workbook model (`chatcore_google.workbook`): additive `percent`, `bool` and `url` cell kinds and an optional `as` (`money`, `number`, `percent`) on `sum` cells; `write_workbook` takes an optional `on_created` callback. Expense workbook exports render byte-for-byte as before.
+
+### Security
+- Permission change in `chatcore_google/gates.py`: `google_create_workbook` uses the create tier, with its existing create quota and non-writer viewer-link rules.
+
 ## [0.21.0] - 2026-11-19
 
 ### Added
@@ -641,7 +651,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/keenlok/clawdot-platform/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/keenlok/clawdot-platform/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/keenlok/clawdot-platform/compare/v0.19.0...v0.20.0
