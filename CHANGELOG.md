@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Telegram startup failures are now diagnosable: when `initialize`, `get_me`, `start` or
+  `start_polling` fails, the adapter logs one WARNING naming the step and the Telegram error
+  class (for example `step=start_polling error=Conflict`). The raised `PlatformError` carries
+  that class name. Message text, the bot token and URLs are never logged.
+
 ## [0.20.0] - 2026-11-18
 
 ### Fixed
