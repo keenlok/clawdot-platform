@@ -181,10 +181,23 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
         app.add_handler(TypeHandler(Update, self._handle_update))
         app.add_error_handler(self._handle_error)
         initialized = False
+
+        async def startup_step(
+            step: str,
+            call: Callable[..., Awaitable[Any]],
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            try:
+                return await self._safe(call, *args, **kwargs)
+            except PlatformError as exc:
+                logger.warning("Telegram startup failed step=%s error=%s", step, str(exc))
+                raise
+
         try:
-            await self._safe(app.initialize)
+            await startup_step("initialize", app.initialize)
             initialized = True
-            me = await self._safe(app.bot.get_me)
+            me = await startup_step("get_me", app.bot.get_me)
             self._bot_id, self._bot_username = me.id, me.username
             for commands, scope in (
                 (self._private_commands, BotCommandScopeAllPrivateChats()),
@@ -197,8 +210,9 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
                     )
                 except Exception as exc:
                     logger.warning("Telegram command menu setup failed: %s", type(exc).__name__)
-            await self._safe(app.start)
-            await self._safe(
+            await startup_step("start", app.start)
+            await startup_step(
+                "start_polling",
                 app.updater.start_polling,
                 allowed_updates=[
                     "message",

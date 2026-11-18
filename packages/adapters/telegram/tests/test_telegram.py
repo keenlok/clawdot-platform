@@ -37,7 +37,7 @@ from telegram import (
     Video,
     Voice,
 )
-from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
+from telegram.error import BadRequest, Conflict, NetworkError, RetryAfter, TimedOut
 from telegram.ext import TypeHandler
 from telegram.request import BaseRequest
 
@@ -1174,6 +1174,88 @@ async def test_start_shuts_down_after_startup_failure(failure: str) -> None:
     with pytest.raises(PlatformError):
         await platform.start(AsyncMock())
     assert state.shutdown
+
+
+@pytest.mark.parametrize(
+    ("failure_step", "failure", "error_name"),
+    [
+        ("start_polling", Conflict("startup-fake-token secret conflict text"), "Conflict"),
+        ("get_me", RetryAfter(30), "RetryAfter"),
+    ],
+)
+async def test_start_logs_safe_startup_failure(
+    failure_step: str, failure: Exception, error_name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    token = "startup-fake-token"
+    platform = TelegramPlatform(TelegramSettings(bot_token=SecretStr(token)))
+    state = SimpleNamespace(stopped=False, shutdown=False, updater_stopped=False)
+
+    class App:
+        running = False
+
+        def __init__(self) -> None:
+            self.updater = SimpleNamespace(running=False)
+            self.bot = SimpleNamespace(
+                get_me=self.get_me,
+                set_my_commands=AsyncMock(),
+            )
+
+        def add_handler(self, handler: object) -> None:
+            pass
+
+        def add_error_handler(self, handler: object) -> None:
+            pass
+
+        async def initialize(self) -> None:
+            pass
+
+        async def get_me(self) -> object:
+            if failure_step == "get_me":
+                raise failure
+            return SimpleNamespace(id=99, username="bot")
+
+        async def start(self) -> None:
+            self.running = True
+
+        async def start_polling(self, **kwargs: object) -> None:
+            self.updater.running = True
+            raise failure
+
+        async def stop(self) -> None:
+            self.running = False
+            state.stopped = True
+
+        async def stop_updater(self) -> None:
+            self.updater.running = False
+            state.updater_stopped = True
+
+        async def shutdown(self) -> None:
+            state.shutdown = True
+
+    app = App()
+    app.updater.start_polling = app.start_polling
+    app.updater.stop = app.stop_updater
+    platform._application = app
+
+    with caplog.at_level(logging.WARNING, logger="chatcore_telegram"):
+        with pytest.raises(PlatformError) as error:
+            await platform.start(AsyncMock())
+
+    assert str(error.value) == error_name
+    assert error.value.args == (error_name,)
+    records = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(records) == 1
+    assert f"step={failure_step}" in records[0].getMessage()
+    assert f"error={error_name}" in records[0].getMessage()
+    assert token not in caplog.text
+    assert "secret conflict text" not in caplog.text
+    assert "Flood control" not in caplog.text
+    assert token not in str(error.value)
+    assert "secret conflict text" not in str(error.value)
+    assert state.shutdown
+    if failure_step == "start_polling":
+        assert state.stopped
+        assert state.updater_stopped
 
 
 async def test_start_sets_valid_menu_commands_and_ignores_menu_api_failure(caplog) -> None:
