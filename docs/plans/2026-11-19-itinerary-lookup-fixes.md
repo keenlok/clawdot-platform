@@ -1,6 +1,6 @@
 # Itinerary lookup fixes: duplicate `gid` links and empty history search
 
-Status: Planned. Owner-approved 2026-11-19. Claude plans, Codex (`gpt-6-luna`) executes,
+Status: Planned, [PR #65](https://github.com/keenlok/clawdot-platform/pull/65). Owner-approved 2026-11-19. Claude plans, Codex (`gpt-6-luna`) executes,
 Codex (`gpt-6.1-sol`) reviews, Claude does the final review.
 
 ## Observed failure (read-only production inspection, 2026-11-19)
