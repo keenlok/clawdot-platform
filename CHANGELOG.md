@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- In private-ledger mode, balance cards, trip summary cards and expense exports requested in a DM
+  for a group ledger are sent to the DM instead of the group chat. No configuration change.
+
 ## [0.24.0] - 2026-11-19
 
 ### Added

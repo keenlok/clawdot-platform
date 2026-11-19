@@ -14,6 +14,18 @@ from chatcore_expenses import ExpensesPlugin
 from chatcore_expenses.repository import MemoryLedgerRepo
 
 
+class _CardClient:
+    def __init__(self):
+        self.cards = []
+
+    async def render(self, card, *, theme="light", footer=None):
+        self.cards.append(card)
+        return [b"png"]
+
+    async def aclose(self):
+        pass
+
+
 @pytest.fixture
 def dm_context():
     actor = User(UserRef("fake", "alice"), "Alice", "alice")
@@ -40,6 +52,104 @@ async def test_private_dm_starts_personal_trip_in_dm_ledger(dm_context):
     assert result.pending_action.payload["members"] == [dm_context.user.ref.key]
     await plugin.action_handlers()["start_trip"].commit(result.pending_action, dm_context)
     assert (await ledger.trips(dm_context.chat))[0]["name"] == "Tokyo"
+
+
+async def test_private_dm_group_ledger_cards_exports_and_delivery_scope(dm_context):
+    group = ChatRef("fake", "crew")
+    make_member(dm_context, group)
+    ledger = MemoryLedgerRepo()
+    trip = await seed_trip(ledger, group, dm_context.user.ref, "Crew Japan")
+    await seed_live_expense(
+        ledger, group, dm_context.user.ref, description="Group dinner", trip_id=trip["id"]
+    )
+    cards = _CardClient()
+    plugin = private_plugin(ledger, [group], {group: "Crew"})
+    plugin.cards = cards
+    tools = {item.name: item for item in plugin.tools()}
+
+    summary = await tools["send_trip_summary_card"].handler(
+        dm_context, trip=trip["name"], group="Crew"
+    )
+    assert not summary.is_error
+    assert [photo.chat for photo in dm_context.platform.sent_photos] == [dm_context.chat]
+    assert "Crew Japan" in cards.cards[-1].title
+    assert not any(photo.chat == group for photo in dm_context.platform.sent_photos)
+
+    dm_context.turn.tool_attempts.clear()
+    balance = await tools["send_balance_card"].handler(dm_context, group="Crew")
+    assert not balance.is_error
+    assert dm_context.platform.sent_photos[-1].chat == dm_context.chat
+    assert "Crew Japan" in cards.cards[-1].title
+    assert not any(photo.chat == group for photo in dm_context.platform.sent_photos)
+
+    dm_context.turn.tool_attempts.clear()
+    unique_trip = await tools["send_trip_summary_card"].handler(dm_context, trip=trip["name"])
+    assert not unique_trip.is_error
+    assert dm_context.platform.sent_photos[-1].chat == dm_context.chat
+    assert "Crew Japan" in cards.cards[-1].title
+
+    exported = await tools["export_expenses"].handler(dm_context, group="Crew", trip=trip["name"])
+    assert not exported.is_error
+    assert [file.chat for file in dm_context.platform.sent_files] == [dm_context.chat]
+    assert b"Group dinner" in dm_context.platform.sent_files[0].data
+    assert not any(file.chat == group for file in dm_context.platform.sent_files)
+
+
+async def test_private_dm_model_cannot_choose_delivery_chat(dm_context):
+    group = ChatRef("fake", "crew")
+    attacker = ChatRef("fake", "attacker")
+    make_member(dm_context, group)
+    ledger = MemoryLedgerRepo()
+    await seed_live_expense(ledger, group, dm_context.user.ref, description="Group dinner")
+    plugin = private_plugin(ledger, [group], {group: "Crew"})
+    plugin.cards = _CardClient()
+    tools = {item.name: item for item in plugin.tools()}
+
+    card = await tools["send_balance_card"].handler(
+        dm_context, group="Crew", deliver_to=(attacker, "malicious-thread")
+    )
+    assert not card.is_error
+    assert dm_context.platform.sent_photos[-1].chat == dm_context.chat
+    assert dm_context.platform.sent_photos[-1].thread_id == dm_context.thread_id
+
+    exported = await tools["export_expenses"].handler(
+        dm_context, group="Crew", deliver_to=(attacker, "malicious-thread")
+    )
+    assert not exported.is_error
+    assert dm_context.platform.sent_files[-1].chat == dm_context.chat
+    assert dm_context.platform.sent_files[-1].thread_id == dm_context.thread_id
+
+
+async def test_private_dm_nonmember_group_cannot_deliver_cards_or_exports(dm_context):
+    group = ChatRef("fake", "hidden")
+    ledger = MemoryLedgerRepo()
+    cards = _CardClient()
+    plugin = private_plugin(ledger, [group], {group: "Hidden"})
+    plugin.cards = cards
+    tools = {item.name: item for item in plugin.tools()}
+
+    for name in ("send_balance_card", "export_expenses"):
+        result = await tools[name].handler(dm_context, group="Hidden")
+        assert result.is_error
+    assert not dm_context.platform.sent_photos and not dm_context.platform.sent_files
+    assert not cards.cards
+
+
+async def test_private_plugin_group_chat_delivers_card_and_export_to_group(dm_context):
+    group = ChatRef("fake", "crew")
+    group_context = replace(dm_context, chat=group, is_dm=False)
+    ledger = MemoryLedgerRepo()
+    await seed_live_expense(ledger, group, dm_context.user.ref, description="Group dinner")
+    plugin = private_plugin(ledger, [], {})
+    plugin.cards = _CardClient()
+    tools = {item.name: item for item in plugin.tools()}
+
+    card = await tools["send_balance_card"].handler(group_context, general=True)
+    assert not card.is_error
+    exported = await tools["export_expenses"].handler(group_context, general=True)
+    assert not exported.is_error
+    assert group_context.platform.sent_photos[-1].chat == group
+    assert group_context.platform.sent_files[-1].chat == group
 
 
 async def test_private_group_name_uses_current_membership_and_title(dm_context):
@@ -458,6 +568,25 @@ async def seed_expense(ledger, chat, actor, *, payer=None, shares=None, descript
     row = (await ledger.expenses(chat))[0]
     await ledger.commit(chat, "delete_expense", {"expense_id": row["id"]}, actor=actor)
     return row
+
+
+async def seed_live_expense(ledger, chat, actor, *, description="expense", trip_id=None):
+    await ledger.commit(
+        chat,
+        "add_expense",
+        {
+            "description": description,
+            "amount": 1000,
+            "currency": "SGD",
+            "paid_by": actor.key,
+            "created_by": actor.key,
+            "spent_on": "2026-11-16",
+            "trip_id": trip_id,
+            "shares": {actor.key: 1000},
+            "fx_rate_to_settle": None,
+        },
+        actor=actor,
+    )
 
 
 @pytest.mark.parametrize("foreign_field", ["payer", "share"])

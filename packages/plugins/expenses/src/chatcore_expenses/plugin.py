@@ -2153,6 +2153,16 @@ class ExpensesPlugin(BasePlugin):
     async def _export(
         self, ctx: ToolContext, *, trip: str | None = None, general: bool = False
     ) -> ToolResult:
+        return await self._export_impl(ctx, trip=trip, general=general)
+
+    async def _export_impl(
+        self,
+        ctx: ToolContext,
+        *,
+        trip: str | None = None,
+        general: bool = False,
+        deliver_to: tuple[ChatRef, str | None] | None = None,
+    ) -> ToolResult:
         chat = await self._chat(ctx)
         if chat is None:
             return ToolResult.error(
@@ -2183,13 +2193,14 @@ class ExpensesPlugin(BasePlugin):
             timezone=self.timezone,
         )
         caption = export_caption(selected, exported.expense_count, exported.settlement_count)
+        delivery_chat, delivery_thread = deliver_to or (ctx.chat, ctx.thread_id)
         try:
             await ctx.platform.send_file(
-                ctx.chat,
+                delivery_chat,
                 exported.filename,
                 exported.data,
                 caption=caption,
-                thread_id=ctx.thread_id,
+                thread_id=delivery_thread,
             )
         except PlatformError as exc:
             return ToolResult.error(f"Couldn't send the file ({exc}).")
@@ -2299,7 +2310,13 @@ class ExpensesPlugin(BasePlugin):
         )
 
     async def _send_expense_card(
-        self, ctx: ToolContext, *, trip=None, general=False, summary=False
+        self,
+        ctx: ToolContext,
+        *,
+        trip=None,
+        general=False,
+        summary=False,
+        deliver_to: tuple[ChatRef, str | None] | None = None,
     ) -> ToolResult:
         if trip is not None and (not isinstance(trip, str) or not trip):
             return ToolResult.error("Trip must be a non-empty string.")
@@ -2363,8 +2380,13 @@ class ExpensesPlugin(BasePlugin):
                 delivery_chat = None
             if not can_deliver_cards(ctx.platform) or delivery_chat != chat:
                 return ToolResult.error("Card delivery is no longer allowed.")
+            target_chat, target_thread = deliver_to or (ctx.chat, ctx.thread_id)
             await send_card_pages(
-                ctx.platform, ctx.chat, pages, caption="📋 " + card.title, thread_id=ctx.thread_id
+                ctx.platform,
+                target_chat,
+                pages,
+                caption="📋 " + card.title,
+                thread_id=target_thread,
             )
             return ToolResult(
                 "Card sent above the text reply. Now reply in 1–2 short lines with the "
@@ -3009,14 +3031,41 @@ class ExpensesPlugin(BasePlugin):
                 }
                 handler = tool.handler
 
-                async def routed(ctx, *, _handler=handler, **arguments):
+                async def routed(ctx, *, _handler=handler, _tool_name=tool.name, **arguments):
                     group = arguments.pop("group", None)
+                    arguments.pop("deliver_to", None)
                     try:
                         selected_ctx = await self._tool_context(
                             ctx, group=group, trip=arguments.get("trip")
                         )
                     except (ValueError, PermissionError) as exc:
                         return ToolResult.error(str(exc))
+                    if _tool_name in {
+                        "send_balance_card",
+                        "send_trip_summary_card",
+                        "export_expenses",
+                    }:
+                        deliver_to = (ctx.chat, ctx.thread_id)
+                        if _tool_name == "send_balance_card":
+                            return await self._send_expense_card(
+                                selected_ctx,
+                                trip=arguments.get("trip"),
+                                general=arguments.get("general", False),
+                                deliver_to=deliver_to,
+                            )
+                        if _tool_name == "send_trip_summary_card":
+                            return await self._send_expense_card(
+                                selected_ctx,
+                                trip=arguments.get("trip"),
+                                summary=True,
+                                deliver_to=deliver_to,
+                            )
+                        return await self._export_impl(
+                            selected_ctx,
+                            trip=arguments.get("trip"),
+                            general=arguments.get("general", False),
+                            deliver_to=deliver_to,
+                        )
                     return await _handler(selected_ctx, **arguments)
 
                 tools[index] = replace(tool, parameters=parameters, handler=routed)
