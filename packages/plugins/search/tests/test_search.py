@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 
+import pytest
 from chatcore.access import AccessPolicy
 from chatcore.agent import AgentResponder, AgentSettings
 from chatcore.app import BotApp
@@ -87,8 +88,15 @@ class Repo:
 
 
 class Dummy:
+    def __init__(self, results=None):
+        self.results = list(results or [])
+        self.calls = []
+
     async def fetch(self, sql, *args):
         self.call = (sql, args)
+        self.calls.append(self.call)
+        if self.results:
+            return self.results.pop(0)
         return []
 
 
@@ -255,6 +263,99 @@ async def test_search_falls_back_to_escaped_ilike_and_parses_since() -> None:
     assert "text ILIKE $2 ESCAPE" in db.call[0]
     assert db.call[1][1] == r"%100\%\_\\%"
     assert db.call[1][4] == datetime(2026, 10, 1, tzinfo=UTC)
+
+
+async def test_empty_index_search_falls_back_and_hydrates_history(caplog) -> None:
+    chat = ChatRef("tg", "a")
+    sent_at = datetime(2026, 10, 1, tzinfo=UTC)
+    row = {"message_id": "m1", "text": "tomorrow itinerary link", "sent_at": sent_at}
+    db = Dummy([[row]])
+    repo = Repo()
+    repo.messages[(chat.key, "m1")] = StoredMessage(
+        chat, "m1", UserRef("tg", "1"), "Alice", row["text"], sent_at
+    )
+    ctx = context(chat, MemorySearch(), repo=repo)
+    ctx.stores.db = db
+    plugin = SearchPlugin(FakeEmbedder())
+
+    result = await plugin.read_chat_history(ctx, "tomorrow itinerary")
+
+    assert "tomorrow itinerary link" in result.content
+    assert len(db.calls) == 1
+    record = next(record for record in caplog.records if "sql fallback matched" in record.message)
+    assert record.levelname == "WARNING"
+    assert record.args == (chat.key, 1)
+    assert "tomorrow itinerary" not in record.message
+
+
+async def test_nonempty_search_index_result_skips_db() -> None:
+    chat, search = ChatRef("tg", "a"), MemorySearch()
+    await search.index("chunks", "hit", {"text": "hotel", "message_ids": []}, chat=chat)
+    db = Dummy()
+    ctx = context(chat, search)
+    ctx.stores.db = db
+
+    hits = await SearchPlugin(FakeEmbedder())._search_chat(ctx, chat, "hotel", None, None, 5)
+
+    assert [hit.doc_id for hit in hits] == ["hit"]
+    assert db.calls == []
+
+
+async def test_sql_word_fallback_ranks_more_matching_words_first() -> None:
+    plugin = SearchPlugin(FakeEmbedder())
+    chat = ChatRef("tg", "a")
+    ranked = [
+        {"message_id": "both", "text": "tomorrow itinerary", "sent_at": datetime(2026, 1, 2)},
+        {"message_id": "one", "text": "tomorrow plan", "sent_at": datetime(2026, 1, 3)},
+    ]
+    db = Dummy([[], ranked])
+    ctx = context(chat, None)
+    ctx.stores.db = db
+
+    hits = await plugin._search_chat(ctx, chat, "tomorrow itinerary", None, None, 5)
+
+    assert [hit.doc_id for hit in hits] == ["both", "one"]
+    assert len(db.calls) == 2
+    assert "ILIKE ANY($2::text[])" in db.calls[1][0]
+    assert "ORDER BY (SELECT count(*)" in db.calls[1][0]
+    assert db.calls[1][1][1] == ["%tomorrow%", "%itinerary%"]
+
+
+@pytest.mark.parametrize("include_bot_answers", [False, True])
+async def test_sql_word_fallback_preserves_filters_and_escapes_patterns(
+    include_bot_answers,
+) -> None:
+    plugin = SearchPlugin(FakeEmbedder())
+    chat = ChatRef("tg", "a")
+    since = datetime(2026, 10, 1, tzinfo=UTC)
+    db = Dummy([[], []])
+    ctx = context(chat, None)
+    ctx.stores.db = db
+
+    await plugin._search_chat(
+        ctx,
+        chat,
+        "tomorrow 50%_ plan",
+        ["tg:42"],
+        since,
+        4,
+        include_bot_answers=include_bot_answers,
+    )
+
+    sql, args = db.calls[1]
+    assert "ILIKE ANY($2::text[])" in sql
+    assert args[3:6] == (["tg:42"], since, include_bot_answers)
+    assert args[1] == ["%tomorrow%", r"%50\%\_%", "%plan%"]
+    assert "($6::boolean OR is_bot=false)" in sql
+
+
+async def test_empty_index_without_db_returns_empty_hits() -> None:
+    chat = ChatRef("tg", "a")
+    ctx = context(chat, MemorySearch())
+
+    hits = await SearchPlugin(FakeEmbedder())._search_chat(ctx, chat, "itinerary", None, None, 5)
+
+    assert hits == []
 
 
 async def test_bad_since_is_rejected_before_search() -> None:
