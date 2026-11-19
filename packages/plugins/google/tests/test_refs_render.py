@@ -1,5 +1,7 @@
+from types import SimpleNamespace
+
 import pytest
-from chatcore_google.refs import approved_ref, parse_google_ref
+from chatcore_google.refs import approved_ref, approved_source_ref, parse_google_ref
 from chatcore_google.render import doc_text, literal_rows
 
 
@@ -7,6 +9,11 @@ from chatcore_google.render import doc_text, literal_rows
     "url,file_id,gid",
     [
         ("https://docs.google.com/spreadsheets/u/0/d/abc-/edit#gid=7", "abc-", 7),
+        (
+            "https://docs.google.com/spreadsheets/d/abc-/edit?gid=464258837#gid=464258837",
+            "abc-",
+            464258837,
+        ),
         ("https://docs.google.com/document/d/xyz/edit?tab=t.abc", "xyz", None),
         ("https://drive.google.com/file/d/a_b/view", "a_b", None),
         ("https://drive.google.com/open?id=foo", "foo", None),
@@ -38,6 +45,50 @@ def test_provenance_matches_file_identity_but_never_search_urls():
     assert approved_ref("https://docs.google.com/spreadsheets/d/abc/edit#gid=9", human).gid == 9
     with pytest.raises(ValueError, match="human"):
         approved_ref("https://docs.google.com/spreadsheets/d/other", human)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://docs.google.com/spreadsheets/d/sheet/edit?gid=1#gid=2",
+        "https://docs.google.com/spreadsheets/d/sheet/edit#gid=1&gid=2",
+        "https://docs.google.com/spreadsheets/d/sheet/edit#gid=abc",
+    ],
+)
+def test_google_link_rejects_conflicting_or_non_digit_gids(url):
+    with pytest.raises(ValueError):
+        parse_google_ref(url)
+
+
+def test_google_link_accepts_duplicate_gid_in_one_source():
+    assert (
+        parse_google_ref("https://docs.google.com/spreadsheets/d/sheet/edit#gid=1&gid=1").gid == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "requested",
+    [
+        "https://docs.google.com/spreadsheets/d/sheet/edit?gid=7#gid=7",
+        "https://docs.google.com/spreadsheets/d/sheet/edit",
+    ],
+)
+async def test_approved_source_accepts_duplicate_gid_link(requested):
+    chat = SimpleNamespace(key="tg:chat")
+    message = SimpleNamespace(
+        message_id="m1",
+        chat=chat,
+        thread_id=None,
+        is_bot=False,
+        text="Itinerary https://docs.google.com/spreadsheets/d/sheet/edit?gid=7#gid=7",
+    )
+
+    class Repo:
+        async def get_message(self, _chat, _message_id):
+            return message
+
+    ctx = SimpleNamespace(stores=SimpleNamespace(repo=Repo()), chat=chat, thread_id=None)
+    assert (await approved_source_ref(requested, ctx, "m1")).file_id == "sheet"
 
 
 def test_docs_nested_tabs_and_tables_are_flattened_with_labels():
