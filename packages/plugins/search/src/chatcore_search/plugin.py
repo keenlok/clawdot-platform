@@ -488,16 +488,41 @@ class SearchPlugin(BasePlugin):
             filters["user_keys"] = user_keys
         if since:
             filters["ts_end"] = {"gte": since.isoformat()}
+        empty_index_result = False
         if ctx.stores.search is not None:
             try:
                 vector = await self.embedder.embed_query(query)
-                return await ctx.stores.search.search(
+                hits = await ctx.stores.search.search(
                     INDEX, chat=chat, text=query, vector=vector, filters=filters, size=limit
                 )
+                if hits:
+                    return hits
+                empty_index_result = True
             except Exception as exc:
                 logger.warning("search query failed error_class=%s", type(exc).__name__)
         if ctx.stores.db is None:
-            return None
+            return [] if empty_index_result else None
+        hits = await self._search_sql(
+            ctx, chat, query, user_keys, since, limit, include_bot_answers
+        )
+        if empty_index_result and hits:
+            logger.warning(
+                "search index returned no hits; sql fallback matched chat=%s rows=%d",
+                chat.key,
+                len(hits),
+            )
+        return hits
+
+    async def _search_sql(
+        self,
+        ctx: ToolContext,
+        chat: ChatRef,
+        query: str,
+        user_keys: list[str] | None,
+        since: datetime | None,
+        limit: int,
+        include_bot_answers: bool,
+    ) -> list[SearchHit]:
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = await ctx.stores.db.fetch(
             "SELECT message_id, text, sent_at, user_key FROM messages "
@@ -513,6 +538,30 @@ class SearchPlugin(BasePlugin):
             since,
             include_bot_answers,
         )
+        if not rows and len(query.split()) >= 2:
+            words = [
+                word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                for word in query.split()
+                if len(word) >= 3
+            ][:6]
+            if words:
+                patterns = [f"%{word}%" for word in words]
+                rows = await ctx.stores.db.fetch(
+                    "SELECT message_id, text, sent_at, user_key FROM messages "
+                    "WHERE chat_key=$1 AND text ILIKE ANY($2::text[]) "
+                    "AND ($4::text[] IS NULL OR user_key=ANY($4)) "
+                    "AND ($5::timestamptz IS NULL OR sent_at >= $5) "
+                    "AND ($6::boolean OR is_bot=false) "
+                    "ORDER BY (SELECT count(*) FROM unnest($2::text[]) AS patterns(pattern) "
+                    "WHERE messages.text ILIKE patterns.pattern ESCAPE '\\') DESC, "
+                    "sent_at DESC LIMIT $3",
+                    chat.key,
+                    patterns,
+                    limit,
+                    user_keys,
+                    since,
+                    include_bot_answers,
+                )
         return [
             SearchHit(
                 str(row.get("message_id", "")),

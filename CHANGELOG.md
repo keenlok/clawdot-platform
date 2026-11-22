@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Google Sheets links with the same `gid` in the query and fragment are accepted when checking
+  human posted file links. Conflicting or non numeric tab IDs remain invalid.
+- Chat history search falls back to SQL when Elasticsearch returns no hits. The fallback first
+  tries the full phrase, then ranks matches for up to six query words of at least three characters.
 - In private-ledger mode, balance cards, trip summary cards and expense exports requested in a DM
   for a group ledger are sent to the DM instead of the group chat. No configuration change.
 
