@@ -1,6 +1,6 @@
 # DM-requested expense cards and exports go to the DM
 
-Status: Planned (bug fix, patch release). Owner-approved 2026-11-18.
+Status: Live. Merged in PR #63 and released in v0.24.1 (2026-11-23). Owner-approved 2026-11-18.
 
 Read `AGENTS.md`, `packages/plugins/expenses/src/chatcore_expenses/plugin.py` (`_tool_context`,
 `_send_expense_card`, `_export`, and the `if self.dm_ledger == "private":` block at the end of

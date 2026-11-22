@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-23
+
 ### Fixed
 
 - Google Sheets links with the same `gid` in the query and fragment are accepted when checking
@@ -685,7 +687,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/keenlok/clawdot-platform/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/keenlok/clawdot-platform/compare/v0.21.0...v0.22.0
