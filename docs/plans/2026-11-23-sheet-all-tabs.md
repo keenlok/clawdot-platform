@@ -1,6 +1,6 @@
 # Read every Sheet tab before concluding data is missing
 
-Status: Planned. Owner-approved 2026-11-23. Claude plans, a Claude subagent reviewed the plan,
+Status: Live. Merged in [PR #67](https://github.com/keenlok/clawdot-platform/pull/67) and released in v0.24.2 (2026-11-23). Owner-approved 2026-11-23. Claude plans, a Claude subagent reviewed the plan,
 Codex (`gpt-6-luna`) executes, Codex (`gpt-6.1-sol`) reviews, Claude does the final review.
 
 ## Observed failure (read-only production inspection, 2026-11-23)

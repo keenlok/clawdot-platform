@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-11-23
+
 ### Changed
 - Google Sheet reads list tabs and read every tab within per-tab row and character limits when no tab is selected. Tab names match case-insensitively; missing or ambiguous tabs return actionable untrusted content. `trip_read_file` accepts an optional `tab`.
 
@@ -693,7 +695,8 @@ to keep the old cap. With skills on, pass the same value to `SkillSettings.tool_
 - Working generic scaffold with CI tests, installed-wheel checks and a pinned container build.
 - CI-gated immutable Git release tags for explicitly pinned downstream applications.
 
-[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/keenlok/clawdot-platform/compare/v0.24.2...HEAD
+[0.24.2]: https://github.com/keenlok/clawdot-platform/compare/v0.24.1...v0.24.2
 [0.24.1]: https://github.com/keenlok/clawdot-platform/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/keenlok/clawdot-platform/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/keenlok/clawdot-platform/compare/v0.22.0...v0.23.0
