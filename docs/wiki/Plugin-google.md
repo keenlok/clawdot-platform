@@ -1,7 +1,7 @@
 <!-- Generated from packaged EXPLAIN.md; do not edit. -->
 # Google files and bounded edits
 
-[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:9f286fc40ef43e07f7a69426bb644aa39618e39d79ce101e23bee271ae6f0a78
+[Canonical source](https://github.com/keenlok/clawdot-platform/blob/main/packages/plugins/google/src/chatcore_google/EXPLAIN.md) · sha256:2ec82fbe2230b4ce7f4980520aa28de740562c6535df613c37a807acd2200ab0
 
 This page describes the selected platform source. Your app's enabled features may differ.
 
@@ -10,6 +10,13 @@ Google tools read supported Drive files, native Docs and Sheets, and can propose
 writes. The model interprets the request; code resolves the authorized source, previews the change,
 checks confirmation and verifies the result through the Google API. Availability depends on app
 configuration, OAuth grants, file access and any separately qualified copy/browser capabilities.
+
+### Reading Sheets
+`google_read_sheet`, `google_read_file` and saved trip-file reads list every tab. Omitting `tab`
+reads all tabs within the configured tab, row and character limits; naming one tab reads only that
+tab. Read tab names match case-insensitively, and a miss returns the available names as untrusted
+content. Hidden tabs are included. `itinerary_summary` summarizes recognized tracker tabs and
+shows raw tab contents for other spreadsheets without computing totals.
 
 ## Workflow
 Human-posted links or confirmed trip-file references establish external source provenance; search
@@ -38,13 +45,6 @@ request itself names it. Historical source-message provenance alone never bypass
 Expense exports create a private snapshot spreadsheet from one ledger read at confirmation.
 Numbers and dates are typed; ledger text is literal. Partial exports keep "(incomplete)" in the
 title and are never retried.
-
-### Reading Sheets
-`google_read_sheet`, `google_read_file` and saved trip-file reads list every tab. Omitting `tab`
-reads all tabs within the configured tab, row and character limits; naming one tab reads only that
-tab. Read tab names match case-insensitively, and a miss returns the available names as untrusted
-content. Hidden tabs are included. `itinerary_summary` summarizes recognized tracker tabs and
-shows raw tab contents for other spreadsheets without computing totals.
 
 ## Storage
 Google stores file contents. The plugin journals trip associations, edit results and `google_outputs`
