@@ -113,6 +113,41 @@ async def test_followup_sheet_and_itinerary_reads_support_the_same_source(google
     assert "D8 airport" in summary
 
 
+async def test_itinerary_summary_falls_back_to_raw_non_tracker_sheet(google_service):
+    service, client, ctx, _ = google_service
+    url = "https://docs.google.com/spreadsheets/d/file/edit"
+    await share(ctx, url)
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "itinerary"}}]}
+    client.values.return_value = {"values": [["Tomorrow", "Visit the museum"]]}
+    result = await ItineraryService(service).summary(ctx, url)
+    assert result.startswith(
+        "Not a chatcore-itinerary v1 tracker; raw tab contents follow. Totals and comparisons "
+        "are not computed.\n"
+    )
+    assert "Visit the museum" in result
+
+
+async def test_itinerary_summary_resolves_case_insensitive_tracker_tab(google_service):
+    service, client, ctx, _ = google_service
+    url = "https://docs.google.com/spreadsheets/d/file/edit#gid=999"
+    await share(ctx, url)
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "itinerary"}}]}
+    client.values.return_value = {"values": [VERSION, HEADER, ["2026-11-15", "", "D8 airport"]]}
+    result = await ItineraryService(service).summary(ctx, url, tab="ITINERARY")
+    assert "D8 airport" in result
+    assert not result.startswith("Not a chatcore-itinerary")
+
+
+async def test_itinerary_summary_deleted_url_gid_returns_miss_content(google_service):
+    service, client, ctx, _ = google_service
+    url = "https://docs.google.com/spreadsheets/d/file/edit#gid=999"
+    await share(ctx, url)
+    client.sheet.return_value = {"sheets": [{"properties": {"sheetId": 7, "title": "current"}}]}
+    result = await ItineraryService(service).summary(ctx, url)
+    assert "The link's tab no longer exists" in result
+    assert "current" in result
+
+
 @pytest.mark.parametrize("reader", ["google_read_doc", "google_read_file"])
 async def test_registry_exposes_source_reference_on_reads_and_doc_edits_only(
     google_service, reader

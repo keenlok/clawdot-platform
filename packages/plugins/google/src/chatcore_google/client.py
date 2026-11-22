@@ -468,6 +468,18 @@ class GoogleClient:
             params={"valueRenderOption": "FORMATTED_VALUE"},
         )
 
+    async def values_batch(self, file_id, ranges):
+        params = [("ranges", value) for value in ranges] + [
+            ("valueRenderOption", "FORMATTED_VALUE")
+        ]
+        data = await self.request(
+            "GET",
+            "sheets.googleapis.com",
+            f"/v4/spreadsheets/{file_id}/values:batchGet",
+            params=params,
+        )
+        return data.get("valueRanges")
+
     async def batch(self, file_id, requests):
         return await self.request(
             "POST",

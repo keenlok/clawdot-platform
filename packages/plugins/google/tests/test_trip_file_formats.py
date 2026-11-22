@@ -168,6 +168,29 @@ async def test_confirmed_trip_file_lifecycle_reads_without_reposting_and_never_e
     client.batch.assert_not_awaited()
 
 
+async def test_trip_sheet_read_accepts_optional_tab_and_reads_all_when_omitted(
+    google_service, docx_bytes
+):
+    setup = _setup(google_service, SHEET, docx_bytes)
+    service, client, ctx, _, registry, _, _ = setup
+    client.sheet.return_value = {
+        "sheets": [
+            {"properties": {"sheetId": 1, "title": "itinerary"}},
+            {"properties": {"sheetId": 2, "title": "hotels"}},
+        ]
+    }
+    await _attach(setup)
+    later = replace(ctx, turn=TurnState())
+    selected = await registry.call("trip_read_file", {"trip": TRIP, "tab": "ITINERARY"}, later)
+    assert not selected.is_error and "Reading: itinerary" in selected.content
+    assert client.values.await_args.args[1].startswith("'itinerary'!")
+    all_tabs = await registry.call("trip_read_file", {"trip": TRIP}, later)
+    assert (
+        not all_tabs.is_error and "hotels" in all_tabs.content and "itinerary" in all_tabs.content
+    )
+    client.values_batch.assert_awaited_once()
+
+
 @pytest.mark.parametrize("mime", [DOCX, "application/pdf", "text/csv"])
 @pytest.mark.parametrize("failure", ["corrupt", "download_denied"])
 async def test_unreadable_content_can_still_be_attached_without_claiming_a_read(

@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Google Sheet reads list tabs and read every tab within per-tab row and character limits when no tab is selected. Tab names match case-insensitively; missing or ambiguous tabs return actionable untrusted content. `trip_read_file` accepts an optional `tab`.
+
+### Fixed
+- `itinerary_summary` returns raw Sheet tabs for non-tracker spreadsheets instead of failing.
+
 ## [0.24.1] - 2026-11-23
 
 ### Fixed

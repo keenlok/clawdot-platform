@@ -548,6 +548,11 @@ def google_service():
             {"properties": {"sheetId": 8, "title": "Kyoto"}},
         ]
     }
+
+    async def batch_values(_file_id, ranges):
+        return [copy.deepcopy(client.values.return_value) for _ in ranges]
+
+    client.values_batch.side_effect = batch_values
     service = GoogleService(config, access, client, GoogleRepository())
     ctx = ToolContext(
         GROUP,

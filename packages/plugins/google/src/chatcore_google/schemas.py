@@ -47,6 +47,7 @@ def text(description):
 
 URL = text("Google file URL posted by a human in this request or its same-topic reply chain.")
 TAB = text("Exact spreadsheet tab name; must agree with any gid in the URL.")
+READ_TAB = text("Optional tab name (case-insensitive). Omit to read every tab.")
 ROWS = {
     "type": "array",
     "description": "Literal rows of text, numbers or booleans; no formulas.",

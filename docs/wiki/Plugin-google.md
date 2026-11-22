@@ -39,6 +39,13 @@ Expense exports create a private snapshot spreadsheet from one ledger read at co
 Numbers and dates are typed; ledger text is literal. Partial exports keep "(incomplete)" in the
 title and are never retried.
 
+### Reading Sheets
+`google_read_sheet`, `google_read_file` and saved trip-file reads list every tab. Omitting `tab`
+reads all tabs within the configured tab, row and character limits; naming one tab reads only that
+tab. Read tab names match case-insensitively, and a miss returns the available names as untrusted
+content. Hidden tabs are included. `itinerary_summary` summarizes recognized tracker tabs and
+shows raw tab contents for other spreadsheets without computing totals.
+
 ## Storage
 Google stores file contents. The plugin journals trip associations, edit results and `google_outputs`
 bindings to chat, topic, requester, owner and action. Only a non-trashed, owner-owned file from the

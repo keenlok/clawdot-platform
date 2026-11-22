@@ -58,6 +58,26 @@ async def test_trash_file_uses_fixed_drive_patch(tmp_path):
     assert request.content == b'{"trashed":true}'
 
 
+async def test_values_batch_repeats_ranges_without_preencoding(tmp_path):
+    calls = []
+
+    def endpoint(request):
+        calls.append(request)
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "access", "expires_in": 3600})
+        return httpx.Response(200, json={"valueRanges": [{"values": []}]})
+
+    async with GoogleHttp(transport=httpx.MockTransport(endpoint)) as http:
+        client = GoogleClient(http, credentials(tmp_path), "owner@example.com")
+        result = await client.values_batch("file", ["'Bob''s Plan'!A1:B20", "'Next'!A1:H20"])
+    request = next(call for call in calls if ":batchGet" in call.url.path)
+    assert request.method == "GET"
+    assert request.url.path == "/v4/spreadsheets/file/values:batchGet"
+    assert request.url.params.get_list("ranges") == ["'Bob''s Plan'!A1:B20", "'Next'!A1:H20"]
+    assert request.url.params["valueRenderOption"] == "FORMATTED_VALUE"
+    assert result == [{"values": []}]
+
+
 async def test_tokens_are_cached_and_owner_is_verified(tmp_path):
     calls = []
 
