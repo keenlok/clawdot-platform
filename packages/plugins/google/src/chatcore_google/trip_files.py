@@ -117,7 +117,7 @@ class TripFilesService:
                 break
         return json.dumps(result, ensure_ascii=False)
 
-    async def read(self, ctx, trip, file_id=None):
+    async def read(self, ctx, trip, file_id=None, tab=None):
         resolved = await self.trip(ctx, trip)
         rows = await self.google.repo.trip_files(resolved["chat_key"], resolved["trip_id"])
         row = (
@@ -142,7 +142,7 @@ class TripFilesService:
         latest = await self.google.repo.trip_file(resolved["chat_key"], row["file_id"])
         if latest != row:
             raise ValueError("Trip file association changed; request a fresh read.")
-        content = await self.google.read_content(ref, metadata)
+        content = await self.google.read_content(ref, metadata, tab=tab)
         refreshed = await self.trip(ctx, trip)
         if row["owner"] != await self.google.client.identity():
             raise ValueError("Saved file owner identity changed; attach it again.")

@@ -11,6 +11,13 @@ writes. The model interprets the request; code resolves the authorized source, p
 checks confirmation and verifies the result through the Google API. Availability depends on app
 configuration, OAuth grants, file access and any separately qualified copy/browser capabilities.
 
+### Reading Sheets
+`google_read_sheet`, `google_read_file` and saved trip-file reads list every tab. Omitting `tab`
+reads all tabs within the configured tab, row and character limits; naming one tab reads only that
+tab. Read tab names match case-insensitively, and a miss returns the available names as untrusted
+content. Hidden tabs are included. `itinerary_summary` summarizes recognized tracker tabs and
+shows raw tab contents for other spreadsheets without computing totals.
+
 ## Workflow
 Human-posted links or confirmed trip-file references establish external source provenance; search
 results and document-embedded links do not grant access. A retained, journaled native Doc output

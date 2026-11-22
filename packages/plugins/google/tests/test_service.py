@@ -1964,8 +1964,7 @@ async def test_ambiguous_tab_range_and_unknown_native_type_are_refused():
     for cell_range in ["A:A", "A1:ZZZ999999", 'IMPORTRANGE("x")', "Other!A1"]:
         with pytest.raises(ValueError):
             await service.read_sheet(ctx, URL, cell_range=cell_range)
-    with pytest.raises(ValueError):
-        await service.read_sheet(ctx, URL, tab="Other")
+    assert "No tab named that" in await service.read_sheet(ctx, URL, tab="Other")
     client.metadata.return_value["mimeType"] = "text/csv"
     with pytest.raises(ValueError, match="attach|CSV"):
         await service.read_sheet(ctx, URL)

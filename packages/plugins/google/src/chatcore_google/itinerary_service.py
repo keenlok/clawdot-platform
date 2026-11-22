@@ -10,12 +10,13 @@ import hashlib
 import json
 import re
 import secrets
+from dataclasses import replace
 from decimal import Decimal
 
 from chatcore_google.itinerary import HEADER, VERSION, normalize_groups, summarize, tracker_rows
 from chatcore_google.refs import approved_ref
 from chatcore_google.render import literal_rows
-from chatcore_google.service import DOC, DOCX, SHEET, select_tab
+from chatcore_google.service import DOC, DOCX, SHEET, resolve_read_tab, select_tab
 
 
 def fingerprint(snapshot):
@@ -57,11 +58,29 @@ class ItineraryService:
         return {"tabs": result, "ignored": ignored, "partial": partial, "properties": all_tabs}
 
     async def summary(self, ctx, url, tab=None, *, source_message_ref=None):
-        ref, _, _ = await self.google.file(ctx, url, SHEET, source_message_ref=source_message_ref)
-        snapshot = await self.snapshot(ref.file_id, ref=ref, tab=tab)
+        ref, metadata, _ = await self.google.file(
+            ctx, url, SHEET, source_message_ref=source_message_ref
+        )
+        resolved_title = None
+        if tab is not None:
+            sheet = await self.google.client.sheet(ref.file_id)
+            selected, _, miss = resolve_read_tab(sheet, ref, tab)
+            if miss:
+                return await self.google.read_spreadsheet(ref, metadata, tab=tab)
+            resolved_title = selected["title"]
+        elif ref.gid is not None:
+            sheet = await self.google.client.sheet(ref.file_id)
+            selected, _, miss = resolve_read_tab(sheet, ref, None)
+            if miss:
+                return await self.google.read_spreadsheet(ref, metadata)
+            resolved_title = selected["title"]
+        snapshot_ref = replace(ref, gid=None) if resolved_title is not None else ref
+        snapshot = await self.snapshot(ref.file_id, ref=snapshot_ref, tab=resolved_title)
         if not snapshot["tabs"]:
-            raise ValueError(
-                "No recognized itinerary tabs; expected chatcore-itinerary v1 header/version."
+            return (
+                "Not a chatcore-itinerary v1 tracker; raw tab contents follow. Totals and "
+                "comparisons are not computed.\n"
+                + await self.google.read_spreadsheet(ref, metadata, tab=resolved_title)
             )
         result = summarize(
             [(value["title"], value["rows"]) for value in snapshot["tabs"]],

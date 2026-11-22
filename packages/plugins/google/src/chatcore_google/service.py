@@ -12,6 +12,7 @@ from dataclasses import replace
 from chatcore.files import FilePlatform
 from chatcore.pending import PendingAction
 
+from chatcore_google.client import GoogleError
 from chatcore_google.doc_verification import verify_doc_readback
 from chatcore_google.docx import docx_text
 from chatcore_google.link_sharing import (
@@ -109,6 +110,83 @@ def select_tab(sheet, ref, tab=None):
     if selected is None:
         raise ValueError("This spreadsheet has no readable tabs.")
     return selected
+
+
+def resolve_read_tab(sheet, ref, tab=None):
+    """Resolve a read-only tab selection without exposing editor-controlled titles as errors."""
+    tabs = [value["properties"] for value in sheet.get("sheets", [])]
+    if not tabs:
+        raise ValueError("This spreadsheet has no readable tabs.")
+    if tab is not None:
+        exact = next((value for value in tabs if value.get("title") == tab), None)
+        if exact is not None:
+            return exact, tabs, None
+        folded = [
+            value
+            for value in tabs
+            if str(value.get("title", "")).strip().casefold() == tab.strip().casefold()
+        ]
+        if len(folded) == 1:
+            return folded[0], tabs, None
+        return None, tabs, "several" if folded else "none"
+    if ref.gid is not None:
+        selected = next((value for value in tabs if value.get("sheetId") == ref.gid), None)
+        return (selected, tabs, None) if selected else (None, tabs, "gid")
+    return None, tabs, None
+
+
+def _read_tab_header(metadata, tabs, *, selected=None, all_mode=False, max_tabs=32):
+    name = str(metadata.get("name", "Sheet"))[:300]
+    if all_mode:
+        labels = []
+        for props in tabs:
+            title = str(props.get("title", ""))[:100]
+            labels.append(title + (" (hidden)" if props.get("hidden") else ""))
+        if len(labels) > max_tabs:
+            labels = labels[:max_tabs] + ["…"]
+        tabs_line = f"Tabs ({len(tabs)}): " + ", ".join(labels)
+        return f"{name}\n{tabs_line}\nReading: all tabs", tabs_line
+    labels = []
+    for props in tabs:
+        title = str(props.get("title", ""))[:100]
+        if props.get("hidden"):
+            title += " (hidden)"
+        if props is selected:
+            title += " (reading)"
+        labels.append(title)
+    shown = labels[:max_tabs]
+    if len(labels) > len(shown):
+        shown.append("…")
+    tabs_line = f"Tabs ({len(tabs)}): " + ", ".join(shown)
+    title = str(selected.get("title", ""))[:100]
+    if selected.get("hidden"):
+        title += " (hidden)"
+    return f"{name}\n{tabs_line}\nReading: {title}", tabs_line
+
+
+def _read_range(service, props, cell_range, per_tab):
+    grid = props.get("gridProperties") or {}
+    grid_columns = grid.get("columnCount", service.settings.max_columns)
+    grid_rows = grid.get("rowCount", per_tab)
+    columns = min(service.settings.max_columns, grid_columns)
+    if cell_range is None:
+        return f"A1:{column_name(columns)}{min(per_tab, grid_rows)}"
+    match = re.fullmatch(r"([A-Z]{1,3})([1-9][0-9]*)(?::([A-Z]{1,3})([1-9][0-9]*))?", cell_range)
+    if not match:
+        raise ValueError("Use a bounded A1 cell range, e.g. A1:H100, without a tab prefix.")
+    c1, r1, c2, r2 = match.groups()
+    c1n, c2n = column_number(c1), column_number(c2 or c1)
+    r1n, r2n = int(r1), int(r2 or r1)
+    if c2n < c1n or r2n < r1n:
+        raise ValueError("That range exceeds the configured row/column limit.")
+    if c1n > grid_columns or r1n > grid_rows:
+        return None
+    c2n = min(c2n, grid_columns, c1n + service.settings.max_columns - 1)
+    r2n = min(r2n, grid_rows, r1n + per_tab - 1)
+    width, height = c2n - c1n + 1, r2n - r1n + 1
+    if width > service.settings.max_columns or height > service.settings.max_rows + 2:
+        raise ValueError("That range exceeds the configured row/column limit.")
+    return f"{c1}{r1}:{column_name(c2n)}{r2n}"
 
 
 class GoogleService:
@@ -315,13 +393,13 @@ class GoogleService:
         ref, metadata, _ = await self.source_file(ctx, url, source_message_ref=source_message_ref)
         return await self.read_content(ref, metadata)
 
-    async def read_content(self, ref, metadata):
+    async def read_content(self, ref, metadata, *, tab=None):
         """Internal dispatch: caller must verify human-link or saved-trip authority first."""
         mime = metadata.get("mimeType")
         if mime in (DOC, DOCX):
             return await self.read_document(ref, metadata)
         if mime == SHEET:
-            return await self.read_spreadsheet(ref, metadata)
+            return await self.read_spreadsheet(ref, metadata, tab=tab)
         if mime not in ("application/pdf", "text/csv"):
             return (
                 str(metadata.get("name", "File"))[:300]
@@ -437,20 +515,213 @@ class GoogleService:
 
     async def read_spreadsheet(self, ref, metadata, *, cell_range=None, tab=None):
         sheet = await self.client.sheet(ref.file_id)
-        selected = select_tab(sheet, ref, tab)
-        values = await self.tab_values(
-            ref.file_id, selected["title"], cell_range, grid=selected.get("gridProperties")
-        )
-        text = json.dumps(values, ensure_ascii=False)
-        truncated = len(text) > self.settings.max_chars or len(values) >= self.settings.max_rows + 2
-        return (
-            str(metadata.get("name", "Sheet"))[:300]
-            + " — "
-            + selected["title"][:100]
-            + "\n"
-            + text[: self.settings.max_chars]
-            + ("\n[Truncated: partial range coverage]" if truncated else "")
-        )
+        selected, tabs, miss = resolve_read_tab(sheet, ref, tab)
+        if miss:
+            header, _ = _read_tab_header(
+                metadata, tabs, all_mode=True, max_tabs=self.settings.max_tabs
+            )
+            message = {
+                "none": "No tab named that. Use one of the tabs listed above.",
+                "several": "Several tabs match that name; use the exact name from the list above.",
+                "gid": "The link's tab no longer exists; use one of the tabs listed above.",
+            }[miss]
+            return f"{header}\n{message}"
+
+        all_mode = selected is None
+        if not all_mode or len(tabs) == 1:
+            props = selected or tabs[0]
+            header, _ = _read_tab_header(
+                metadata, tabs, selected=props, max_tabs=self.settings.max_tabs
+            )
+            values = await self.tab_values(
+                ref.file_id, props["title"], cell_range, grid=props.get("gridProperties")
+            )
+            text = json.dumps(values, ensure_ascii=False)
+            truncated = (
+                len(text) > self.settings.max_chars or len(values) >= self.settings.max_rows + 2
+            )
+            empty_hint = (
+                "\nThis tab is empty; omit tab to read all tabs."
+                if not values and len(tabs) > 1
+                else ""
+            )
+            return (
+                header
+                + "\n"
+                + text[: self.settings.max_chars]
+                + ("\n[Truncated: partial range coverage]" if truncated else "")
+                + empty_hint
+            )
+
+        n_read = min(len(tabs), self.settings.max_tabs)
+
+        def minimum_size(read_count):
+            displayed = min(len(tabs), self.settings.max_tabs)
+            labels = [
+                f"{str(props.get('title', ''))[:100]} (not read)" for props in tabs[:displayed]
+            ]
+            if displayed < len(tabs):
+                labels.append("…")
+            header = (
+                str(metadata.get("name", "Sheet"))[:300]
+                + "\nTabs ("
+                + str(len(tabs))
+                + "): "
+                + ", ".join(labels)
+                + "\nReading: all tabs"
+            )
+            if read_count < len(tabs):
+                header += f"\n[Not read: {len(tabs) - read_count} more tabs; ask for one by name.]"
+            fixed = len(header) + 1
+            for props in tabs[:read_count]:
+                title = str(props.get("title", ""))[:100]
+                fixed += len(f"--- tab: {title} ---") + 4
+                fixed += len(f'[{title}: first 0 rows shown; ask with tab="{title}" for more]') + 1
+            return fixed + len("[Truncated: partial range coverage]") + 1
+
+        while n_read > 1 and minimum_size(n_read) > self.settings.max_chars:
+            n_read -= 1
+        read_tabs = tabs[:n_read]
+        per_tab = max(20, (self.settings.max_rows + 2) // n_read)
+        ranges, fetched = [], []
+        outside = set()
+        for props in read_tabs:
+            a1 = _read_range(self, props, cell_range, per_tab)
+            if a1 is None:
+                outside.add(props["sheetId"])
+                continue
+            ranges.append("'" + props["title"].replace("'", "''") + "'!" + a1)
+            fetched.append(props)
+        value_ranges = []
+        try:
+            if ranges:
+                value_ranges = await self.client.values_batch(ref.file_id, ranges)
+        except GoogleError as exc:
+            if "size limit" not in str(exc).casefold():
+                raise
+            header, _ = _read_tab_header(
+                metadata, tabs, all_mode=True, max_tabs=self.settings.max_tabs
+            )
+            notice = "[Too large to read every tab at once; ask for one tab by name.]"
+            return header[: max(0, self.settings.max_chars - len(notice) - 1)] + "\n" + notice
+        if (
+            not isinstance(value_ranges, list)
+            or len(value_ranges) != len(ranges)
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("values", []), list)
+                or any(not isinstance(row, list) for row in item.get("values", []))
+                for item in value_ranges
+            )
+        ):
+            raise ValueError("Google returned invalid spreadsheet values.")
+        by_id = {
+            props["sheetId"]: item.get("values", [])
+            for props, item in zip(fetched, value_ranges, strict=True)
+        }
+        row_cap = per_tab
+        records = []
+        for props in read_tabs:
+            values = by_id.get(props["sheetId"], [])
+            capped = len(values) >= row_cap
+            records.append(
+                {
+                    "props": props,
+                    "values": values,
+                    "capped": capped,
+                    "outside": props["sheetId"] in outside,
+                }
+            )
+        descriptors = []
+        for item in records:
+            props, values = item["props"], item["values"]
+            label = str(props.get("title", ""))[:100]
+            if props.get("hidden"):
+                label += " (hidden)"
+            if item["outside"]:
+                label += " (outside range)"
+            elif not values:
+                label += " (empty)"
+            else:
+                label += f" ({len(values)}{'+' if item['capped'] else ''} rows)"
+            item["label"] = label
+            descriptors.append(label)
+        visible = records[:]
+
+        def make_header(count):
+            names = [item["label"] for item in visible[:count]]
+            names.extend(
+                f"{str(props.get('title', ''))[:100]} (not read)"
+                for props in tabs[len(visible) : len(visible) + max(0, count - len(names))]
+            )
+            if count < len(tabs):
+                names.append("…")
+            line = f"Tabs ({len(tabs)}): " + ", ".join(names)
+            value = str(metadata.get("name", "Sheet"))[:300] + "\n" + line + "\nReading: all tabs"
+            omitted = len(tabs) - len(visible)
+            if omitted:
+                value += f"\n[Not read: {omitted} more tabs; ask for one by name.]"
+            return value
+
+        def sections():
+            lines = []
+            for item in visible:
+                title = str(item["props"].get("title", ""))[:100]
+                shown = item.get("shown", item["values"])
+                lines.extend([f"--- tab: {title} ---", json.dumps(shown, ensure_ascii=False)])
+                if item.get("cut"):
+                    lines.append(
+                        f'[{title}: first {len(shown)} rows shown; ask with tab="{title}" for more]'
+                    )
+            if any(item.get("cut") for item in visible):
+                lines.append("[Truncated: partial range coverage]")
+            return lines
+
+        # Reserve room for section labels and hints before sharing the remaining character budget.
+        for item in visible:
+            item["shown"] = []
+            item["cut"] = bool(item["values"] or item["capped"])
+
+        def hint_size(item):
+            title = str(item["props"].get("title", ""))[:100]
+            return len(f'[{title}: first 0 rows shown; ask with tab="{title}" for more]') + 1
+
+        display_count = min(len(tabs), self.settings.max_tabs)
+        while True:
+            header = make_header(display_count)
+            fixed = (
+                len(header)
+                + 1
+                + sum(
+                    len(f"--- tab: {str(item['props'].get('title', ''))[:100]} ---") + 4
+                    for item in visible
+                )
+            )
+            fixed += sum(hint_size(item) for item in visible if item["values"] or item["capped"])
+            if any(item["values"] or item["capped"] for item in visible):
+                fixed += len("[Truncated: partial range coverage]") + 1
+            if fixed <= self.settings.max_chars:
+                break
+            if display_count:
+                display_count -= 1
+            elif len(visible) > 1:
+                visible.pop()
+                display_count = min(len(tabs), self.settings.max_tabs)
+            else:
+                break
+        available = max(0, self.settings.max_chars - fixed)
+        for index, item in enumerate(
+            sorted(visible, key=lambda value: len(json.dumps(value["values"], ensure_ascii=False)))
+        ):
+            share = available // (len(visible) - index)
+            rows = item["values"]
+            while rows and len(json.dumps(rows, ensure_ascii=False)) > share:
+                rows = rows[:-1]
+            item["shown"] = rows
+            item["cut"] = len(rows) < len(item["values"]) or item["capped"]
+            available -= len(json.dumps(rows, ensure_ascii=False))
+        result = header + "\n" + "\n".join(sections())
+        return result[: self.settings.max_chars]
 
     async def action(self, ctx, kind, payload, summary):
         action = PendingAction.create(
