@@ -47,7 +47,7 @@ def parse_google_ref(url: str) -> GoogleRef:
         if not _ID.fullmatch(file_id):
             raise ValueError
         gids = query.get("gid", []) + fragment.get("gid", [])
-        if len(gids) > 1 or (gids and (not gids[0].isascii() or not gids[0].isdigit())):
+        if any(not gid.isascii() or not gid.isdigit() for gid in gids) or len(set(gids)) > 1:
             raise ValueError
         tab = query.get("tab", [])
         if len(tab) > 1 or (tab and not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", tab[0])):
