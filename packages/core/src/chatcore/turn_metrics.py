@@ -95,6 +95,7 @@ class TurnMetrics:
         skill_fields: dict[str, object] | None = None,
         model: str = "-",
         vision: bool | None = None,
+        final_tool: str = "-",
     ) -> None:
         if final_forced not in self._FINAL_FORCED:
             raise ValueError("invalid final_forced category")
@@ -107,7 +108,8 @@ class TurnMetrics:
             "end=%s in_tokens=%d out_tokens=%d ms=%d "
             "skills=%s loaded=%s source=%s embed_skipped=%s top=%s meta_calls=%s hints=%s "
             "route_ms=%s eligible_calls=%s unevaluated=%s initial_cover=%s oracle_cover=%s "
-            "unavailable_routed=%s gate_ms=%s model=%s vision=%s repeats_refused=%d",
+            "unavailable_routed=%s gate_ms=%s model=%s vision=%s repeats_refused=%d "
+            "final_tool=%s",
             chat_key,
             mode,
             self.offered,
@@ -145,4 +147,5 @@ class TurnMetrics:
             model or "-",
             "-" if vision is None else ("on" if vision else "off"),
             self.repeats_refused,
+            final_tool,
         )

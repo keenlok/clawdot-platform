@@ -160,6 +160,7 @@ class VoicePlugin(BasePlugin):
                     "幫我將今日嘅新聞讀出嚟",
                 ),
                 (TOOL,),
+                final_tools=(TOOL,),
                 keywords=(
                     "read aloud",
                     "read it out",

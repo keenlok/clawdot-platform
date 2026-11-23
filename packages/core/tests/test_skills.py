@@ -67,6 +67,12 @@ def test_validation_names_invalid_skill_and_duplicate():
         raise AssertionError("invalid name should fail")
 
 
+def test_final_tools_must_be_a_subset_of_skill_tools():
+    skill = replace(_skill(), final_tools=("two",))
+    with pytest.raises(ValueError, match="final_tools must be a subset"):
+        SkillSet._validate(skill, "test", composite=False)
+
+
 async def test_gates_are_evaluated_fresh_and_denied_tools_are_not_offered():
     enabled = False
 

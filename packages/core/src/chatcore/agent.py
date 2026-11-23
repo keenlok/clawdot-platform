@@ -33,7 +33,7 @@ from chatcore.model_choice import ModelSwitchConfig
 from chatcore.prompts import build_system_prompt
 from chatcore.skill_router import SkillRouter
 from chatcore.skill_turn import SkillSettings, SkillTurn, effective_mode
-from chatcore.skills import SkillsMode, render_skill_context
+from chatcore.skills import GateState, SkillsMode, render_skill_context
 from chatcore.store.base import Stores
 from chatcore.threads import current_conversation, current_turn_origin
 from chatcore.tools.registry import (
@@ -1254,6 +1254,8 @@ class AgentResponder:
             if on_mode
             else self.settings.tool_steps + 1
         )
+        if on_mode:
+            max_rounds += 1
         previous_meta_only = False
         forced_by_meta = False
         empty_continuation_used = False
@@ -1264,6 +1266,9 @@ class AgentResponder:
         identical_calls: dict[tuple[str, str], int] = {}
         error_streak = 0
         loop_input_start = usage.input_tokens
+        reserved_final_tools: tuple[str, ...] = ()
+        final_tool_consumed = False
+        final_tool = "-"
 
         def over_token_limit() -> bool:
             limit = self.settings.turn_input_token_limit
@@ -1308,6 +1313,8 @@ class AgentResponder:
                     final_answer = ctx.turn.tool_steps >= step_cap or deadline_final_forced
                     if ctx.turn.tool_steps >= step_cap:
                         steps_final_forced = True
+                    if rounds_final_forced:
+                        final_answer = True
                     if (
                         not final_answer
                         and not loop_final_forced
@@ -1325,10 +1332,11 @@ class AgentResponder:
                     ):
                         final_answer = True
                         forced_by_meta = True
-                    if on_mode and round_index == max_rounds - 1:
+                    if on_mode and round_index == max_rounds - 2:
                         final_answer = True
                         rounds_final_forced = True
-                    if completion_count > 0 and await self.limits.budget_exhausted():
+                    budget_exhausted = completion_count > 0 and await self.limits.budget_exhausted()
+                    if budget_exhausted:
                         if not final_answer and not budget_final_forced:
                             log.info(
                                 "final answer forced by budget chat=%s tool_steps=%d",
@@ -1347,17 +1355,69 @@ class AgentResponder:
                     ):
                         force_final_by_deadline()
                         final_answer = True
+                    if final_tool_consumed:
+                        final_answer = True
+                    reserve_allowed = (
+                        (steps_final_forced or rounds_final_forced or loop_final_forced)
+                        and not (
+                            deadline_final_forced
+                            or budget_exhausted
+                            or budget_final_forced
+                            or tokens_final_forced
+                        )
+                        and not final_tool_consumed
+                        and on_mode
+                        and not over_token_limit()
+                    )
+                    if reserve_allowed:
+                        eligible_final_tools = []
+                        for skill_name in [*skill_turn.active, *skill_turn.loaded]:
+                            skill = app.skills.get(skill_name)
+                            if skill:
+                                eligible_final_tools.extend(
+                                    name
+                                    for name in skill.final_tools
+                                    if name in skill_turn.offered
+                                    and name not in metrics.called
+                                    and name not in eligible_final_tools
+                                )
+                        reserved_final_tools = tuple(eligible_final_tools)
+                    reservation_request = bool(reserved_final_tools) and not (
+                        final_tool_consumed
+                        or deadline_final_forced
+                        or budget_exhausted
+                        or budget_final_forced
+                        or tokens_final_forced
+                    )
+                    if reservation_request:
+                        final_answer = False
                     request_tools = (
-                        list(skill_turn.offered.values())
+                        [skill_turn.offered[name] for name in reserved_final_tools]
+                        if reservation_request
+                        else []
+                        if final_tool_consumed
+                        else list(skill_turn.offered.values())
                         if on_mode
                         else app.tools.specs(is_admin=ctx.is_admin, ctx=ctx)
                     )
-                    request_snapshot = skill_turn.offered_snapshot() if on_mode else frozenset()
+                    request_snapshot = (
+                        (
+                            frozenset(reserved_final_tools)
+                            if reservation_request
+                            else frozenset()
+                            if final_tool_consumed
+                            else skill_turn.offered_snapshot()
+                        )
+                        if on_mode
+                        else frozenset()
+                    )
                     ctx.turn.offered_tools = request_snapshot if on_mode else None
                     request = {
                         "system": (system + "\n\n" + final_instruction) if final_answer else system,
                         "tools": request_tools,
-                        "tool_choice": "none" if final_answer else "auto",
+                        "tool_choice": (
+                            "auto" if reservation_request else "none" if final_answer else "auto"
+                        ),
                         "max_tokens": skill_turn.output_tokens(
                             self.settings.max_tokens, self.settings.max_tokens_ceiling
                         )
@@ -1366,6 +1426,11 @@ class AgentResponder:
                         "session_key": message.chat.key
                         + (":" + message.thread_id if message.thread_id else ""),
                     }
+                    request_reserved_final_tools = (
+                        reserved_final_tools if reservation_request else ()
+                    )
+                    if reservation_request:
+                        final_tool_consumed = True
                     try:
                         if final_answer:
                             completion = await provider.complete(messages, **request)
@@ -1380,6 +1445,15 @@ class AgentResponder:
                             raise
                         force_final_by_deadline()
                         continue
+                    except ProviderError as exc:
+                        if not request_reserved_final_tools:
+                            raise
+                        log.warning(
+                            "reserved final tool request failed chat=%s error=%s",
+                            message.chat.key,
+                            type(exc).__name__,
+                        )
+                        continue
                     usage = Usage(
                         usage.input_tokens + completion.usage.input_tokens,
                         usage.output_tokens + completion.usage.output_tokens,
@@ -1387,11 +1461,17 @@ class AgentResponder:
                     completion_count += 1
                     await record_completion(completion.usage)
                     assistant = completion.message
+                    if request_reserved_final_tools and not assistant.tool_calls:
+                        messages.append(assistant)
+                        continue
                     if completion.stop_reason == "max_tokens" and assistant.tool_calls:
                         log.info(
                             "truncated native tool response reason=max_tokens call_count=%d",
                             len(assistant.tool_calls),
                         )
+                        if request_reserved_final_tools:
+                            # A truncated reserved call is dropped; the no-tools final follows.
+                            continue
                         can_recover = (
                             not final_answer
                             and not direct_writes
@@ -1668,6 +1748,9 @@ class AgentResponder:
                     tool_images: list[ImagePart] = []
                     response_meta_only = bool(assistant.tool_calls)
                     for call_index, call in enumerate(assistant.tool_calls):
+                        reserved_call_duplicate = (
+                            bool(request_reserved_final_tools) and call_index > 0
+                        )
                         call_type = (
                             skill_turn.check_call(call.name, request_snapshot) if on_mode else "ok"
                         )
@@ -1734,6 +1817,10 @@ class AgentResponder:
                                     type(exc).__name__,
                                 )
                                 result = ToolResult.error("That skill could not be loaded.")
+                        elif reserved_call_duplicate:
+                            result = ToolResult.error(
+                                "Not run: only one final tool call is allowed."
+                            )
                         elif on_mode and call_type in {"not_offered", "unknown"}:
                             result = ToolResult.error(
                                 "Tool not available in this turn; use use_skill to load it."
@@ -1744,12 +1831,15 @@ class AgentResponder:
                             result = ToolResult.error("Not run: the turn ran out of time.")
                         elif "__invalid_json__" in call.arguments:
                             result = ToolResult.error("Tool arguments were invalid JSON.")
-                        elif ctx.turn.tool_steps > (
-                            skill_turn.step_cap if on_mode else self.settings.tool_steps
+                        elif (
+                            ctx.turn.tool_steps
+                            > (skill_turn.step_cap if on_mode else self.settings.tool_steps)
+                            and call.name not in request_reserved_final_tools
                         ):
                             result = ToolResult.error("Tool step limit reached.")
                         elif app.tools.get(call.name) is not None and (
                             loop_final_forced
+                            and call.name not in request_reserved_final_tools
                             or identical_calls.get(_call_key(call), 0)
                             >= self.settings.max_identical_calls
                         ):
@@ -1761,9 +1851,6 @@ class AgentResponder:
                             loop_final_forced = True
                             note_guard("loop", call.name)
                         else:
-                            if app.tools.get(call.name) is not None:
-                                call_key = _call_key(call)
-                                identical_calls[call_key] = identical_calls.get(call_key, 0) + 1
                             try:
                                 remaining = _remaining_before_final(
                                     loop, deadline, self.settings.final_answer_reserve_s
@@ -1771,9 +1858,32 @@ class AgentResponder:
                                 if remaining <= 0:
                                     raise TimeoutError
                                 async with asyncio.timeout(remaining):
-                                    result = await app.tools.call(call.name, call.arguments, ctx)
-                                    if skill_turn is not None and not result.is_error:
-                                        skill_turn.note_executed(call.name)
+                                    if call.name in request_reserved_final_tools:
+                                        gate = await app.skills.evaluate_tool(call.name, ctx)
+                                        if gate.state is not GateState.AVAILABLE:
+                                            result = ToolResult.error(
+                                                skill_turn._render_hint(gate.hint)
+                                                if gate.hint
+                                                else "That tool is unavailable here."
+                                            )
+                                            continue_after_gate = True
+                                        else:
+                                            continue_after_gate = False
+                                    else:
+                                        continue_after_gate = False
+                                    if not continue_after_gate:
+                                        if call.name in request_reserved_final_tools:
+                                            final_tool = call.name
+                                        if app.tools.get(call.name) is not None:
+                                            call_key = _call_key(call)
+                                            identical_calls[call_key] = (
+                                                identical_calls.get(call_key, 0) + 1
+                                            )
+                                        result = await app.tools.call(
+                                            call.name, call.arguments, ctx
+                                        )
+                                        if skill_turn is not None and not result.is_error:
+                                            skill_turn.note_executed(call.name)
                             except TimeoutError:
                                 result = ToolResult.error("The tool ran out of time.")
                                 tool_ran_out_of_time = True
@@ -2063,6 +2173,7 @@ class AgentResponder:
                 skill_fields=(skill_turn.metric_fields(metrics.called) if skill_turn else None),
                 model=getattr(provider, "model", "") or "-",
                 vision=turn_model.vision,
+                final_tool=final_tool,
             )
         except Exception:
             log.debug("turn metrics failed")

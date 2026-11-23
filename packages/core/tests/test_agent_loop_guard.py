@@ -187,7 +187,7 @@ async def test_third_identical_call_is_refused_and_forces_final_answer(caplog):
     assert "already called with these arguments" in str(refused)
     metrics = _metrics(caplog)
     assert "final_forced=loop" in metrics
-    assert metrics.endswith("repeats_refused=1")
+    assert metrics.endswith("repeats_refused=1 final_tool=-")
     guard = [r.getMessage() for r in caplog.records if "loop guard" in r.getMessage()]
     assert len(guard) == 1
     assert "reason=loop tool=read_sheet" in guard[0]
@@ -204,7 +204,7 @@ async def test_identical_calls_in_one_response_count_the_same_way(caplog):
     assert plugin.calls == ["same", "same"]
     assert platform.texts == ["Final answer."]
     assert _forced_final(provider) == [1]
-    assert _metrics(caplog).endswith("repeats_refused=2")
+    assert _metrics(caplog).endswith("repeats_refused=2 final_tool=-")
 
 
 async def test_two_identical_calls_are_allowed():
@@ -334,7 +334,7 @@ async def test_unknown_tools_are_not_counted_as_identical_calls(caplog):
     provider, plugin, _platform = await _run([*responses, _answer()])
 
     assert plugin.calls == []
-    assert _metrics(caplog).endswith("repeats_refused=0")
+    assert _metrics(caplog).endswith("repeats_refused=0 final_tool=-")
     assert "final_forced=loop" not in _metrics(caplog)
     assert all(
         "made_up_tool" not in r.getMessage() for r in caplog.records if "guard" in r.getMessage()
