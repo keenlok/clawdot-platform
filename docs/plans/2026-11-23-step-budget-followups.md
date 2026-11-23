@@ -53,11 +53,9 @@ What this shows:
 - Check `AGENT_TIMEOUT_S` (150 s) against the longest turns: when the deadline forces the final
   answer, the turn metrics show `final_forced=deadline`. Don't change the timeout in this PR. Record
   in the PR what the first week of metrics shows.
-- **Make `turn metrics` visible in production.** The line is logged at INFO by the `chatcore.agent`
-  logger, and SBot's log level filters it out. Keep `LOG_LEVEL` as it is. Set the `chatcore.agent`
-  logger to INFO after `setup_logging`, unless `AGENT_TURN_METRICS_LOG=false`. Check that the
-  handler level doesn't drop it. The line holds counts, tool names and chat keys. It never holds
-  message text.
+- **Turn metrics are already visible.** Both bots run with `LOG_LEVEL=INFO` (`config/*.env`), so
+  the `turn metrics` lines are logged. The container logs had none because nobody addressed
+  the bot after 18 Nov. No logging change is needed.
 - This change goes in its own `clawdot-deployments` PR, following that repo's `AGENTS.md`, with its
   tests in `bots/sb_bot/tests/test_app.py`.
 
@@ -105,7 +103,7 @@ they asked for, such as a voice note.
     fix rounds ran out, with regression tests checked by mutation.
 - The review's "mixed permission" `member_expenses` finding needed no code change: there is no
   per-member permission, and the plan wording above was corrected.
-- Part 1 (SBot default and INFO metrics) is still to do in `clawdot-deployments`.
+- Part 1 is [clawdot-deployments#64](https://github.com/keenlok/clawdot-deployments/pull/64): the default goes from 8 to 20, with no logging change.
 
 ## Codex execution
 
