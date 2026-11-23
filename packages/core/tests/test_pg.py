@@ -9,13 +9,27 @@ from datetime import UTC, datetime, timedelta
 from importlib import resources
 
 import asyncpg
+import httpx
 import pytest
+from chatcore.access import AccessPolicy
+from chatcore.app import BotApp
 from chatcore.display_time_store import DisplayTimeService, PgDisplayTimeStore
-from chatcore.events import Attachment, AttachmentKind, ChatRef, Mention, UserRef
+from chatcore.events import (
+    Attachment,
+    AttachmentKind,
+    ChatRef,
+    IncomingMessage,
+    Mention,
+    User,
+    UserRef,
+)
 from chatcore.pending import PendingAction
 from chatcore.store import migrations
 from chatcore.store.pg import PgCoreRepo, PgDatabase
-from chatcore.testing import GROUP, message, user
+from chatcore.testing import GROUP, FakePlatform, memory_stores, message, user
+from chatcore_voice import VoicePlugin, VoiceSettings
+from chatcore_voice.input import TranscriptionService
+from pydantic import SecretStr
 
 pytestmark = pytest.mark.integration
 
@@ -103,6 +117,95 @@ async def test_message_attribution_round_trip_and_legacy_insert(db):
     legacy = await repo.get_message(GROUP, "legacy")
     assert legacy is not None and legacy.username is None and legacy.mentions == ()
     assert await migrations.apply(db, CORE) == []
+
+
+async def test_attachment_duration_round_trip_and_legacy_attachment(db):
+    await migrations.apply(db, CORE)
+    repo = PgCoreRepo(db)
+    voice = Attachment(
+        "voice-file",
+        AttachmentKind.VOICE,
+        mime_type="audio/ogg",
+        size_bytes=24_000,
+        duration_s=14,
+    )
+    incoming = message("", attachments=[voice])
+    await repo.log_message(incoming)
+    stored = await repo.get_message(incoming.chat, incoming.message_id)
+    assert stored is not None and stored.attachments == (voice,)
+
+    await db.execute(
+        "INSERT INTO messages (chat_key,message_id,user_key,display_name,text,attachments,sent_at) "
+        "VALUES ($1,$2,$3,$4,$5,$6::jsonb,now())",
+        GROUP.key,
+        "legacy-attachment",
+        "fake:legacy",
+        "Legacy",
+        "",
+        json.dumps([{"id": "old-voice", "kind": "voice", "size_bytes": 16_000}]),
+    )
+    legacy = await repo.get_message(GROUP, "legacy-attachment")
+    assert legacy is not None and legacy.attachments[0].duration_s is None
+
+
+async def test_voice_settings_migration_applies_and_absent_row_uses_defaults(db):
+    voice_migrations = resources.files("chatcore_voice.migrations")
+    assert await migrations.apply(db, [("chatcore_voice", voice_migrations)]) == [
+        "chatcore_voice/0001_voice_chat_settings.sql"
+    ]
+    assert (
+        await db.fetchrow("SELECT * FROM voice_chat_settings WHERE chat_key=$1", GROUP.key) is None
+    )
+    defaults = await db.fetchrow(
+        "SELECT column_default FROM information_schema.columns "
+        "WHERE table_name='voice_chat_settings' AND column_name='voice_reply'"
+    )
+    assert defaults["column_default"] == "true"
+
+
+async def test_wake_miss_through_app_stores_empty_text_in_postgres(db, caplog):
+    await migrations.apply(db, CORE)
+    await migrations.apply(db, [("chatcore_voice", resources.files("chatcore_voice.migrations"))])
+    await db.execute(
+        "INSERT INTO voice_chat_settings(chat_key,wake_word_enabled,wake_words) VALUES($1,true,$2)",
+        GROUP.key,
+        ["hey dot"],
+    )
+    platform = FakePlatform(files={"voice": b"audio"})
+    access = AccessPolicy([GROUP.key], [])
+    settings = VoiceSettings(
+        VOICE_STT_ENABLED=True,
+        VOICE_STT_ELEVENLABS_API_KEY=SecretStr("fake"),
+        VOICE_STT_USAGE_CHECK="off",
+    )
+    plugin = VoicePlugin(access, platform, settings=settings)
+    provider_calls = []
+
+    def transcribe(request):
+        provider_calls.append(request)
+        return httpx.Response(200, json={"text": "PG_TRANSCRIPT_SENTINEL"})
+
+    provider = httpx.AsyncClient(transport=httpx.MockTransport(transcribe))
+    plugin.transcription = TranscriptionService(settings, client=provider)
+    stores = memory_stores()
+    stores.repo = PgCoreRepo(db)
+    stores.db = db
+    app = BotApp(platform, stores=stores, access=access, plugins=[plugin], bot_name="bot")
+    incoming = IncomingMessage(
+        GROUP,
+        "pg-wake-miss",
+        User(UserRef("fake", "person"), "Person"),
+        "",
+        False,
+        attachments=(Attachment("voice", AttachmentKind.VOICE, duration_s=1),),
+    )
+    with caplog.at_level("DEBUG", logger="chatcore_voice"):
+        await app.handle(incoming)
+    stored = await stores.repo.get_message(GROUP, incoming.message_id)
+    assert len(provider_calls) == 1
+    assert stored is not None and stored.text == ""
+    assert "PG_TRANSCRIPT_SENTINEL" not in caplog.text
+    await provider.aclose()
 
 
 async def test_message_attribution_migration_upgrades_existing_rows(db, tmp_path):

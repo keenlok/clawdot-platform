@@ -35,6 +35,7 @@ from telegram import (
     Update,
     User,
     Video,
+    VideoNote,
     Voice,
 )
 from telegram.error import BadRequest, Conflict, NetworkError, RetryAfter, TimedOut
@@ -327,6 +328,34 @@ async def test_current_group_title_maps_as_optional_chat_context(private) -> Non
     assert event.chat_title == (None if private else "SexBomb")
     assert event.chat == ChatRef("tg", str(chat.id))
     assert event.chat.id != "*"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["forward_origin", "forward_from", "forward_from_chat", "forward_sender_name"],
+)
+async def test_forwarded_metadata_is_preserved(field):
+    platform = make_platform()
+    platform._bot_id = 99
+    if field == "forward_origin":
+        source = msg(text="forwarded", forward_origin={"type": "user", "sender_user": {"id": 5}})
+    else:
+        from types import SimpleNamespace
+
+        source = SimpleNamespace(
+            message_id=10,
+            date=datetime(2026, 1, 1, tzinfo=UTC),
+            chat=Chat(-100, "supergroup"),
+            from_user=user(),
+            text="forwarded",
+            caption=None,
+            photo=None,
+            reply_to_message=None,
+            is_topic_message=False,
+            **{field: {"id": 5}},
+        )
+    event = await platform._map_message(source)
+    assert event.forwarded
     assert event.user.ref.id != "*"
 
 
@@ -358,6 +387,7 @@ async def test_message_mapping(kind: str) -> None:
                 "vid", "uv", 1, 1, 4, mime_type="video/mp4", file_size=40, file_name="v.mp4"
             ),
             voice=Voice("voc", "uvc", 5, "audio/ogg", 50),
+            video_note=VideoNote("note", "unote", 4, 6, 60),
         )
     event = await platform._map_message(msg(**({"text": "hello", **values})))
     assert isinstance(event, IncomingMessage)
@@ -370,7 +400,12 @@ async def test_message_mapping(kind: str) -> None:
     assert (event.reply_to is not None) is (kind == "reply")
     assert event.mentions_bot is (kind == "mention")
     if kind == "files":
-        assert [a.id for a in event.attachments] == ["large", "doc", "aud", "vid", "voc"]
+        assert [a.id for a in event.attachments] == ["large", "doc", "aud", "vid", "voc", "note"]
+        assert event.attachments[-2].kind.value == "voice"
+        assert event.attachments[-2].duration_s == 5
+        assert event.attachments[-1].kind.value == "video_note"
+        assert event.attachments[-1].duration_s == 6
+        assert event.attachments[2].kind.value == "audio"
         assert event.attachments[1].filename == "name.txt"
         assert event.attachments[1].mime_type == "text/plain"
 

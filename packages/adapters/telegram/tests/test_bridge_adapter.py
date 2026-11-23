@@ -22,7 +22,7 @@ from chatcore.events import (
     UserRef,
 )
 from chatcore.files import FilePlatform, VoicePlatform
-from chatcore.platform import ChatPlatform, PlatformError
+from chatcore.platform import ChatActivityPlatform, ChatPlatform, PlatformError
 from chatcore.polls import PollPlatform, PollResult
 from chatcore_telegram.bridge import (
     BridgeAdapterError,
@@ -79,11 +79,27 @@ class FakeClient:
         self.acked.append(list(relay_ids))
 
 
+def test_bridge_attachment_mapping_distinguishes_voice_video_note_and_audio():
+    attachments = BridgeTelegramPlatform._attachments(
+        {
+            "voice": {"file_id": "voice", "duration": 12},
+            "video_note": {"file_id": "note", "duration": 8},
+            "audio": {"file_id": "audio", "duration": 4},
+        }
+    )
+    assert [(item.kind.value, item.duration_s) for item in attachments] == [
+        ("audio", 4),
+        ("voice", 12),
+        ("video_note", 8),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_bridge_adapter_implements_platform_and_preserves_thread_reply_semantics() -> None:
     client = FakeClient()
     platform = BridgeTelegramPlatform(client)
     assert isinstance(platform, ChatPlatform)
+    assert not isinstance(platform, ChatActivityPlatform)
     assert isinstance(platform, FilePlatform)
     assert isinstance(platform, PollPlatform)
     assert not isinstance(platform, VoicePlatform)

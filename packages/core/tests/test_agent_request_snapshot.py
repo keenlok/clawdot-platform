@@ -12,6 +12,7 @@ from chatcore.agent import AgentResponder, AgentSettings
 from chatcore.app import BotApp
 from chatcore.conversation import ConversationPlugin
 from chatcore.display_time_plugin import DisplayTimePlugin
+from chatcore.events import VoiceNote
 from chatcore.limits import Limits
 from chatcore.llm.types import Completion, Message, ToolCall, Usage
 from chatcore.plugin import BasePlugin
@@ -155,3 +156,39 @@ async def test_agent_requests_match_legacy_snapshot(monkeypatch, scenario, wired
         SNAPSHOT.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
     expected = json.loads(SNAPSHOT.read_text()) if SNAPSHOT.exists() else {}
     assert serialized[fixture_key] == expected[fixture_key]
+
+
+@pytest.mark.parametrize("source", ["self", "replied"])
+async def test_voice_transcript_is_wrapped_in_provider_request(source):
+    provider = ScriptedProvider([_completion("spoken answer")])
+    stores = memory_stores()
+    responder = AgentResponder(
+        provider,
+        system_prompt="voice snapshot system",
+        settings=AgentSettings(),
+        limits=Limits(stores.cache),
+    )
+    app = BotApp(
+        FakePlatform(),
+        stores=stores,
+        access=AccessPolicy([GROUP.key], []),
+        responder=responder,
+        bot_name="snapshotbot",
+    )
+    text = (
+        "What did they say?\n\n[voice transcript: transcript secret]"
+        if source == "replied"
+        else "transcript secret"
+    )
+    incoming = replace(
+        message(text, mention=True),
+        voice=VoiceNote("transcript secret", "en", 3, source, False),
+    )
+    await responder.respond(incoming, text, app)
+    user_text = "\n".join(
+        item.text for item in provider.calls[0]["messages"] if item.role.value == "user"
+    )
+    assert "<untrusted-voice-transcript>transcript secret</untrusted-voice-transcript>" in user_text
+    assert "automatic transcript may contain mistakes" in user_text
+    if source == "replied":
+        assert "Request: What did they say?\nReplied-to voice transcript:" in user_text

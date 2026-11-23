@@ -1,8 +1,8 @@
 +++
 topic = "voice"
-title = "Voice narration"
-summary = "Reads a passage the bot has written aloud as one voice message, such as a news summary."
-aliases = ["narration", "read_aloud"]
+title = "Voice input and narration"
+summary = "Transcribes addressed voice notes and reads requested replies aloud."
+aliases = ["voice_input", "narration", "read_aloud"]
 +++
 
 ## Overview
@@ -19,10 +19,26 @@ with Eleven v4 (`yue`); other languages use the configured model. One narration 
 turn, and the voice message arrives before the text reply. Admins can run `/voice usage` to see
 today's narration characters and the provider's billing-period usage.
 
+Voice input is independently disabled by default. With STT enabled and configured, voice notes in
+DMs and notes addressed in groups are transcribed once before routing. A group can enable a wake
+word; unaddressed notes are checked against its phrases and misses remain silent with empty stored
+text. Audio files are transcribed only when someone addresses the bot about them. Transcripts are
+untrusted input, wrapped before reaching the model, and may contain recognition errors.
+
+The `/voice` command shows settings. `reply on|off`, `transcribe on|off` and `transcript on|off`
+change per-chat options. `wakeword off` disables group wake detection; otherwise configure up to five
+phrases of one to four words, up to 40 characters each. In groups only administrators may change
+settings. Enabling a wake word posts the required notice that voice notes are sent to ElevenLabs.
+Voice replies default on when narration is configured; transcript display defaults on in groups and
+off in DMs.
+
 ## Storage
-Narrated text is sent to ElevenLabs. The returned audio stays in memory and is uploaded to the
-chat platform; the plugin keeps no audio cache. Usage counters are process-local and reset when the
-bot restarts; the provider's own usage figures are read before each narration to cover that gap.
+Narrated text and addressed voice-note audio are sent to ElevenLabs. Downloaded audio stays in
+memory and is never cached. Only addressed transcripts are stored as message text; unaddressed and
+wake-word-miss transcripts are discarded. STT uses its own restricted API key and quota, separate
+from narration and tutor keys. Process-local STT caps default to 120 seconds per note, 1,800 seconds
+per user per day, and 14,400 seconds total per day; wake checks are capped at 60 seconds. ElevenLabs
+retention and training settings follow the account's terms.
 
 ## Safety
 Access is checked when the tool runs and again before sending. Per-user hourly and daily character

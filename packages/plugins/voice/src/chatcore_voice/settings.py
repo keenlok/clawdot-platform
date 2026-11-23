@@ -71,6 +71,21 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_USAGE_CACHE_SECONDS: int = Field(default=60, ge=0, le=600)
     VOICE_TTS_PROVIDER_RESERVE_CHARS: int = Field(default=2000, ge=0, le=1_000_000)
     VOICE_TTS_ALLOW_OVERAGE: bool = False
+    VOICE_STT_ENABLED: bool = False
+    VOICE_STT_ELEVENLABS_API_KEY: SecretStr = SecretStr("")
+    VOICE_STT_MODEL: str = "scribe_v2"
+    VOICE_STT_MAX_SECONDS_PER_NOTE: int = Field(default=120, ge=1, le=600)
+    VOICE_STT_MAX_SECONDS_PER_USER_DAY: int = Field(default=1800, ge=0, le=100_000)
+    VOICE_STT_MAX_SECONDS_PER_DAY: int = Field(default=14_400, ge=0, le=1_000_000)
+    VOICE_STT_WAKE_MAX_SECONDS: int = Field(default=60, ge=1, le=600)
+    VOICE_STT_USAGE_CHECK: Literal["required", "advisory", "off"] = "advisory"
+
+    @field_validator("VOICE_STT_MODEL")
+    @classmethod
+    def validate_stt_model(cls, value: str) -> str:
+        if value not in {"scribe_v1", "scribe_v2"}:
+            raise ValueError("Unsupported speech transcription model")
+        return value
 
     @field_validator("VOICE_TTS_VOICES")
     @classmethod

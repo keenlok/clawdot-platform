@@ -91,6 +91,7 @@ def _message_from_row(row: Row) -> StoredMessage:
                 filename=a.get("filename"),
                 mime_type=a.get("mime_type"),
                 size_bytes=a.get("size_bytes"),
+                duration_s=a.get("duration_s"),
             )
             for a in json.loads(row["attachments"])
         ),
@@ -191,6 +192,7 @@ class PgCoreRepo:
                 "filename": a.filename,
                 "mime_type": a.mime_type,
                 "size_bytes": a.size_bytes,
+                "duration_s": a.duration_s,
             }
             for a in message.attachments
         ]
@@ -247,6 +249,7 @@ class PgCoreRepo:
                         "filename": a.filename,
                         "mime_type": a.mime_type,
                         "size_bytes": a.size_bytes,
+                        "duration_s": a.duration_s,
                     }
                     for a in attachments
                 ]

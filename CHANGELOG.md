@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Skills can reserve an undelivered final tool for a forced answer; voice narration uses this step so step and loop limits can still deliver the requested audio.
+- Optional voice input transcribes addressed Telegram voice notes with ElevenLabs Scribe, supports per-group wake words and per-chat voice settings, and can reply with narration. STT is disabled by default and uses a separate restricted API key and seconds caps.
+
+### Security
+- Voice settings are gated and checked again at command/tool execution: DMs require normal DM access, while groups require an administrator or operator.
 
 ### Changed
 - `member_expenses` accepts batches of up to 20 members while retaining the legacy single `member` argument. Unknown explanation topics list only currently visible topics and aliases.
