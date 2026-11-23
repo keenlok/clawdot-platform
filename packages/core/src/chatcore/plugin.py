@@ -74,6 +74,9 @@ class Plugin(Protocol):
     async def on_message(self, message: IncomingMessage, stores: Stores) -> None:
         """Called for every logged message (e.g. to index it). Must not reply."""
 
+    async def transform_incoming(self, message: IncomingMessage, app) -> IncomingMessage | None:
+        """Transform before logging; return None to log the original message and stop routing."""
+
     async def auto_address(self, message: IncomingMessage, stores: Stores) -> bool:
         """Return True to treat an untagged group message as addressed to the bot. Called only
         for human, non-command, non-empty group messages that routing would otherwise ignore."""
@@ -127,6 +130,10 @@ class BasePlugin:
 
     async def on_message(self, message: IncomingMessage, stores: Stores) -> None:
         return None
+
+    async def transform_incoming(self, message: IncomingMessage, app) -> IncomingMessage | None:
+        """Return None after handling a message that should not enter normal routing."""
+        return message
 
     async def auto_address(self, message: IncomingMessage, stores: Stores) -> bool:
         """Return True to treat an untagged group message as addressed to the bot. Called only

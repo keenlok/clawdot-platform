@@ -23,7 +23,7 @@ from chatcore.attribution import (
 from chatcore.conversation import SUMMARY_SYSTEM_PROMPT, ConversationStore, Turn
 from chatcore.display_time import format_instant
 from chatcore.display_time_store import display_service
-from chatcore.events import IncomingMessage
+from chatcore.events import AttachmentKind, IncomingMessage
 from chatcore.image_reader import ImageReader, ImageReadError, admit_describe
 from chatcore.images import MAX_IMAGE_BYTES, download_images, is_image
 from chatcore.llm.base import Provider, ProviderError
@@ -334,7 +334,15 @@ def _transcript_text(
 
     for index, row in enumerate(eligible_rows):
         timestamp = row.sent_at.astimezone(UTC)
-        record_text = rendered(message_record(row, bot_name=bot_name))
+        record = message_record(row, bot_name=bot_name)
+        if not record["text"]:
+            voice = next(
+                (item for item in row.attachments if item.kind is AttachmentKind.VOICE), None
+            )
+            if voice is not None:
+                duration = voice.duration_s or 0
+                record["text"] = f"[voice message, {duration // 60}:{duration % 60:02d}]"
+        record_text = rendered(record)
         if record_text:
             line = f"[{timestamp.isoformat()}] {record_text}"
             entries.append((timestamp, 0, index, line))
@@ -630,6 +638,20 @@ class AgentResponder:
                 if skill is None:
                     continue
                 content = skill.instructions
+                voice_reply = False
+                if skill.name == "read_aloud" and message.voice is not None:
+                    for plugin in app.plugins:
+                        enabled = getattr(plugin, "voice_reply_enabled", None)
+                        if callable(enabled) and await enabled(app.stores, message.chat):
+                            voice_reply = True
+                            break
+                if voice_reply:
+                    content = (
+                        f"{content}\nVoice replies are enabled for this turn: call narrate_text "
+                        "with a short spoken version in the transcript's language, then give the "
+                        "full text reply. Keep links, tables and code in text only. Honor an "
+                        "explicit request for text only."
+                    )
                 if tool_ctx is not None:
                     contextual = await render_skill_context(skill, tool_ctx, logger=log)
                     if contextual:
@@ -1014,9 +1036,41 @@ class AgentResponder:
                 f"id {_header_value(message.message_id)}, "
                 f"replying to {_header_value(reply_id)}:\n{rendered_metadata}"
             )
-            turns.append(Message.user(_wrap(header, tag) + "\n" + text, *images))
+            voice_text = text
+            if message.voice is not None:
+                transcript = (
+                    "The person sent a voice note. Its automatic transcript may contain mistakes.\n"
+                    + _wrap(message.voice.transcript, "voice-transcript")
+                )
+                request_text = text
+                if message.voice.source == "replied":
+                    request_text = message.text.removesuffix(
+                        f"\n\n[voice transcript: {message.voice.transcript}]"
+                    )
+                voice_text = (
+                    f"Request: {request_text}\nReplied-to voice transcript:\n{transcript}"
+                    if message.voice.source == "replied"
+                    else transcript
+                )
+            turns.append(Message.user(_wrap(header, tag) + "\n" + voice_text, *images))
         else:
-            turns.append(Message.user(text, *images))
+            voice_text = text
+            if message.voice is not None:
+                transcript = (
+                    "The person sent a voice note. Its automatic transcript may contain mistakes.\n"
+                    + _wrap(message.voice.transcript, "voice-transcript")
+                )
+                request_text = text
+                if message.voice.source == "replied":
+                    request_text = message.text.removesuffix(
+                        f"\n\n[voice transcript: {message.voice.transcript}]"
+                    )
+                voice_text = (
+                    f"Request: {request_text}\nReplied-to voice transcript:\n{transcript}"
+                    if message.voice.source == "replied"
+                    else transcript
+                )
+            turns.append(Message.user(voice_text, *images))
         return system, turns, human_urls, source_attachments
 
     async def respond(
@@ -2058,6 +2112,19 @@ class AgentResponder:
         if not pending_action_requested:
             answer = next((m.text for m in reversed(persisted) if m.role is Role.ASSISTANT), "")
             if answer.strip() or not direct_writes:
+                if message.voice is not None:
+                    for plugin in app.plugins:
+                        prefix = getattr(plugin, "transcript_prefix", None)
+                        if callable(prefix):
+                            quote = await prefix(
+                                app.stores,
+                                message.chat,
+                                is_dm=message.is_dm,
+                                transcript=message.voice.transcript,
+                            )
+                            if quote:
+                                answer = quote + answer
+                            break
                 await app.send(
                     message.chat,
                     answer or "Sorry, I couldn't produce a response.",

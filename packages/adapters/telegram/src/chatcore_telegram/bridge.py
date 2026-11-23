@@ -681,6 +681,15 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
             chat_title=chat_obj.get("title")
             if chat_type in {"group", "supergroup"} and isinstance(chat_obj.get("title"), str)
             else None,
+            forwarded=any(
+                message.get(field)
+                for field in (
+                    "forward_origin",
+                    "forward_from",
+                    "forward_from_chat",
+                    "forward_sender_name",
+                )
+            ),
         )
         await self._emit(event)
 
@@ -692,6 +701,7 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
             or message.get("photo")
             or message.get("document")
             or message.get("audio")
+            or message.get("video_note")
             or message.get("video")
             or message.get("voice")
         )
@@ -758,7 +768,8 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
             ("document", AttachmentKind.DOCUMENT),
             ("audio", AttachmentKind.AUDIO),
             ("video", AttachmentKind.VIDEO),
-            ("voice", AttachmentKind.AUDIO),
+            ("voice", AttachmentKind.VOICE),
+            ("video_note", AttachmentKind.VIDEO_NOTE),
         ):
             item = message.get(field)
             if isinstance(item, Mapping) and isinstance(item.get("file_id"), str):
@@ -774,6 +785,9 @@ class BridgeTelegramPlatform(FilePlatform, PollPlatform):
                         else None,
                         size_bytes=item.get("file_size")
                         if type(item.get("file_size")) is int
+                        else None,
+                        duration_s=item.get("duration")
+                        if type(item.get("duration")) is int
                         else None,
                     )
                 )

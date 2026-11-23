@@ -86,3 +86,15 @@ class ChatPlatform(Protocol):
 
     async def pin(self, message: MessageRef) -> None:
         """Only called when ``capabilities.pin`` is true."""
+
+
+@runtime_checkable
+class ChatActivityPlatform(Protocol):
+    async def react(self, message: MessageRef, emoji: str) -> None: ...
+
+    async def activity(
+        self,
+        chat: ChatRef,
+        kind: Literal["typing", "record_voice", "upload_voice"],
+        thread_id: str | None,
+    ) -> None: ...

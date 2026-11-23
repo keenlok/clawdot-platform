@@ -360,6 +360,15 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
             sent_at=message.date,
             chat_title=message.chat.title if message.chat.type in ("group", "supergroup") else None,
             mentions=mentions,
+            forwarded=any(
+                getattr(message, field, None)
+                for field in (
+                    "forward_origin",
+                    "forward_from",
+                    "forward_from_chat",
+                    "forward_sender_name",
+                )
+            ),
         )
 
     @staticmethod
@@ -372,6 +381,7 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
             or message.audio
             or message.video
             or message.voice
+            or message.video_note
         )
 
     @staticmethod
@@ -468,7 +478,8 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
             ("document", AttachmentKind.DOCUMENT),
             ("audio", AttachmentKind.AUDIO),
             ("video", AttachmentKind.VIDEO),
-            ("voice", AttachmentKind.AUDIO),
+            ("voice", AttachmentKind.VOICE),
+            ("video_note", AttachmentKind.VIDEO_NOTE),
         ):
             item = getattr(message, field, None)
             if item:
@@ -479,6 +490,11 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
                         filename=getattr(item, "file_name", None),
                         mime_type=getattr(item, "mime_type", None),
                         size_bytes=item.file_size,
+                        duration_s=(
+                            getattr(item, "duration", None)
+                            if type(getattr(item, "duration", None)) is int
+                            else None
+                        ),
                     )
                 )
         return found
@@ -813,6 +829,25 @@ class TelegramPlatform(VoicePlatform, PhotoPlatform, PhotoAlbumPlatform):
         if thread_id:
             args["message_thread_id"] = int(thread_id)
         await self._safe(self._application.bot.send_chat_action, **args)
+
+    async def activity(self, chat: ChatRef, kind: str, thread_id: str | None = None) -> None:
+        actions = {
+            "typing": ChatAction.TYPING,
+            "record_voice": ChatAction.RECORD_VOICE,
+            "upload_voice": ChatAction.UPLOAD_VOICE,
+        }
+        args: dict[str, Any] = {"chat_id": chat.id, "action": actions[kind]}
+        if thread_id:
+            args["message_thread_id"] = int(thread_id)
+        await self._safe(self._application.bot.send_chat_action, **args)
+
+    async def react(self, message: MessageRef, emoji: str) -> None:
+        await self._safe(
+            self._application.bot.set_message_reaction,
+            chat_id=message.chat.id,
+            message_id=int(message.message_id),
+            reaction=[{"type": "emoji", "emoji": emoji}],
+        )
 
     async def confirm(
         self,

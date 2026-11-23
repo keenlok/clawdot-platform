@@ -97,6 +97,26 @@ def test_fakes_satisfy_protocols():
     assert isinstance(P(), Plugin)
 
 
+def test_chat_platform_keeps_all_main_contract_methods_in_order():
+    methods = tuple(
+        name
+        for name, value in ChatPlatform.__dict__.items()
+        if callable(value) and not name.startswith("_")
+    )
+    assert methods == (
+        "start",
+        "stop",
+        "send",
+        "edit",
+        "typing",
+        "confirm",
+        "download",
+        "is_member",
+        "leave",
+        "pin",
+    )
+
+
 def test_tool_validation_and_admin_filtering():
     async def handler(ctx, **kwargs):
         return ToolResult("ok")

@@ -420,9 +420,25 @@ class BotApp:
             )
             await self._run_command(message, ctx)
             return
+        stop_routing = False
+        if restriction is None:
+            for plugin in self.plugins:
+                try:
+                    transformed = await plugin.transform_incoming(message, self)
+                    if isinstance(transformed, IncomingMessage):
+                        message = transformed
+                    elif transformed is None:
+                        stop_routing = True
+                        break
+                except Exception as exc:
+                    log.warning(
+                        "plugin %s transform_incoming failed: %s", plugin.name, type(exc).__name__
+                    )
         await self.stores.repo.log_message(message)
         if not message.is_dm:
             await self.stores.repo.upsert_member(message.chat, message.user)
+        if stop_routing:
+            return
         for plugin in self.plugins:
             try:
                 await plugin.on_message(message, self.stores)

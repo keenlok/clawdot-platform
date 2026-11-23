@@ -187,6 +187,31 @@ When a chat has no row, the defaults apply.
 - `ARCHITECTURE.md` gets a "Voice input" privacy bullet next to the voice narration one. It covers
   what goes to ElevenLabs, the wake-word mode, retention and the separate key.
 
+## Execution record (2026-11-24)
+
+- Codex (`gpt-6-luna`) implemented the plan in one run and two fix rounds. Codex (`gpt-6.1-sol`)
+  reviewed twice.
+  - The first review found that `ChatPlatform` methods had been moved into the new optional
+    protocol; the contract is restored, with a test that keeps it that way. It also found
+    `duration_s` wasn't saved to Postgres, forwarded notes weren't detected, cap gaps when the
+    duration is unknown, transcript-display bugs, lost wake-word alternates, and weak end-to-end
+    tests.
+  - The re-review found that a failed transcription still triggered a reply. Now
+    `transform_incoming` returns `None` to stop the turn after a refusal.
+- Claude did the final review, including the full suite with Postgres.
+- **Deviations, decided by Claude:**
+  - `/voice` uses text commands and the gated `voice_settings` tool, with no buttons. The existing
+    `confirm()` shows Confirm and Cancel for one prepared action, not a settings panel.
+  - The group transcript is a plain blockquote, because the Telegram renderer has no
+    expandable-blockquote path.
+  - The bridge adapter has no reactions or chat actions, because the protected bridge service
+    rejects both. On bridge deployments (SBot) that feedback is skipped until the bridge supports
+    it.
+  - The wake-word chat allowance is capped by the global daily limit, since the plan defines no
+    separate per-chat cap.
+- New core contract: `IncomingMessage.voice` and `IncomingMessage.forwarded` (appended), and
+  `Attachment.duration_s`, saved to Postgres. `AttachmentKind.VOICE` and `VIDEO_NOTE` are new.
+
 ## Codex execution
 
 Read `AGENTS.md`, this plan, [Voice narration](2026-11-09-voice-narration.md), the

@@ -81,6 +81,8 @@ class AttachmentKind(StrEnum):
     PHOTO = "photo"
     DOCUMENT = "document"
     AUDIO = "audio"
+    VOICE = "voice"
+    VIDEO_NOTE = "video_note"
     VIDEO = "video"
     OTHER = "other"
 
@@ -95,6 +97,16 @@ class Attachment:
     filename: str | None = None
     mime_type: str | None = None
     size_bytes: int | None = None
+    duration_s: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceNote:
+    transcript: str
+    language: str | None
+    duration_s: int
+    source: Literal["self", "replied"]
+    wake_word: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +137,8 @@ class IncomingMessage:
     # Adapter-supplied group label. User-controlled metadata, never trusted instructions.
     chat_title: str | None = None
     mentions: tuple[Mention, ...] = ()
+    voice: VoiceNote | None = None
+    forwarded: bool = False
 
     @property
     def platform(self) -> str:
