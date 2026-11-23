@@ -92,7 +92,7 @@ def test_emit_formats_the_stage_zero_line(caplog):
         "in_tokens=11 out_tokens=7 ms=123 skills=- loaded=- source=- "
         "embed_skipped=- top=- meta_calls=- hints=- route_ms=- eligible_calls=- "
         "unevaluated=- initial_cover=- oracle_cover=- unavailable_routed=- gate_ms=- "
-        "model=- vision=- repeats_refused=0"
+        "model=- vision=- repeats_refused=0 final_tool=-"
     )
 
 
@@ -116,7 +116,7 @@ def test_emit_appends_the_turn_model_and_vision(caplog):
     assert (
         caplog.records[-1]
         .getMessage()
-        .endswith(" gate_ms=- model=glm-test vision=off repeats_refused=0")
+        .endswith(" gate_ms=- model=glm-test vision=off repeats_refused=0 final_tool=-")
     )
 
 

@@ -182,7 +182,12 @@ def test_member_expenses_is_in_the_expenses_skill():
     assert "member_expenses" in skill.tools
     tool = _tool(ExpensesPlugin(ledger=MemoryLedgerRepo()), "member_expenses")
     assert not tool.writes and not tool.direct
-    assert tool.parameters["required"] == ["member"]
+    assert "members" in tool.parameters["properties"]
+    assert tool.description == (
+        "Expense history for one or more members: every expense each paid or shares, with their "
+        "share, plus settlements and a net that matches get_balances. Pass several members to "
+        "compare them in one call."
+    )
 
 
 # --- C5: member_expenses -------------------------------------------------------------
@@ -283,3 +288,39 @@ async def test_member_history_with_no_entries(setup):
     text = (await _tool(plugin, "member_expenses").handler(ctx, member="Carol")).content
     assert "Taxi" not in text
     assert "0 expense(s)" in text and "net: Carol is settled" in text
+
+
+async def test_member_expenses_accepts_a_batch_and_keeps_legacy_member(setup):
+    plugin, ledger, ctx = setup
+    trip = await _trip(ledger, ctx)
+    await _expense(ledger, ctx, trip, "Lunch", 2000, ALICE, [(ALICE, 1000), (BOB, 1000)])
+
+    result = await _tool(plugin, "member_expenses").handler(ctx, members=["Alice", "Bob"])
+    assert "Alice" in result.content and "Bob" in result.content
+    assert result.content.count("Lunch") == 2
+
+    legacy = await _tool(plugin, "member_expenses").handler(ctx, member="Bob")
+    assert "Lunch" in legacy.content and "Bob's share" in legacy.content
+
+
+async def test_member_expenses_mixed_resolution_is_partial_success(setup):
+    plugin, ledger, ctx = setup
+    trip = await _trip(ledger, ctx)
+    await _expense(ledger, ctx, trip, "Lunch", 2000, ALICE, [(ALICE, 1000), (BOB, 1000)])
+
+    result = await _tool(plugin, "member_expenses").handler(ctx, members=["Bob", "Unknown person"])
+    assert not result.is_error
+    assert "Lunch" in result.content and "Unknown member 'Unknown person'" in result.content
+
+
+async def test_member_expenses_all_unknown_names_is_an_error(setup):
+    plugin, _ledger, ctx = setup
+    result = await _tool(plugin, "member_expenses").handler(ctx, members=["Nobody", "Missing"])
+    assert result.is_error
+    assert "Nobody" in result.content and "Missing" in result.content
+
+
+async def test_member_expenses_rejects_non_string_member(setup):
+    plugin, _ledger, ctx = setup
+    result = await _tool(plugin, "member_expenses").handler(ctx, members=["Bob", 4])
+    assert result.is_error and "member names must be non-empty strings" in result.content

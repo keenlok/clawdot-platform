@@ -1733,7 +1733,8 @@ class ExpensesPlugin(BasePlugin):
         self,
         ctx: ToolContext,
         *,
-        member: str,
+        members: list[str] | None = None,
+        member: str | None = None,
         trip: str | None = None,
         general: bool = False,
     ) -> ToolResult:
@@ -1752,10 +1753,29 @@ class ExpensesPlugin(BasePlugin):
                 if trip is not None
                 else (None if general else await _current_trip(ledger, chat))
             )
-            person = await self._resolve_member(ctx, chat, member)
+            requested = [member] if member is not None and members is None else members
+            if not isinstance(requested, list) or not 1 <= len(requested) <= 20:
+                raise ValueError("Provide between 1 and 20 members.")
+            if any(not isinstance(name, str) or not name.strip() for name in requested):
+                raise ValueError("member names must be non-empty strings.")
         except ValueError as exc:
             return ToolResult.error(str(exc))
-        return ToolResult(await self._member_history_text(ctx, ledger, chat, selected, person))
+        sections = []
+        failures = []
+        for name in requested:
+            try:
+                person = await self._resolve_member(ctx, chat, name)
+                sections.append(
+                    await self._member_history_text(ctx, ledger, chat, selected, person)
+                )
+                failures.append(False)
+            except ValueError as exc:
+                sections.append(f"{name}: {exc}")
+                failures.append(True)
+        return ToolResult(
+            "\n\n".join(sections),
+            is_error=bool(failures) and all(failures),
+        )
 
     async def _member_history_text(
         self, ctx: ToolContext, ledger: LedgerRepo, chat: ChatRef, trip: dict | None, person: User
@@ -2872,13 +2892,19 @@ class ExpensesPlugin(BasePlugin):
             ),
             Tool(
                 "member_expenses",
-                "One member's expense history: every expense they paid or share, with their "
-                "share, plus settlements and a net that matches get_balances. Use to explain "
-                "one person's balance.",
+                "Expense history for one or more members: every expense each paid or shares, "
+                "with their share, plus settlements and a net that matches get_balances. Pass "
+                "several members to compare them in one call.",
                 {
                     **obj,
-                    "required": ["member"],
                     "properties": {
+                        "members": {
+                            "description": "1–20 member names; preferred to legacy member.",
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "items": {"type": "string"},
+                        },
                         "member": {"description": MEMBER_NAME_DESCRIPTION, "type": "string"},
                         "trip": {
                             "description": "Trip name or ID from list_trips; omitted uses the "

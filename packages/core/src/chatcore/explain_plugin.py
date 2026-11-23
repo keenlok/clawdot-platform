@@ -162,13 +162,21 @@ class ExplainPlugin(BasePlugin):
             topic is not None and (not isinstance(topic, str) or len(topic) > 48)
         ) or not isinstance(section, str):
             return ToolResult.error("Invalid explanation topic or section.")
-        unknown = f"Unknown explanation topic. Use {ctx.command_form('explain')} to see topics."
+
+        async def unknown_topic() -> ToolResult:
+            visible = []
+            for candidate in self.catalog.documents():
+                if candidate.spec.topic == "framework" or await self._facts(candidate, ctx):
+                    visible.extend((candidate.spec.topic, *candidate.spec.aliases))
+            text = "Unknown explanation topic. Visible topics and aliases: " + ", ".join(visible)
+            return ToolResult.error(text)
+
         document = self.catalog.resolve(topic if topic is not None else "framework")
         if document is None:
-            return ToolResult.error(unknown)
+            return await unknown_topic()
         facts = await self._facts(document, ctx)
         if document.spec.topic != "framework" and not facts:
-            return ToolResult.error(unknown)
+            return await unknown_topic()
         try:
             body = self.catalog.section(document.spec.topic, section)
         except ValueError:

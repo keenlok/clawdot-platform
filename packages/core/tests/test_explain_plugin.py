@@ -135,6 +135,31 @@ async def test_unknown_topic_does_not_reveal_hidden_or_absent_documents(feature)
     hidden = await tool.handler(ctx_for(app), topic="feature")
     absent = await tool.handler(ctx_for(app), topic="not_installed")
     assert hidden.content == absent.content
+    assert "Visible topics and aliases" in hidden.content
+    assert "framework" in hidden.content
+    assert "feature" not in hidden.content
+    assert "example" not in hidden.content
+    assert "test_explainer_feature" not in hidden.content
+    feature.state = GateState.AVAILABLE
+    visible = await tool.handler(ctx_for(app), topic="unknown")
+    assert "feature" in visible.content and "example" in visible.content
+
+
+async def test_visible_topics_are_only_computed_for_unknown_topics(feature):
+    app, _ = app_for(feature)
+    explain = next(plugin for plugin in app.plugins if plugin.name == "explain")
+    calls = 0
+    original = explain.evaluate_tool
+
+    async def count_calls(name, ctx):
+        nonlocal calls
+        calls += 1
+        return await original(name, ctx)
+
+    explain.evaluate_tool = count_calls
+    tool = app.tools.get("read_explainer")
+    await tool.handler(ctx_for(app), topic="feature")
+    assert calls == 1
 
 
 async def test_unknown_section_and_oversized_user_arguments_fail_safely(feature):

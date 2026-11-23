@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Skills can reserve an undelivered final tool for a forced answer; voice narration uses this step so step and loop limits can still deliver the requested audio.
+
+### Changed
+- `member_expenses` accepts batches of up to 20 members while retaining the legacy single `member` argument. Unknown explanation topics list only currently visible topics and aliases.
+- `search_web`'s description tells the model to stop searching once two sources agree or three searches find nothing new.
+- Turn metrics log lines gain a trailing `final_tool=` field (the reserved final tool that ran, or `-`).
+
 ## [0.24.2] - 2026-11-23
 
 ### Changed

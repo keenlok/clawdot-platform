@@ -22,6 +22,15 @@ def plugin() -> WebPlugin:
     return WebPlugin(WebSettings(tavily_api_key="test-placeholder-key"))
 
 
+def test_search_web_description_stops_redundant_searches() -> None:
+    tool = next(tool for tool in plugin().tools() if tool.name == "search_web")
+    assert tool.description == (
+        "Find one quick fact or URLs. Not for multi-source or comparison questions → research. "
+        "Once two sources agree, or three searches found nothing new, answer with what you have "
+        "and say what couldn't be confirmed."
+    )
+
+
 def test_normalization_never_keeps_url_userinfo() -> None:
     assert _normalize_url("https://example.com@evil.com/a") == "https://evil.com/a"
 

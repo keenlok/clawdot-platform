@@ -72,7 +72,8 @@ class WebPlugin(BasePlugin):
                 name="search_web",
                 description=(
                     "Find one quick fact or URLs. Not for multi-source or comparison questions → "
-                    "research."
+                    "research. Once two sources agree, or three searches found nothing new, answer "
+                    "with what you have and say what couldn't be confirmed."
                 ),
                 parameters={
                     "type": "object",

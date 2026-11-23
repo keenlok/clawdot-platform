@@ -70,6 +70,7 @@ class Skill:
     pin: Callable[[ToolContext], Awaitable[bool]] | None = None
     """Return true to make the skill active this turn without a router hit.
     Errors count as false."""
+    final_tools: tuple[str, ...] = ()  # One deliverable tool reserved when the turn is forced.
 
 
 def keyword_matches(keyword: str, folded_text: str) -> bool:
@@ -345,11 +346,19 @@ class SkillSet:
             invalid("pin must be callable")
         if skill.optional_tools and not composite:
             invalid("optional_tools are only allowed on composites")
+        if not set(skill.final_tools) <= set(skill.tools):
+            invalid("final_tools must be a subset of tools")
 
     @staticmethod
     def _clamp(skill, cap, tools, optional):
         steps = None if skill.max_steps is None else max(1, min(cap, skill.max_steps))
-        return replace(skill, tools=tools, optional_tools=optional, max_steps=steps)
+        return replace(
+            skill,
+            tools=tools,
+            final_tools=tuple(name for name in skill.final_tools if name in tools),
+            optional_tools=optional,
+            max_steps=steps,
+        )
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._skills)
